@@ -35,6 +35,7 @@ from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
 import em_methodology as EMmethod
+import geometry_utils
 from scenario_loader import load_scenario, ScenarioConfig
 import plot_water_content as pwc
 import plot_emagpy_diagnostics as pediag
@@ -547,63 +548,11 @@ def _is_timelapse(fnames) -> bool:
     return not isinstance(fnames, str)
 
 
-def _build_inversion_bnds(depths0, fixed_depths_list, cond_ranges) -> list[tuple[float, float]]:
-    """
-    Build the explicit `bnds` list to pass into `Problem.invert()`.
-
-    FIX: previously, no `bnds` argument was ever constructed anywhere in
-    this pipeline, so every `k.invert()` call ran with `bnds=None`. When
-    any depth is variable (`fixed_depths=False`), EMagPy's own invert()
-    then falls back to a hardcoded internal default:
-
-        bot = np.r_[np.r_[0.2, mdepths], np.ones(nc)*2]
-        top = np.r_[np.r_[mdepths, depths0[-1] + 0.2], np.ones(nc)*100]
-
-    i.e. every conductivity layer got silently clamped to [2, 100] mS/m
-    regardless of `cond_ranges` in the scenario config (which was only
-    ever used to build the *starting* conductivities, never the solver's
-    search bounds). That produced ensembles that piled up against an
-    invisible 100 mS/m wall -- see step1_ensemble_spread.png.
-
-    This function reproduces EMagPy's own depth-bound heuristic (so free
-    depths behave exactly as before) but substitutes the user's
-    `cond_ranges` for the conductivity bounds instead of the hardcoded
-    (2, 100) default.
-
-    Ordering matches what `Problem.invert(bnds=...)` expects: variable
-    depths first, then variable conductivities (see its docstring / the
-    `nparam = np.sum(vd) + np.sum(vc)` check in Problem.py). Note that
-    `fixedConds` is never set anywhere in this pipeline's `k.setInit()`
-    calls, so EMagPy defaults it to "all conductivities variable" --
-    every layer in `cond_ranges` is therefore included.
-
-    Parameters
-    ----------
-    depths0 : list of float
-        Starting depth interfaces (length = n_layers - 1).
-    fixed_depths_list : list of bool
-        Per-interface fixed/free flag, same length as depths0.
-    cond_ranges : list of [min, max] (or [value]) per layer
-        Length = n_layers = len(depths0) + 1.
-
-    Returns
-    -------
-    list of (min, max) tuples, ordered [free depths..., all conductivities...]
-    """
-    depths0_arr = np.asarray(depths0, dtype=float)
-    vd = ~np.asarray(fixed_depths_list, dtype=bool)
-
-    if len(depths0_arr) > 1:
-        mdepths = depths0_arr[:-1] + np.diff(depths0_arr) / 2
-    else:
-        mdepths = np.array([], dtype=float)
-    depth_bot = np.r_[0.2, mdepths]
-    depth_top = np.r_[mdepths, depths0_arr[-1] + 0.2]
-    depth_bnds = list(zip(depth_bot[vd].tolist(), depth_top[vd].tolist()))
-
-    cond_bnds = [tuple(r) if len(r) == 2 else (r[0], r[0]) for r in cond_ranges]
-
-    return depth_bnds + cond_bnds
+# _build_inversion_bnds is now the single shared implementation in
+# geometry_utils.py (pipeline_improvement_report.md, section 6 / action
+# item 3) -- kept as a thin alias here so every existing call site below
+# (`_build_inversion_bnds(...)`) keeps working unchanged.
+_build_inversion_bnds = geometry_utils.build_inversion_bnds
 
 
 def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | None, str | None]:
@@ -679,28 +628,15 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
         return task_idx, None, None, err_msg
 
 
-def _layer_centers(depths0) -> np.ndarray:
-    """Layer centre depths for all ``num_layers = len(depths0) + 1`` soil
-    horizons, INCLUDING the terminal half-space layer below the last fixed
-    interface.
-
-    FIX: the previous version only returned ``len(depths0)`` centres (one
-    per interval BETWEEN interfaces, e.g. 3 centres for depths0 with 3
-    entries), silently omitting the extra half-space layer that every
-    model array actually has (``num_layers = len(depths0) + 1 = 4``). Any
-    consumer that plots ``theta_calc``/``ec_optimal`` (shape ``(..., 4)``)
-    against this function's output (shape ``(3,)``) then crashed with
-    "x and y must have same first dimension" (see Step 6d /
-    plot_solution_diagnostics.plot_solution_swc). This now mirrors
-    ``0_generate_synthetic_data.generate_time_lapse_dataset`` EXACTLY
-    (``depth_boundaries = [0.0] + layer_bottoms + [layer_bottoms[-1]*1.5]``,
-    then midpoints of consecutive boundaries), so both the synthetic and
-    real-data code paths produce the same-length, same-convention array of
-    length ``len(depths0) + 1``.
-    """
-    bottoms = np.asarray(depths0, dtype=float)
-    depth_boundaries = np.concatenate(([0.0], bottoms, [bottoms[-1] * 1.5]))
-    return 0.5 * (depth_boundaries[:-1] + depth_boundaries[1:])
+# _layer_centers is now the single shared implementation in
+# geometry_utils.py (pipeline_improvement_report.md, section 6 / action
+# item 3) -- this used to be independently reimplemented here, in
+# 0_generate_synthetic_data.py (inline), and in run_pipeline_short.py, and
+# a mismatch between those copies is exactly what caused the Step 6d
+# "x and y must have same first dimension" crash this function's old
+# docstring described. Kept as a thin alias so every existing call site
+# (`_layer_centers(...)`) keeps working unchanged.
+_layer_centers = geometry_utils.layer_centers
 
 
 def plot_truth_tdr(output_dir: str, theta_true_realization, depths0,

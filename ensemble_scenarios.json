@@ -7,7 +7,10 @@
     "SCENARIOS IN THIS FILE",
     "════════════════════════════════════════════════════════════════════",
     "  2d       Synthetic 2-D UTM grid run (data_source omitted -> synthetic).",
+    "  2d_dense_tdr  Same as '2d' but 10 SWC positions (40 probes) for denser TDR coverage.",
     "  2d_real  Same 2-D UTM survey geometry and inversion settings, but",
+    "  moisture_2d_free   Synthetic 2-D grid, 5 layers, ALL interfaces free, 6 SWC positions.",
+    "  moisture_2d_dense_tdr  Same as moisture_2d_free but 12 SWC positions (60 probes) for denser TDR coverage.",
     "           driven by real GEM-2 EM data + SoilNet TDR data.",
     "════════════════════════════════════════════════════════════════════",
     "FIELD REFERENCE",
@@ -161,8 +164,18 @@
       0.6,
       1.0
     ],
-    "ws_fixed_params": { "a": true, "m": true, "sigma_w": true, "sigma_s": false },
-    "lab_p0": [0.50, 3.0, 500.0, 100.0],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
     "fixed_depths": false,
     "param_grid": {
       "alpha": [
@@ -201,10 +214,74 @@
     "num_swc_positions": 2,
     "swc_depths": null,
     "window_m": 1.0,
-    "tdr_noise_std": 0.00,
-    "eca_noise_level": 0.00,
+    "tdr_noise_std": 0.0,
+    "eca_noise_level": 0.0,
     "alpha_range_log": null,
     "cache_tag": "field_survey_2d"
+  },
+  "2d_dense_tdr": {
+    "description": "Dense-TDR counterpart of the '2d' scenario: identical grid geometry, layer depths, WS priors and conductivity range, but with num_swc_positions raised from 2 -> 10 (40 total probes on the default 10x5 grid) for stronger per-horizon petrophysical calibration.",
+    "output_dir": "mfc2_outputs/field_survey_2d_dense_tdr",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "MCMC"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 10,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.0,
+    "eca_noise_level": 0.0,
+    "alpha_range_log": null,
+    "cache_tag": "field_survey_2d_dense_tdr"
   },
   "2d_real": {
     "description": "Real-data counterpart of the '2d' scenario: same 2-D UTM survey geometry, layer depths, and conductivity bounds, but driven by real GEM-2 EM surveys and SoilNet TDR data instead of a synthetic ground truth.",
@@ -220,8 +297,18 @@
       0.6,
       1.0
     ],
-    "ws_fixed_params": { "a": true, "m": true, "sigma_w": false, "sigma_s": false },
-    "lab_p0": [0.50, 3.0, 500.0, 100.0],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
     "fixed_depths": true,
     "param_grid": {
       "method": [
@@ -238,19 +325,19 @@
     ],
     "cond_ranges": [
       [
-        0.010,
+        0.01,
         300.0
       ],
       [
-        0.010,
+        0.01,
         300.0
       ],
       [
-        0.010,
+        0.01,
         300.0
       ],
       [
-        0.010,
+        0.01,
         300.0
       ]
     ],
@@ -261,5 +348,121 @@
     "tdr_noise_std": 0,
     "eca_noise_level": 0,
     "cache_tag": "field_survey_2d_real"
+  },
+  "moisture_2d_free": {
+    "description": "Synthetic 2-D UTM grid soil moisture scenario, 5 layers to ~1.65 m, ALL layer interfaces free. 6 SWC positions (auto layer-centre depths, guaranteeing full horizon coverage) and moderate ECa/TDR noise for a realistic-but-tractable free-depth inversion test.",
+    "output_dir": "mfc2_outputs/moisture_2d_free",
+    "realization_index": 0,
+    "depths0": [
+      0.2,
+      0.4,
+      0.7,
+      1.1
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 6,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.03,
+    "grid_num_x": 12,
+    "grid_num_y": 6,
+    "cache_tag": "moisture_2d_free"
+  },
+  "moisture_2d_dense_tdr": {
+    "description": "Synthetic 2-D UTM grid soil moisture scenario, 5 layers to ~1.65 m, ALL layer interfaces free -- same geometry as 'moisture_2d_free' but with DENSE TDR coverage: 12 SWC positions (auto layer-centre depths) = 60 total probes, for stronger per-horizon calibration and a tighter RMSE-vs-K curve.",
+    "output_dir": "mfc2_outputs/moisture_2d_dense_tdr",
+    "realization_index": 0,
+    "depths0": [
+      0.2,
+      0.4,
+      0.7,
+      1.1
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 12,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.03,
+    "grid_num_x": 12,
+    "grid_num_y": 6,
+    "cache_tag": "moisture_2d_dense_tdr"
   }
 }

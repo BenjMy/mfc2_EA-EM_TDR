@@ -11,6 +11,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import em_methodology as EMmethod
+import geometry_utils
 
 class SelectionOutput:
     def __init__(self, K: int, rmse: float, cv_map: np.ndarray, best_fit: list,
@@ -391,47 +392,23 @@ def _extract_ec_at_probes(
         Flat sigma_b values, concatenated per horizon in the same order as
         ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta``.
     """
-    timelapse = avg_model.ndim == 3
-    sample_positions = list(sample_positions)
-    sample_times = list(sample_times)
-    n_samples = len(sample_positions)
-
-    ec_parts: list[np.ndarray] = []
-    for layer in range(num_layers):
-        if timelapse:
-            sigma_b_full = np.array(
-                [avg_model[sample_times[i], pos, layer]
-                 for i, pos in enumerate(sample_positions)],
-                dtype=float,
-            )
-        else:
-            sigma_b_full = np.array(
-                [avg_model[pos, layer] for pos in sample_positions],
-                dtype=float,
-            )
-
-        if probe_layer_indices is not None:
-            # Explicit per-probe horizon routing — matches
-            # calibrate_petrophysical_relationship exactly: a horizon with
-            # no TDR probe is left out entirely rather than backfilled with
-            # unrelated observations from other depths.
-            indices = [i for i, li in enumerate(probe_layer_indices) if li == layer]
-            if not indices:
-                ec_parts.append(np.array([], dtype=float))
-                continue
-            ec_parts.append(sigma_b_full[indices])
-        elif n_samples >= num_layers:
-            step = n_samples // num_layers
-            start = layer * step
-            end = start + step if layer < num_layers - 1 else n_samples
-            ec_parts.append(sigma_b_full[start:end])
-        else:
-            indices = [i for i in range(n_samples) if i % num_layers == layer]
-            if not indices:
-                indices = list(range(n_samples))
-            ec_parts.append(sigma_b_full[indices])
-
-    return np.concatenate(ec_parts)
+    # Horizon routing now delegates to the single shared implementation in
+    # geometry_utils.py (pipeline_improvement_report.md, section 6 / action
+    # item 3) instead of an independently reimplemented copy of the same
+    # strided/modulo/explicit-index logic used by
+    # em_methodology.calibrate_petrophysical_relationship and by
+    # 2_run_petro.py::_extract_ec_for_plots. Note: this function's own
+    # docstring's ``timelapse = avg_model.ndim == 3`` convention (no
+    # ensemble axis) matches what ``geometry_utils.route_ec_to_horizons``
+    # expects directly.
+    ec_extracted, _horizon_slices = geometry_utils.route_ec_to_horizons(
+        ec_array=avg_model,
+        sample_positions=sample_positions,
+        sample_times=sample_times,
+        probe_layer_indices=probe_layer_indices,
+        num_layers=num_layers,
+    )
+    return ec_extracted
 
 
 def plot_optimal_petrophysical_calibration(

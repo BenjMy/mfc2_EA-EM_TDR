@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import em_methodology as EMmethod
+import geometry_utils
 
 
 # ==========================================================================
@@ -444,50 +445,21 @@ def _extract_ec_for_plots(
         spatial_profile = best_member
         num_layers = models.shape[2]
 
-    sample_positions = list(sample_positions)
-    sample_times     = list(sample_times)
-    n_samples        = len(sample_positions)
+    # Horizon routing now delegates to the single shared implementation in
+    # geometry_utils.py (pipeline_improvement_report.md, section 6 / action
+    # item 3) instead of an independently reimplemented copy of the same
+    # strided/modulo/explicit-index logic used by
+    # em_methodology.calibrate_petrophysical_relationship and by
+    # 4_run_select_assess.py::_extract_ec_at_probes.
+    ec_extracted, _horizon_slices = geometry_utils.route_ec_to_horizons(
+        ec_array=best_member,
+        sample_positions=sample_positions,
+        sample_times=sample_times,
+        probe_layer_indices=probe_layer_indices,
+        num_layers=num_layers,
+    )
+    return ec_extracted, spatial_profile
 
-    ec_parts: list[np.ndarray] = []
-
-    for layer in range(num_layers):
-        # Extract σ_b at the correct (time, position) for each probe
-        if timelapse:
-            sigma_b_full = np.array(
-                [best_member[sample_times[i], pos, layer]
-                 for i, pos in enumerate(sample_positions)],
-                dtype=float,
-            )
-        else:
-            sigma_b_full = np.array(
-                [best_member[pos, layer] for pos in sample_positions],
-                dtype=float,
-            )
-
-        # Route observations to their horizon — must mirror calibrate_petrophysical_relationship
-        if probe_layer_indices is not None:
-            indices = [i for i, li in enumerate(probe_layer_indices) if li == layer]
-            if not indices:
-                # Mirrors em_methodology.calibrate_petrophysical_relationship:
-                # a horizon with no TDR probe is left uncalibrated, not
-                # backfilled with unrelated observations from other depths.
-                # Plot no points for this horizon rather than fabricating a
-                # scatter that implies it was measured.
-                ec_parts.append(np.array([], dtype=float))
-                continue
-            ec_parts.append(sigma_b_full[indices])
-        elif n_samples >= num_layers:
-            step  = n_samples // num_layers
-            start = layer * step
-            end   = start + step if layer < num_layers - 1 else n_samples
-            ec_parts.append(sigma_b_full[start:end])
-        else:
-            indices = [i for i in range(n_samples) if i % num_layers == layer]
-            if not indices:
-                indices = list(range(n_samples))
-            ec_parts.append(sigma_b_full[indices])
-
-    return np.concatenate(ec_parts), spatial_profile
 
 
 def run_petro(

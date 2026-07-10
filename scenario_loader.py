@@ -26,6 +26,7 @@ guard against None.
 
 from __future__ import annotations
 
+import bisect
 import json
 import os
 from dataclasses import dataclass, field
@@ -365,6 +366,70 @@ _VALID_METHODS = {"L-BFGS-B", "CG", "Nelder-Mead", "SLSQP", "TNC","MCMC"}
 _VALID_FORWARD_MODELS = {"CS", "FSlin", "FS", "QP"}
 
 
+def _horizon_index_from_depth(depth: float, depths0: list[float]) -> int:
+    """
+    0-based horizon index for a sensor installation depth, given the fixed
+    interface depths ``depths0`` (length = n_layers - 1). Mirrors
+    ``em_methodology.layer_index_from_depth`` exactly (horizon 0 spans
+    ``[0, depths0[0])``, horizon i spans ``[depths0[i-1], depths0[i])``, the
+    last horizon spans ``[depths0[-1], +inf)``) but is reimplemented locally
+    so ``scenario_loader`` -- a lightweight, dependency-free config module --
+    doesn't have to import ``em_methodology`` (and, transitively, ``emagpy``)
+    just to validate a JSON scenario file.
+    """
+    return bisect.bisect_right(depths0, depth)
+
+
+def _check_swc_depth_horizon_coverage(name: str, depths0: list[float],
+                                       swc_depths: list[float] | None) -> None:
+    """
+    Cross-field validation (pipeline_improvement_report.md, section 8 /
+    action item 6): catch a ``swc_depths`` configuration that leaves one or
+    more soil horizons implied by ``depths0`` with NO sensor installed in
+    them, at scenario-LOAD time -- i.e. before the (potentially 30+ minute)
+    Step 1 ensemble inversion ever runs.
+
+    Mirrors the horizon-routing logic used later by
+    ``em_methodology.layer_index_from_depth`` /
+    ``em_methodology.check_early_horizon_coverage``, but runs here on the
+    static scenario config alone. When ``swc_depths`` is ``None`` (the
+    common case -- the pipeline auto-derives one sensor depth per layer
+    centre from ``depths0``), coverage is complete by construction and this
+    is a no-op.
+
+    Raises
+    ------
+    ValueError
+        If any horizon has zero ``swc_depths`` entries mapped to it. An
+        uncalibrated horizon isn't a soft degradation here: it silently
+        falls back to prior/uncalibrated Waxman-Smits parameters for the
+        entire run, so failing fast at load time (rather than only
+        surfacing it as an "UNCALIBRATED" horizon deep in the Step 2/4
+        output) is worth the strictness.
+    """
+    if swc_depths is None:
+        return
+
+    n_layers = len(depths0) + 1
+    covered = {
+        min(max(_horizon_index_from_depth(d, depths0), 0), n_layers - 1)
+        for d in swc_depths
+    }
+    uncovered = sorted(set(range(n_layers)) - covered)
+    if uncovered:
+        raise ValueError(
+            f"Scenario '{name}': swc_depths={swc_depths} do not reach all "
+            f"{n_layers} horizon(s) implied by depths0={depths0}. "
+            f"Horizon(s) {uncovered} have no sensor depth mapped to them and "
+            f"can never be calibrated -- they will silently fall back to "
+            f"prior/uncalibrated Waxman-Smits parameters in Steps 2/4 for "
+            f"the entire run. Fix by either adding a sensor depth inside "
+            f"each uncovered horizon's depth range, or by leaving "
+            f"swc_depths unset (null) so the pipeline auto-derives one "
+            f"depth per layer centre (which always covers every horizon)."
+        )
+
+
 def _validate(name: str, raw: dict) -> None:
     """Raise ValueError with a descriptive message on any schema violation."""
     missing = _REQUIRED - raw.keys()
@@ -585,6 +650,12 @@ def _validate(name: str, raw: dict) -> None:
                 f"Scenario '{name}': swc_depths must be a list of positive numbers "
                 f"or null, got {swc_depths!r}."
             )
+
+    # Cross-field check (report item 6 / section 8): swc_depths must reach
+    # every horizon implied by depths0, or that horizon can never be
+    # calibrated no matter how the ensemble inversion runs.
+    if swc_depths is not None:
+        _check_swc_depth_horizon_coverage(name, depths0, swc_depths)
 
     window_m = raw.get("window_m", 1.0)
     if not isinstance(window_m, (int, float)) or window_m <= 0:

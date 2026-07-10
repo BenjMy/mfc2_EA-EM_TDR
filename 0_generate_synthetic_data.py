@@ -3,6 +3,8 @@ import os
 import pandas as pd
 from emagpy import Problem
 
+import geometry_utils
+
 # Fixed coil set shared by the data generator, the exported CSV surveys, and
 # anything downstream that needs to know which columns hold ECa readings.
 COILS_LIST = ['VCP0.5', 'HCP0.5', 'VCP1.0', 'HCP1.0', 'VCP1.5', 'HCP1.5']
@@ -226,10 +228,13 @@ def generate_time_lapse_dataset(
             if os.path.exists(_stale_path):
                 os.remove(_stale_path)
 
-    layer_centers = [
-        (depth_boundaries[i] + depth_boundaries[i + 1]) / 2.0
-        for i in range(len(depth_boundaries) - 1)
-    ]
+    # Single shared implementation (geometry_utils.layer_centers) instead of
+    # an inline recomputation — see pipeline_improvement_report.md, section 6
+    # / action item 3. This used to be reimplemented independently here, in
+    # run_pipeline.py::_layer_centers, and in run_pipeline_short.py; a
+    # mismatch between those copies previously caused a Step 6d plotting
+    # crash. depth_boundaries is unchanged and still saved/returned below.
+    layer_centers = geometry_utils.layer_centers(layer_bottoms).tolist()
 
     np.save(os.path.join(output_dir, "synthetic_layer_centers.npy"),    np.array(layer_centers))
     np.save(os.path.join(output_dir, "synthetic_depth_boundaries.npy"), np.array(depth_boundaries))

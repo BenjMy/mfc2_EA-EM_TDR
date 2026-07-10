@@ -12,47 +12,16 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 from tqdm import tqdm
 
+import geometry_utils
 
 # --------------------------------------------------------------------------
-# Bounds builder (shared logic with run_pipeline.py's _build_inversion_bnds)
+# Bounds builder — single shared implementation in geometry_utils.py
+# (pipeline_improvement_report.md, section 6 / action item 3). This file
+# and run_pipeline.py previously carried independent copies of the same
+# logic; both now delegate here so a future fix can't land in one copy and
+# not the other.
 # --------------------------------------------------------------------------
-def _build_inversion_bnds(depths0, fixed_depths_list, cond_ranges) -> list[tuple[float, float]]:
-    """
-    Build the explicit `bnds` list to pass into `Problem.invert()`.
-
-    FIX: the previous `bnds_list = [tuple(r) for r in cond_ranges]` only had
-    `len(cond_ranges)` entries. That's correct ONLY when every depth is
-    fixed (`fixed_depths=True` for all layers, as in the __main__ example
-    below). If this function is ever called with `fixed_depths=False` or a
-    mixed list (as the real EA-EM pipeline does), EMagPy's own
-    `Problem.invert()` requires `len(bnds) == n_free_depths + n_free_conds`
-    and raises `ValueError: len(bounds) should be the same as the number
-    of parameters` -- or, if bnds is dropped entirely to dodge that, EMagPy
-    silently substitutes a hardcoded 2-100 mS/m conductivity bound instead
-    of honouring `cond_ranges` (see run_pipeline.py for the full writeup).
-
-    This builds bounds ordered [free depths..., all conductivities...], the
-    ordering `Problem.invert(bnds=...)` expects, and reproduces EMagPy's own
-    depth-bound heuristic for any free depth interfaces so behaviour is
-    unchanged when `fixed_depths=True` (this file's only current caller).
-    `fixedConds` is never set in this script's `k.setInit()` calls, so
-    EMagPy treats every conductivity layer as free -- all of `cond_ranges`
-    is included.
-    """
-    depths0_arr = np.asarray(depths0, dtype=float)
-    vd = ~np.asarray(fixed_depths_list, dtype=bool)
-
-    if len(depths0_arr) > 1:
-        mdepths = depths0_arr[:-1] + np.diff(depths0_arr) / 2
-    else:
-        mdepths = np.array([], dtype=float)
-    depth_bot = np.r_[0.2, mdepths]
-    depth_top = np.r_[mdepths, depths0_arr[-1] + 0.2]
-    depth_bnds = list(zip(depth_bot[vd].tolist(), depth_top[vd].tolist()))
-
-    cond_bnds = [tuple(r) if len(r) == 2 else (r[0], r[0]) for r in cond_ranges]
-
-    return depth_bnds + cond_bnds
+_build_inversion_bnds = geometry_utils.build_inversion_bnds
 
 
 # --------------------------------------------------------------------------
