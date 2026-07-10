@@ -1,0 +1,1033 @@
+{
+  "_comment": [
+    "Ensemble scenario configuration for the EA-EM pipeline (run_pipeline.py).",
+    "Each top-level key (except '_comment' and '_schema') is a named scenario.",
+    "Pass the scenario name via:  python run_pipeline.py --scenario <name>",
+    "The special name 'default' is used when no --scenario flag is given.",
+    "════════════════════════════════════════════════════════════════════",
+    "FIELD REFERENCE",
+    "════════════════════════════════════════════════════════════════════",
+    "output_dir        str   Output folder for plots, cache, and NPY files.",
+    "                        Example: \"output_dir\": \"mfc2_outputs/my_run\"",
+    "realization_index int   Which synthetic ground-truth member to use (0-based).",
+    "                        Ignored when using real field data.",
+    "                        Example: \"realization_index\": 0",
+    "depths0           list  Starting layer interface depths [m], length = n_layers-1.",
+    "                        Always required; defines the number of layers.",
+    "                        Examples:",
+    "                          3-layer soil (0–0.3, 0.3–0.6, 0.6–1.0 m):",
+    "                            \"depths0\": [0.3, 0.6, 1.0]",
+    "                          5-layer high-resolution profile:",
+    "                            \"depths0\": [0.2, 0.4, 0.7, 1.1]",
+    "fixed_depths      bool  True  → all interfaces pinned (classic mode).",
+    "              or  list  False → all interfaces free to move during inversion.",
+    "                        [bool…] → per-interface control, same length as depths0.",
+    "                        Examples:",
+    "                          All fixed:   \"fixed_depths\": true",
+    "                          All free:    \"fixed_depths\": false",
+    "                          Mixed (pin top and bottom, free middle):",
+    "                            \"fixed_depths\": [true, false, true]",
+    "                          Mixed (pin top only, free deeper interfaces):",
+    "                            \"fixed_depths\": [true, false, false]",
+    "param_grid        obj   Cartesian-product inversion parameter sweep.",
+    "                        Every combination of values becomes one ensemble member.",
+    "                        Recognised keys (all optional, all accept a list):",
+    "                          alpha        regularisation weight  (float > 0)",
+    "                          method       scipy optimiser string",
+    "                          forwardModel EMagPy forward model key",
+    "                        Examples:",
+    "                          Minimal single-member sweep:",
+    "                            \"param_grid\": {",
+    "                              \"alpha\": [0.03],",
+    "                              \"method\": [\"L-BFGS-B\"],",
+    "                              \"forwardModel\": [\"FSlin\"]",
+    "                            }",
+    "                          8-member sweep (2 alpha × 2 method × 2 model):",
+    "                            \"param_grid\": {",
+    "                              \"alpha\": [0.03, 0.20],",
+    "                              \"method\": [\"L-BFGS-B\", \"CG\"],",
+    "                              \"forwardModel\": [\"FSlin\", \"CS\"]",
+    "                            }",
+    "                          Valid method values:  L-BFGS-B | CG | Nelder-Mead | SLSQP | TNC",
+    "                          Valid forwardModel values: CS | FSlin | FS | QP",
+    "alpha_range_log   list  Overrides param_grid['alpha'] with a log-spaced sweep.",
+    "              or  null  Format: [min, max, n_steps]  (min and max both > 0,",
+    "                        min < max, n_steps >= 2).",
+    "                        Cleaner than listing individual alpha values by hand.",
+    "                        null → param_grid['alpha'] is used as-is.",
+    "                        Examples:",
+    "                          8 steps from 0.001 to 5.0:",
+    "                            \"alpha_range_log\": [0.001, 5.0, 8]",
+    "                          → alpha values ≈ [0.001, 0.003, 0.009, 0.026,",
+    "                                            0.074, 0.215, 0.623, 1.812, 5.0]",
+    "                          Disabled:",
+    "                            \"alpha_range_log\": null",
+    "cond_ranges       list  Per-layer starting conductivity bounds [mS/m].",
+    "                        Each element is [min, max] or [single_value].",
+    "                        Length must equal number of layers (len(depths0)+1).",
+    "                        Examples:",
+    "                          4-layer, all with range (generates 2 starting points):",
+    "                            \"cond_ranges\": [",
+    "                              [5.0, 250.0],",
+    "                              [5.0, 250.0],",
+    "                              [10.0, 300.0],",
+    "                              [10.0, 300.0]",
+    "                            ]",
+    "                          4-layer, pinned starting values (no EC diversity):",
+    "                            \"cond_ranges\": [",
+    "                              [30.0],",
+    "                              [80.0],",
+    "                              [120.0],",
+    "                              [200.0]",
+    "                            ]",
+    "                          Wide bounds for maximum ensemble spread:",
+    "                            \"cond_ranges\": [",
+    "                              [1.0, 300.0],",
+    "                              [1.0, 300.0],",
+    "                              [5.0, 500.0],",
+    "                              [5.0, 500.0]",
+    "                            ]",
+    "forward_model     str   Default EMagPy forward model for all ensemble members.",
+    "                        Per-member overrides go in param_grid['forwardModel'].",
+    "                        Example: \"forward_model\": \"CS\"",
+    "gamma             float Temporal regularisation between time steps (>= 0).",
+    "                        0.0 → no smoothing (recommended for most cases).",
+    "                        0.2 → gentle smoothing across survey epochs.",
+    "                        Examples:",
+    "                          Off:    \"gamma\": 0.0",
+    "                          Gentle: \"gamma\": 0.2",
+    "                          Strong: \"gamma\": 1.0",
+    "════════════════════════════════════════════════════════════════════",
+    "SWC / TDR SENSOR NETWORK FIELDS",
+    "════════════════════════════════════════════════════════════════════",
+    "num_swc_positions int   Number of horizontal positions where SWC/TDR sensors",
+    "                        are placed. Total probes = num_swc_positions × n_layers.",
+    "                        Increasing this improves calibration spatial coverage",
+    "                        but has diminishing RMSE returns beyond ~n_points/2.",
+    "                        Default: 4.",
+    "                        Examples:",
+    "                          Sparse (paper default):   \"num_swc_positions\": 4",
+    "                          Dense coverage:           \"num_swc_positions\": 8",
+    "                          Single calibration tower: \"num_swc_positions\": 1",
+    "swc_depths        list  Explicit sensor installation depths [m].",
+    "              or  null  null → pipeline derives depths from layer_centers",
+    "                        (midpoints of depths0 intervals).",
+    "                        Use a custom list to test the effect of sensor depth",
+    "                        mis-match relative to inversion layer boundaries.",
+    "                        Length should equal n_layers for full coverage, but",
+    "                        shorter lists are accepted (remaining layers use EC",
+    "                        column mean as fallback).",
+    "                        Examples:",
+    "                          Auto (layer centres, recommended):",
+    "                            \"swc_depths\": null",
+    "                          Sensors exactly at layer centres for depths0=[0.3,0.6,1.0]:",
+    "                            \"swc_depths\": [0.15, 0.45, 0.80, 1.25]",
+    "                          Sensors shifted upward (tests mis-match bias):",
+    "                            \"swc_depths\": [0.10, 0.35, 0.65, 1.05]",
+    "window_m          float Half-width of the spatial averaging window that matches",
+    "                        each TDR probe to its nearest EM measurement indices [m].",
+    "                        Recommendation: start at half the instrument coil spacing.",
+    "                        If [WARN] 'No EM measurement within window_m' appears,",
+    "                        increase this value.",
+    "                        Default: 1.0.",
+    "                        Examples:",
+    "                          Tight (dense EM grid):   \"window_m\": 0.5",
+    "                          Standard:                \"window_m\": 1.0",
+    "                          Wide (sparse EM grid):   \"window_m\": 2.0",
+    "════════════════════════════════════════════════════════════════════",
+    "OBSERVATION NOISE FIELDS",
+    "════════════════════════════════════════════════════════════════════",
+    "eca_noise_level   float Relative Gaussian noise added to synthetic ECa BEFORE",
+    "                        inversion (std = eca_noise_level × ECa_signal).",
+    "                        This is the PRIMARY driver of ensemble spread and the",
+    "                        shape of the Fig. 3 RMSE optimisation curve.",
+    "                        Use 0.03–0.05 to reproduce paper-like behaviour.",
+    "                        Examples:",
+    "                          Clean (no spread):       \"eca_noise_level\": 0.0",
+    "                          Realistic instrument:    \"eca_noise_level\": 0.03",
+    "                          Noisy field conditions:  \"eca_noise_level\": 0.05",
+    "                          Extreme stress test:     \"eca_noise_level\": 0.10",
+    "tdr_noise_std     float Absolute Gaussian noise added to theta_obs [m³/m³].",
+    "                        Affects the RMSE floor; has less impact on spread than",
+    "                        eca_noise_level.",
+    "                        Examples:",
+    "                          Lab-grade sensor:        \"tdr_noise_std\": 0.01",
+    "                          Realistic field sensor:  \"tdr_noise_std\": 0.03",
+    "                          Degraded sensor:         \"tdr_noise_std\": 0.05",
+    "cache_tag         str   Optional suffix appended to the cache filename.",
+    "                        Change this whenever you alter depths0 or cond_ranges",
+    "                        to avoid loading a stale cached ensemble.",
+    "                        Example: \"cache_tag\": \"my_scenario_v2\"",
+    "description       str   Free-text label shown in pipeline log and report.",
+    "                        Example: \"description\": \"Wide alpha sweep, free interfaces\"",
+    "════════════════════════════════════════════════════════════════════",
+    "HOW TO RUN SCENARIOS",
+    "════════════════════════════════════════════════════════════════════",
+    "── Basic usage ──────────────────────────────────────────────",
+    "  Run the default scenario (1-D mode):",
+    "    ./run_pipeline.sh",
+    "  Run a named scenario:",
+    "    ./run_pipeline.sh -s free_all",
+    "    ./run_pipeline.sh -s mixed_middle_free",
+    "    ./run_pipeline.sh -s high_ensemble_spread",
+    "  Run in 2-D UTM grid mode:",
+    "    ./run_pipeline.sh --mode 2d",
+    "    ./run_pipeline.sh --mode 2d -s dense_swc_coverage",
+    "  Run with a custom JSON scenario file:",
+    "    ./run_pipeline.sh -s my_scenario -c /data/my_scenarios.json",
+    "── Spatial grid size (2-D mode only) ────────────────────────",
+    "  Control the number of UTM grid points with --nx and --ny.",
+    "  These are ignored in 1-D mode.",
+    "    ./run_pipeline.sh --mode 2d --nx 15 --ny 8",
+    "    ./run_pipeline.sh --mode 2d -s free_all --nx 20 --ny 10",
+    "── Calling run_pipeline.py directly (without the shell wrapper) ─────",
+    "  python run_pipeline.py --scenario default",
+    "  python run_pipeline.py --scenario free_all --mode 2d",
+    "  python run_pipeline.py --scenario fine_layers_fixed --config /data/my.json",
+    "── Scenario discovery & validation ───────────────────────────────",
+    "  List all available scenarios:",
+    "    ./run_pipeline.sh --list",
+    "    python scenario_loader.py --list",
+    "  Validate every scenario in the JSON (catches schema errors before running):",
+    "    ./run_pipeline.sh --validate",
+    "    python -c \"from scenario_loader import validate_all; validate_all()\"",
+    "  Inspect a single scenario's resolved config:",
+    "    python scenario_loader.py mixed_middle_free",
+    "    python scenario_loader.py high_ensemble_spread",
+    "── Common scenario combinations and what to expect ───────────────────────",
+    "  Quick smoke-test (1 ensemble member, fast):",
+    "    ./run_pipeline.sh -s default",
+    "    → 1 member, fixed depths, clean data. RMSE curve is flat (no spread).",
+    "      Useful to verify the pipeline runs end-to-end.",
+    "  Realistic paper-like run (moderate spread, clear U-curve):",
+    "    ./run_pipeline.sh -s fixed_dense",
+    "    → 8 members (2α × 2method × 2model), fixed depths, eca_noise=0.03.",
+    "      Expect a clear minimum in the Fig. 3 RMSE curve around K=4–6.",
+    "  Maximum ensemble spread (widest RMSE optimisation curve):",
+    "    ./run_pipeline.sh -s high_ensemble_spread",
+    "    → alpha log-swept [0.001–5.0] × 3 forward models × 2 methods.",
+    "      Best scenario for demonstrating the ensemble benefit.",
+    "  Free interfaces (geometry uncertainty):",
+    "    ./run_pipeline.sh -s geometric_uncertainty",
+    "    → Interfaces float during inversion. Expect wider CV maps and",
+    "      depth-spread visible in the Step 1 ensemble plot.",
+    "  Noisy field conditions stress test:",
+    "    ./run_pipeline.sh -s noisy_sensors",
+    "    → 5% TDR noise + 10% ECa noise. RMSE floor will be higher.",
+    "      Tests ensemble robustness under degraded data quality.",
+    "  Dense SWC coverage (8 sensor positions):",
+    "    ./run_pipeline.sh -s dense_swc_coverage",
+    "    → More calibration points per inversion. Compare final RMSE",
+    "      against 'default' (4 positions) to quantify sensor density benefit.",
+    "  Sensor depth mis-match experiment:",
+    "    ./run_pipeline.sh -s custom_swc_depths",
+    "    → Sensors placed off layer centres. Introduces a systematic bias",
+    "      in the Waxman-Smits calibration; useful for sensitivity analysis.",
+    "  Time-lapse with temporal smoothing, 2-D grid:",
+    "    ./run_pipeline.sh -s free_timelapse_smooth --mode 2d --nx 12 --ny 6",
+    "    → Produces XZ cross-sections AND XY plan-view water-content maps.",
+    "── Full argument reference (run_pipeline.sh) ────────────────────",
+    "  -s / --scenario NAME    Scenario key from this JSON file",
+    "  -c / --config   PATH    Path to a custom JSON scenario file",
+    "       --mode     1d|2d   Spatial mode (default: 1d)",
+    "       --nx       INT     Grid columns in 2-D mode (default: 10)",
+    "       --ny       INT     Grid rows    in 2-D mode (default: 5)",
+    "       --list             Print scenario names and exit",
+    "       --validate         Validate all scenarios and exit",
+    "  -h / --help             Show shell usage message"
+  ],
+  "_schema": {
+    "required": [
+      "depths0",
+      "fixed_depths",
+      "param_grid",
+      "cond_ranges"
+    ],
+    "optional": [
+      "output_dir",
+      "realization_index",
+      "forward_model",
+      "gamma",
+      "eca_noise_level",
+      "tdr_noise_std",
+      "window_m",
+      "cache_tag",
+      "description",
+      "num_swc_positions",
+      "swc_depths",
+      "alpha_range_log",
+      "grid_num_x",
+      "grid_num_y"
+    ]
+  },
+  "default": {
+    "description": "Fixed-depth run with a richer parameter sweep: 2 alpha values × 2 optimisers × 2 forward models → 8 members per conductivity combo.",
+    "output_dir": "mfc2_outputs/scenario_fixed_dense",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.2
+      ],
+      "method": [
+        "MCMC"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "fixed_dense",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "fixed_dense": {
+    "description": "Fixed-depth run with a richer parameter sweep: 2 alpha values × 2 optimisers × 2 forward models → 8 members per conductivity combo.",
+    "output_dir": "mfc2_outputs/scenario_fixed_dense",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.2
+      ],
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "fixed_dense",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "mixed_middle_free": {
+    "description": "First and last interfaces fixed (well-constrained from borehole data); middle interface free so the inversion can resolve the true depth of the intermediate clay horizon.",
+    "output_dir": "mfc2_outputs/scenario_mixed_middle_free",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": [
+      true,
+      false,
+      true
+    ],
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.2
+      ],
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "FSlin"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "mixed_middle_free",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "mixed_deep_free": {
+    "description": "Shallow interface pinned (clear resistive layer at 0.3 m); two deeper interfaces free to capture uncertainty in sub-metre stratigraphy.",
+    "output_dir": "mfc2_outputs/scenario_mixed_deep_free",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": [
+      true,
+      false,
+      false
+    ],
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1
+      ],
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        150.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "mixed_deep_free",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "fine_layers_fixed": {
+    "description": "Five-layer discretisation with fixed interfaces — more vertical resolution at the cost of a larger parameter space. cond_ranges must have 5 entries.",
+    "output_dir": "mfc2_outputs/scenario_fine_layers_fixed",
+    "realization_index": 0,
+    "depths0": [
+      0.2,
+      0.4,
+      0.7,
+      1.1
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1
+      ],
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        200.0
+      ],
+      [
+        5.0,
+        200.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "fine_layers_fixed",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "high_variance_sweep": {
+    "description": "Intentionally wide parameter sweep. Spans 3 magnitudes of alpha and 2 completely different forward models to generate a highly dynamic RMSE curve.",
+    "output_dir": "mfc2_outputs/scenario_high_variance",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "alpha": [
+        0.005,
+        0.05,
+        0.5,
+        2.5
+      ],
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "high_variance",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "geometric_uncertainty": {
+    "description": "Combines floating layer boundaries with variable optimization algorithms. Highly likely to reveal a strong U-shaped error-stacking curve.",
+    "output_dir": "mfc2_outputs/scenario_geometric_uncertainty",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": [
+      false,
+      false,
+      false
+    ],
+    "param_grid": {
+      "alpha": [
+        0.02,
+        0.15
+      ],
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "FSlin"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "geom_uncertainty",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "extreme_stress_test": {
+    "description": "Massive 16-member combinatorial grid using extreme smoothness constraints and diverse forward physics engine options.",
+    "output_dir": "mfc2_outputs/scenario_stress_test",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "alpha": [
+        0.001,
+        0.03,
+        0.3,
+        5.0
+      ],
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        10.0,
+        300.0
+      ],
+      [
+        10.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "window_m": 1.0,
+    "cache_tag": "stress_test",
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "alpha_range_log": null
+  },
+  "high_ensemble_spread": {
+    "description": "Wide log-spaced alpha sweep + all forward models → maximum ensemble diversity",
+    "output_dir": "mfc2_outputs/high_ensemble_spread",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "CS",
+        "FSlin",
+        "FS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        1.0,
+        300.0
+      ],
+      [
+        1.0,
+        300.0
+      ],
+      [
+        5.0,
+        500.0
+      ],
+      [
+        5.0,
+        500.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "cache_tag": "high_spread",
+    "num_swc_positions": 6,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.02,
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      8
+    ]
+  },
+  "field_survey_2d": {
+    "description": "2-D UTM grid run with realistic observation noise, 2 TDR positions per layer, all interfaces free, and a narrow ECa conductivity range (1–60 mS/m) representative of resistive field soils.",
+    "output_dir": "mfc2_outputs/field_survey_2d",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 2,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.03,
+    "eca_noise_level": 0.05,
+    "alpha_range_log": null,
+    "cache_tag": "field_survey_2d"
+  },
+  "deep_3m": {
+    "description": "Deep 3 m inversion: 5 layers (0–0.3, 0.3–0.6, 0.6–1.0, 1.0–2.0, 2.0–3.0 m), all interfaces fixed. Realistic parameter sweep (8 members) and EC ranges tuned for deep vadose-zone profiles.",
+    "output_dir": "mfc2_outputs/deep_3m",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0,
+      2.0,
+      3.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.2
+      ],
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        300.0
+      ],
+      [
+        5.0,
+        300.0
+      ],
+      [
+        5.0,
+        300.0
+      ],
+      [
+        5.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "cache_tag": "deep_3m",
+    "num_swc_positions": 4,
+    "swc_depths": [
+      0.15,
+      0.45,
+      0.8,
+      1.5,
+      2.5
+    ],
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.03,
+    "alpha_range_log": null
+  },
+  "deep_3m_free": {
+    "description": "Deep 3 m inversion with free interfaces: allows the inversion to locate the 5 layer boundaries. Use when the depth structure is uncertain below 1 m.",
+    "output_dir": "mfc2_outputs/deep_3m_free",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0,
+      2.0,
+      3.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.2
+      ],
+      "method": [
+        "L-BFGS-B",
+        "CG"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        250.0
+      ],
+      [
+        5.0,
+        300.0
+      ],
+      [
+        5.0,
+        300.0
+      ],
+      [
+        5.0,
+        300.0
+      ],
+      [
+        5.0,
+        300.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "cache_tag": "deep_3m_free",
+    "num_swc_positions": 4,
+    "swc_depths": [
+      0.15,
+      0.45,
+      0.8,
+      1.5,
+      2.5
+    ],
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.03,
+    "alpha_range_log": null
+  },
+  "field_survey_2d_max_ensemble": {
+    "description": "Maximum-member variant of field_survey_2d: 162 members (9 log-spaced alpha × 3 optimisers × 3 forward models × 2 conductivity starts). 2-D UTM grid, 2 TDR positions, all interfaces free, ECa range 1–60 mS/m, realistic noise on both EM and TDR. Designed to produce the richest possible RMSE optimisation curve and the most robust ensemble average.",
+    "output_dir": "mfc2_outputs/field_survey_2d_max_ensemble",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      9
+    ],
+    "cond_ranges": [
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ],
+      [
+        1.0,
+        60.0
+      ]
+    ],
+    "gamma": 0.0,
+    "num_swc_positions": 2,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.03,
+    "eca_noise_level": 0.05,
+    "cache_tag": "field_survey_2d_max"
+  },
+  "mfc2_real": {
+    "description": "Production field scenario: real MFC2 time-lapse EM surveys and SoilNet TDR networks. 6-layer FREE-interface inversion reaching 3 m depth, with a denser log-spaced alpha sweep (8 values, 0.001-10.0) for richer ensemble diversity. cache_tag changed to force invalidation of the old 4-layer fixed-depth cache.",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "output_dir": "mfc2_outputs/mfc2_real_6L_free",
+    "realization_index": 0,
+    "depths0": [
+      0.25,
+      0.5,
+	1
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      10.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.001,
+        350.0
+      ],
+      [
+        0.001,
+        350.0
+      ],
+      [
+        0.001,
+        350.0
+      ],
+      [
+        0.001,
+        350.0
+      ]
+    ],
+    "swc_depths": [
+      0.15,
+      0.3
+    ],
+    "window_m": 1,
+    "tdr_noise_std": 0,
+    "eca_noise_level": 0,
+    "drop_coils": [
+      "f425",
+      "f1525"
+    ],
+    "cache_tag": "mfc2_real_6L_free"
+  }
+}

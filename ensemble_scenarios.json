@@ -1,0 +1,265 @@
+{
+  "_comment": [
+    "Ensemble scenario configuration for the EA-EM pipeline (run_pipeline.py).",
+    "Each top-level key (except '_comment' and '_schema') is a named scenario.",
+    "Pass the scenario name via:  python run_pipeline.py --scenario <name>",
+    "════════════════════════════════════════════════════════════════════",
+    "SCENARIOS IN THIS FILE",
+    "════════════════════════════════════════════════════════════════════",
+    "  2d       Synthetic 2-D UTM grid run (data_source omitted -> synthetic).",
+    "  2d_real  Same 2-D UTM survey geometry and inversion settings, but",
+    "           driven by real GEM-2 EM data + SoilNet TDR data.",
+    "════════════════════════════════════════════════════════════════════",
+    "FIELD REFERENCE",
+    "════════════════════════════════════════════════════════════════════",
+    "output_dir        str   Output folder for plots, cache, and NPY files.",
+    "realization_index int   Which synthetic ground-truth member to use (0-based).",
+    "                        Ignored when using real field data.",
+    "depths0           list  Starting layer interface depths [m], length = n_layers-1.",
+    "fixed_depths      bool  True  → all interfaces pinned (classic mode).",
+    "              or  list  False → all interfaces free to move during inversion.",
+    "                        [bool…] → per-interface control, same length as depths0.",
+    "param_grid        obj   Cartesian-product inversion parameter sweep.",
+    "                        Recognised keys (all optional, all accept a list):",
+    "                          alpha        regularisation weight  (float > 0)",
+    "                          method       scipy optimiser string",
+    "                          forwardModel EMagPy forward model key",
+    "                        Valid method values:  L-BFGS-B | CG | Nelder-Mead | SLSQP | TNC",
+    "                        Valid forwardModel values: CS | FSlin | FS | QP",
+    "alpha_range_log   list  Overrides param_grid['alpha'] with a log-spaced sweep.",
+    "              or  null  Format: [min, max, n_steps]  (min and max both > 0,",
+    "                        min < max, n_steps >= 2). null → param_grid['alpha'] used as-is.",
+    "cond_ranges       list  Per-layer starting conductivity bounds [mS/m].",
+    "                        Each element is [min, max] or [single_value].",
+    "                        Length must equal number of layers (len(depths0)+1).",
+    "forward_model     str   Default EMagPy forward model for all ensemble members.",
+    "                        Per-member overrides go in param_grid['forwardModel'].",
+    "gamma             float Temporal regularisation between time steps (>= 0).",
+    "                        0.0 → no smoothing (recommended for most cases).",
+    "ws_fixed_params  obj   Waxman-Smits params held fixed at lab_p0 during",
+    "                        Steps 2/4 calibration, e.g. {\"m\": true}.",
+    "                        Keys: a | m | sigma_w | sigma_s (bool values).",
+    "                        Omit/null -> all four params float freely.",
+    "lab_p0            list  Starting-guess / pinned WS params [a, m, sigma_w,",
+    "                        sigma_s], flat (applied to every horizon) or one",
+    "                        4-element list per horizon (len == len(depths0)+1).",
+    "                        Omit/null -> DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0].",
+    "data_source       str   'real' | 'synthetic' (omit for synthetic).",
+    "em_data_dir       str   Folder with GEM-2 real EM CSVs (real data_source only).",
+    "tdr_data_dir      str   Folder with real TDR XLSX files (real data_source only).",
+    "coord_file        str   CSV of sensor/position coordinates (real data_source only).",
+    "time_tolerance_days float Max days between EM survey and TDR reading to match (real only).",
+    "════════════════════════════════════════════════════════════════════",
+    "SWC / TDR SENSOR NETWORK FIELDS",
+    "════════════════════════════════════════════════════════════════════",
+    "num_swc_positions int   Number of horizontal positions where SWC/TDR sensors",
+    "                        are placed. Total probes = num_swc_positions × n_layers.",
+    "swc_depths        list  Explicit sensor installation depths [m].",
+    "              or  null  null → pipeline derives depths from layer_centers",
+    "                        (midpoints of depths0 intervals).",
+    "window_m          float Half-width of the spatial averaging window that matches",
+    "                        each TDR probe to its nearest EM measurement indices [m].",
+    "                        If [WARN] 'No EM measurement within window_m' appears, increase this value.",
+    "matching_warn_fraction  float  TDR<->EM spatial-matching quality gate (warn level).",
+    "                        If the single most-shared EM point ends up matched to more",
+    "                        than this fraction of ALL probes, the run report logs a",
+    "                        [WARN]. Range (0, 1]. Default 0.5.",
+    "matching_error_fraction float  Same as above but aborts the run before Step 2 if",
+    "              or  null  exceeded. null (default) disables this hard gate.",
+    "════════════════════════════════════════════════════════════════════",
+    "OBSERVATION NOISE FIELDS (synthetic scenarios only)",
+    "════════════════════════════════════════════════════════════════════",
+    "eca_noise_level   float Relative Gaussian noise added to synthetic ECa BEFORE",
+    "                        inversion (std = eca_noise_level × ECa_signal).",
+    "tdr_noise_std     float Absolute Gaussian noise added to theta_obs [m³/m³].",
+    "homogeneous       bool  True  → disables both spatial gradients (XY position",
+    "                        and XZ/depth) in synthetic generation, so theta is",
+    "                        spatially uniform. Temporal trend (progressive",
+    "                        wetting over timesteps) and per-sample noise are",
+    "                        still applied. Ignored for data_source='real'.",
+    "                        Default: false.",
+    "cache_tag         str   Optional suffix appended to the cache filename.",
+    "                        Change this whenever you alter depths0 or cond_ranges",
+    "                        to avoid loading a stale cached ensemble.",
+    "description       str   Free-text label shown in pipeline log and report.",
+    "════════════════════════════════════════════════════════════════════",
+    "HOW TO RUN SCENARIOS",
+    "════════════════════════════════════════════════════════════════════",
+    "── Basic usage ──────────────────────────────────────────────",
+    "  Synthetic 2-D UTM grid run:",
+    "    ./run_pipeline.sh --mode 2d -s 2d",
+    "  Real-data 2-D UTM grid run:",
+    "    ./run_pipeline.sh --mode 2d -s 2d_real",
+    "── Spatial grid size (2-D mode only) ────────────────────────",
+    "  Control the number of UTM grid points with --nx and --ny.",
+    "    ./run_pipeline.sh --mode 2d -s 2d --nx 15 --ny 8",
+    "    ./run_pipeline.sh --mode 2d -s 2d_real --nx 15 --ny 8",
+    "── Calling run_pipeline.py directly (without the shell wrapper) ─────",
+    "  python run_pipeline.py --scenario 2d --mode 2d",
+    "  python run_pipeline.py --scenario 2d_real --mode 2d",
+    "── Scenario discovery & validation ───────────────────────────────",
+    "  List all available scenarios:",
+    "    ./run_pipeline.sh --list",
+    "    python scenario_loader.py --list",
+    "  Validate every scenario in the JSON (catches schema errors before running):",
+    "    ./run_pipeline.sh --validate",
+    "    python -c \"from scenario_loader import validate_all; validate_all()\"",
+    "  Inspect a single scenario's resolved config:",
+    "    python scenario_loader.py 2d",
+    "    python scenario_loader.py 2d_real",
+    "── Full argument reference (run_pipeline.sh) ────────────────────",
+    "  -s / --scenario NAME    Scenario key from this JSON file (2d | 2d_real)",
+    "  -c / --config   PATH    Path to a custom JSON scenario file",
+    "       --mode     1d|2d   Spatial mode (default: 1d; use 2d for these scenarios)",
+    "       --nx       INT     Grid columns in 2-D mode (default: 10)",
+    "       --ny       INT     Grid rows    in 2-D mode (default: 5)",
+    "       --list             Print scenario names and exit",
+    "       --validate         Validate all scenarios and exit",
+    "  -h / --help             Show shell usage message"
+  ],
+  "_schema": {
+    "required": [
+      "depths0",
+      "fixed_depths",
+      "param_grid",
+      "cond_ranges"
+    ],
+    "optional": [
+      "output_dir",
+      "realization_index",
+      "forward_model",
+      "gamma",
+      "eca_noise_level",
+      "tdr_noise_std",
+      "window_m",
+      "matching_warn_fraction",
+      "matching_error_fraction",
+      "cache_tag",
+      "description",
+      "num_swc_positions",
+      "swc_depths",
+      "alpha_range_log",
+      "grid_num_x",
+      "grid_num_y",
+      "data_source",
+      "em_data_dir",
+      "tdr_data_dir",
+      "coord_file",
+      "time_tolerance_days",
+      "drop_coils",
+      "homogeneous",
+      "ws_fixed_params",
+      "lab_p0"
+    ]
+  },
+  "2d": {
+    "description": "2-D UTM grid run with realistic observation noise, 2 TDR positions per layer, all interfaces free, and a narrow ECa conductivity range (1-60 mS/m) representative of resistive field soils.",
+    "output_dir": "mfc2_outputs/field_survey_2d",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": { "a": true, "m": true, "sigma_w": true, "sigma_s": false },
+    "lab_p0": [0.50, 3.0, 500.0, 100.0],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "MCMC"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 2,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.00,
+    "eca_noise_level": 0.00,
+    "alpha_range_log": null,
+    "cache_tag": "field_survey_2d"
+  },
+  "2d_real": {
+    "description": "Real-data counterpart of the '2d' scenario: same 2-D UTM survey geometry, layer depths, and conductivity bounds, but driven by real GEM-2 EM surveys and SoilNet TDR data instead of a synthetic ground truth.",
+    "output_dir": "mfc2_outputs/field_survey_2d_real",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": { "a": true, "m": true, "sigma_w": false, "sigma_s": false },
+    "lab_p0": [0.50, 3.0, 500.0, 100.0],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "MCMC"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      9
+    ],
+    "cond_ranges": [
+      [
+        0.010,
+        300.0
+      ],
+      [
+        0.010,
+        300.0
+      ],
+      [
+        0.010,
+        300.0
+      ],
+      [
+        0.010,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "num_swc_positions": 2,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0,
+    "eca_noise_level": 0,
+    "cache_tag": "field_survey_2d_real"
+  }
+}
