@@ -214,8 +214,8 @@
     "num_swc_positions": 2,
     "swc_depths": null,
     "window_m": 1.0,
-    "tdr_noise_std": 0.0,
-    "eca_noise_level": 0.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
     "alpha_range_log": null,
     "cache_tag": "field_survey_2d"
   },
@@ -278,8 +278,8 @@
     "num_swc_positions": 10,
     "swc_depths": null,
     "window_m": 1.0,
-    "tdr_noise_std": 0.0,
-    "eca_noise_level": 0.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.03,
     "alpha_range_log": null,
     "cache_tag": "field_survey_2d_dense_tdr"
   },
@@ -345,8 +345,8 @@
     "num_swc_positions": 2,
     "swc_depths": null,
     "window_m": 1.0,
-    "tdr_noise_std": 0,
-    "eca_noise_level": 0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.03,
     "cache_tag": "field_survey_2d_real"
   },
   "moisture_2d_free": {
