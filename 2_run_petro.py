@@ -475,6 +475,7 @@ def run_petro(
     fixed_params: dict[str, bool] | None = None,
     probe_depths_reflect_fitted_interfaces: bool = False,
     lab_p0: np.ndarray | list | None = None,
+    theta_obs_std: float | Sequence[float] | None = None,
 ) -> list[EMmethod.PetroFit]:
     """
     Run STEP 2: Calibrate petrophysical function using Option A spatial layouts.
@@ -545,6 +546,20 @@ def run_petro(
         named in ``fixed_params``. ``None`` (default) falls back to
         ``EMmethod.DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0]`` for every
         horizon, unchanged from before.
+    theta_obs_std : float or sequence of float, optional
+        FIX ("TDR measurement uncertainty is collected but never used to
+        weight the calibration"): forwarded unchanged to
+        ``EMmethod.calibrate_petrophysical_relationship``, which uses it to
+        inverse-variance-weight each observation's contribution to the
+        per-horizon data-misfit term (renormalised to mean 1, so the
+        overall misfit scale — and therefore ``lambda_reg`` — doesn't shift
+        purely because weighting was turned on). Typically the scenario's
+        ``tdr_noise_std`` for synthetic data; ``None`` (default, and what
+        real-data runs should generally pass, since this pipeline doesn't
+        yet have a genuine per-probe real-data noise estimate — see
+        ``run_pipeline.py``'s Step 2/4 call sites) disables weighting
+        entirely, i.e. no behaviour change from before this parameter
+        existed.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -567,6 +582,7 @@ def run_petro(
         fixed_params=fixed_params,
         probe_depths_reflect_fitted_interfaces=probe_depths_reflect_fitted_interfaces,
         lab_p0=lab_p0,
+        theta_obs_std=theta_obs_std,
     )
     print(f"[STEP 2] Completed parameter extraction for {len(fits)} ensemble members.")
 

@@ -62,6 +62,8 @@ HOMOGENEOUS=false
 NUM_SWC_POSITIONS=""
 SWC_DEPTHS=()
 WINDOW_M=""
+BETA=()
+GAMMA=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
 SCENARIO_LOADER="${SCRIPT_DIR}/scenario_loader.py"
@@ -124,6 +126,16 @@ SWC / TDR sensor options (override the scenario JSON's sensor network):
                           used to match each sensor to nearby EM
                           measurement indices. Overrides 'window_m' in the
                           scenario config.
+
+Inversion options (override the scenario JSON's param_grid / gamma):
+      --beta B [B ...]    One or more beta values (lateral/spatial
+                          smoothing, emagpy inversion) to sweep, e.g.
+                          --beta 0.0 0.1 0.5. Overrides 'param_grid.beta'
+                          in the scenario config.
+      --gamma G           Temporal regularisation between time steps
+                          (>= 0), only used for time-lapse (multi-epoch)
+                          inversions. Overrides 'gamma' in the scenario
+                          config.
 
 Scenario options (apply in both synthetic and real-data mode):
   -s, --scenario NAME     Scenario name from ensemble_scenarios.json
@@ -271,6 +283,21 @@ while [[ $# -gt 0 ]]; do
             ;;
         --window-m)
             WINDOW_M="${2:?'--window-m requires a number'}"
+            shift 2 ;;
+        --beta)
+            [[ $# -ge 2 ]] || die "--beta requires at least one value"
+            shift # consume the flag itself
+            BETA=()
+            # Greedily consume one-or-more following tokens, stopping at the
+            # next recognised flag (mirrors Python argparse's nargs='+').
+            while [[ $# -gt 0 && "$1" != -* ]]; do
+                BETA+=("$1")
+                shift
+            done
+            [[ ${#BETA[@]} -ge 1 ]] || die "--beta requires at least one value"
+            ;;
+        --gamma)
+            GAMMA="${2:?'--gamma requires a number'}"
             shift 2 ;;
         --list)     LIST_ONLY=true;     shift ;;
         --validate) VALIDATE_ONLY=true; shift ;;
@@ -509,6 +536,8 @@ cat >> "${REPORT_PATH}" << MDEOF
 | num-swc-positions | \`${NUM_SWC_POSITIONS:-scenario default}\` |
 | swc-depths | \`${SWC_DEPTHS[*]:-scenario default}\` |
 | window-m | \`${WINDOW_M:-scenario default}\` |
+| beta | \`${BETA[*]:-scenario default}\` |
+| gamma | \`${GAMMA:-scenario default}\` |
 | env | \`${VENV_PATH:-none}\` |
 | python | \`${PYTHON}\` |
 
@@ -557,6 +586,14 @@ if [[ -n "${WINDOW_M}" ]]; then
     SWC_OVERRIDE_ARGS+=(--window-m "${WINDOW_M}")
 fi
 
+INVERSION_OVERRIDE_ARGS=()
+if [[ ${#BETA[@]} -gt 0 ]]; then
+    INVERSION_OVERRIDE_ARGS+=(--beta "${BETA[@]}")
+fi
+if [[ -n "${GAMMA}" ]]; then
+    INVERSION_OVERRIDE_ARGS+=(--gamma "${GAMMA}")
+fi
+
 "${PYTHON}" "${PIPELINE_SCRIPT}" \
     --data-source "${EFFECTIVE_DS}" \
     --scenario "${SCENARIO}" \
@@ -565,6 +602,7 @@ fi
     "${DROP_COILS_ARGS[@]+"${DROP_COILS_ARGS[@]}"}" \
     "${HOMOGENEOUS_ARGS[@]+"${HOMOGENEOUS_ARGS[@]}"}" \
     "${SWC_OVERRIDE_ARGS[@]+"${SWC_OVERRIDE_ARGS[@]}"}" \
+    "${INVERSION_OVERRIDE_ARGS[@]+"${INVERSION_OVERRIDE_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}"
 
 EXIT_CODE=$?

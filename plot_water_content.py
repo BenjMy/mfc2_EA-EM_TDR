@@ -26,6 +26,10 @@ Public API
     plot_water_content_paired(...)         Paired θ / CV XZ panels.
     plot_from_pipeline(...)                Convenience wrapper called from
                                            run_pipeline.main().
+    plot_truth_from_pipeline(...)          Ground-truth counterpart of
+                                           plot_from_pipeline (synthetic mode
+                                           only) — same XZ/XY layout, filenames
+                                           tagged '_truth'.
     plot_one_to_one_stages(...)            3-panel 1:1 scatter of predicted vs
                                            TDR-observed θ for stages A, B, C.
 """
@@ -101,6 +105,30 @@ def _add_hatching(
                 ax.add_patch(rect)
 
 
+def _extract_theta_calc(selected_output) -> np.ndarray:
+    """
+    Robustly pull the calculated volumetric water content array (m^3/m^3)
+    off a ``SelectionOutput``-like object, trying the conventional
+    attribute names before falling back to a fuzzy ``"theta"`` search.
+    Shared by ``plot_from_pipeline`` and ``plot_pct_diff_from_pipeline`` so
+    both always agree on which array counts as "the calculated theta".
+    """
+    if hasattr(selected_output, "theta_calc"):
+        return np.asarray(selected_output.theta_calc)
+    elif hasattr(selected_output, "calculated_theta"):
+        return np.asarray(selected_output.calculated_theta)
+    elif hasattr(selected_output, "theta"):
+        return np.asarray(selected_output.theta)
+    else:
+        theta_attrs = [a for a in dir(selected_output) if "theta" in a.lower()]
+        if theta_attrs:
+            return np.asarray(getattr(selected_output, theta_attrs[0]))
+        raise AttributeError(
+            f"No theta attribute found. Available: "
+            f"{[a for a in dir(selected_output) if not a.startswith('_')]}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Core XZ single-panel (cross-section: distance vs depth)
 # ---------------------------------------------------------------------------
@@ -125,6 +153,7 @@ def _plot_xz_panel(
     show_colorbar: bool = False,
     cbar_ax: plt.Axes | None = None,
     xlabel: str = "Distance along transect (m)",
+    value_label: str = "θ (% vol.)",
 ) -> plt.cm.ScalarMappable:
     """Draw one XZ cross-section panel on *ax*. Returns the ScalarMappable."""
     zb = _z_bounds(depths0)
@@ -161,7 +190,7 @@ def _plot_xz_panel(
 
     if show_colorbar and cbar_ax is not None:
         cbar = plt.colorbar(sm, cax=cbar_ax)
-        cbar.set_label("θ (% vol.)", fontsize=8)
+        cbar.set_label(value_label, fontsize=8)
         cbar.ax.tick_params(labelsize=7)
 
     return sm
@@ -745,21 +774,7 @@ def plot_from_pipeline(
         when the transect is truly 2-D.  Usually not needed; pass None.
     """
     # --- Robust attribute extraction ---
-    if hasattr(selected_output, "theta_calc"):
-        theta_calc = np.asarray(selected_output.theta_calc)
-    elif hasattr(selected_output, "calculated_theta"):
-        theta_calc = np.asarray(selected_output.calculated_theta)
-    elif hasattr(selected_output, "theta"):
-        theta_calc = np.asarray(selected_output.theta)
-    else:
-        theta_attrs = [a for a in dir(selected_output) if "theta" in a.lower()]
-        if theta_attrs:
-            theta_calc = np.asarray(getattr(selected_output, theta_attrs[0]))
-        else:
-            raise AttributeError(
-                f"No theta attribute found. Available: "
-                f"{[a for a in dir(selected_output) if not a.startswith('_')]}"
-            )
+    theta_calc = _extract_theta_calc(selected_output)
 
     # m³/m³ → % vol.
     theta_calc = theta_calc * 100.0
@@ -867,6 +882,749 @@ def plot_from_pipeline(
                 probe_utm_x=_probe_utm_x,   # None in 1-D mode, real coords in 2-D
                 probe_utm_y=_probe_utm_y,
             )
+
+
+# ---------------------------------------------------------------------------
+# Public: ground-truth counterpart of plot_from_pipeline
+# ---------------------------------------------------------------------------
+
+def plot_truth_from_pipeline(
+    theta_true: np.ndarray,      # (n_time, n_pos, n_layers) or (n_pos, n_layers), m^3/m^3
+    x_transect: np.ndarray,
+    depths0: list[float],
+    probe_x_coords: list[float],
+    probe_depths: list[float],
+    output_dir: str,
+    scenario_name: str = "default",
+    timelapse: bool = False,
+    survey_labels: Sequence[str] | None = None,
+    theta_vmax: float | None = None,
+    # 2-D mode extras (optional — same as plot_from_pipeline)
+    utm_x: np.ndarray | None = None,
+    utm_y: np.ndarray | None = None,
+    probe_y_coords: list[float] | None = None,
+) -> None:
+    """
+    Render the ground-truth counterpart of ``plot_from_pipeline``'s XZ (and,
+    in 2-D mode, XY) water-content figures — from the synthetic ground-truth
+    array (``theta_true_realization``) rather than the inverted
+    ``selected_output.theta_calc``.
+
+    Only meaningful when synthetic data with a known truth is available
+    (``data_source == "synthetic"``); the caller is responsible for skipping
+    this when running on real field data (no truth to plot).
+
+    Deliberately thin: reuses the same public ``plot_water_content_*``
+    functions as ``plot_from_pipeline`` rather than duplicating the panel
+    logic, so styling always stays in sync. Ground truth has no inversion
+    uncertainty, so CV/coverage hatching is disabled and ``plot_water_content_
+    paired`` (θ+CV) is skipped — there is no CV to pair with.
+
+    Filenames are tagged with a ``_truth`` suffix on the scenario name
+    (e.g. ``water_content_xz_2d_truth.png``), so they sit alongside and are
+    directly comparable to the inverted ``water_content_xz_2d.png``.
+
+    Parameters
+    ----------
+    theta_true : ndarray
+        Volumetric water content in m^3/m^3 (as produced by
+        ``0_generate_synthetic_data.py`` / ``theta_true_realization``).
+        Converted to % vol. internally to match the inverted plots' units.
+    theta_vmax : float or None
+        Pass the SAME vmax used for the inverted plot (from
+        ``plot_from_pipeline``) so truth and inverted panels share one
+        color scale and are visually comparable side by side. If None
+        (default), it is computed independently from the truth data's
+        98th percentile, same convention as plot_from_pipeline.
+    """
+    theta_true = np.asarray(theta_true, dtype=float)
+    if theta_true.ndim not in (2, 3):
+        raise ValueError(
+            f"[plot_truth_from_pipeline] Expected theta_true with 2 or 3 dims "
+            f"(n_pos, n_layers) or (n_time, n_pos, n_layers); got shape {theta_true.shape}."
+        )
+    n_pos_truth = theta_true.shape[-2]
+    if n_pos_truth != len(x_transect):
+        print(
+            f"[plot_truth_from_pipeline][WARN] theta_true has {n_pos_truth} spatial "
+            f"points but x_transect has {len(x_transect)}; truth and inverted plots "
+            "may not be spatially aligned. Skipping truth XZ/XY rendering."
+        )
+        return
+
+    theta_true_pct = theta_true * 100.0  # m^3/m^3 -> % vol., matches plot_from_pipeline
+
+    if theta_vmax is None:
+        theta_vmax = float(np.nanpercentile(theta_true_pct, 98))
+        theta_vmax = max(5.0, np.ceil(theta_vmax / 5) * 5)
+
+    has_utm = (utm_x is not None and utm_y is not None)
+
+    _probe_utm_x: list[float] | None = None
+    _probe_utm_y: list[float] | None = None
+    if has_utm and probe_y_coords is not None:
+        has_real_y = any(y != 0.0 for y in probe_y_coords)
+        if has_real_y:
+            _probe_utm_x = list(probe_x_coords)
+            _probe_utm_y = list(probe_y_coords)
+
+    truth_scenario_name = f"{scenario_name}_truth"
+
+    # -----------------------------------------------------------------------
+    # XZ plots (always)
+    # -----------------------------------------------------------------------
+    if timelapse and theta_true_pct.ndim == 3:
+        cv_zero = np.zeros_like(theta_true_pct)
+        plot_water_content_timelapse(
+            theta_calc=theta_true_pct, cv_map=cv_zero,
+            x_coords=x_transect, depths0=depths0,
+            coverage=None,
+            probe_x=probe_x_coords, probe_depths=probe_depths,
+            survey_labels=survey_labels,
+            theta_vmin=0.0, theta_vmax=theta_vmax,
+            output_dir=output_dir, scenario_name=truth_scenario_name,
+        )
+    else:
+        tc = theta_true_pct[0] if theta_true_pct.ndim == 3 else theta_true_pct
+        plot_water_content_section(
+            theta_calc=tc, cv_map=np.zeros_like(tc),
+            x_coords=x_transect, depths0=depths0,
+            coverage=None,
+            probe_x=probe_x_coords, probe_depths=probe_depths,
+            theta_vmin=0.0, theta_vmax=theta_vmax,
+            title=f"Soil Water Content (XZ) — Ground Truth — {scenario_name}",
+            output_path=os.path.join(output_dir, f"water_content_xz_{truth_scenario_name}.png"),
+        )
+
+    # -----------------------------------------------------------------------
+    # XY plots (only when UTM coords are available — 2-D mode)
+    # -----------------------------------------------------------------------
+    if has_utm:
+        if timelapse and theta_true_pct.ndim == 3:
+            plot_water_content_xy_timelapse(
+                theta_calc=theta_true_pct,
+                utm_x=utm_x, utm_y=utm_y,
+                survey_labels=survey_labels,
+                theta_vmin=0.0, theta_vmax=theta_vmax,
+                output_dir=output_dir, scenario_name=truth_scenario_name,
+                probe_utm_x=_probe_utm_x,
+                probe_utm_y=_probe_utm_y,
+            )
+        else:
+            tc = theta_true_pct[0] if theta_true_pct.ndim == 3 else theta_true_pct
+            plot_water_content_xy(
+                theta_calc=tc,
+                utm_x=utm_x, utm_y=utm_y,
+                theta_vmin=0.0, theta_vmax=theta_vmax,
+                title=f"Soil Water Content (XY) — Ground Truth — {scenario_name}",
+                output_path=os.path.join(
+                    output_dir, f"water_content_xy_{truth_scenario_name}.png"
+                ),
+                probe_utm_x=_probe_utm_x,
+                probe_utm_y=_probe_utm_y,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Core XZ single-panel — % DIFFERENCE (diverging colormap centred at 0)
+# ---------------------------------------------------------------------------
+
+def _plot_xz_diff_panel(
+    ax: plt.Axes,
+    pct_diff: np.ndarray,         # (n_x, n_layers)  signed % difference
+    x_coords: np.ndarray,
+    depths0: list[float],
+    probe_x: Sequence[float] | None = None,
+    probe_depths: Sequence[float] | None = None,
+    diff_vmax: float = 25.0,
+    cmap: str = "RdBu_r",
+    title: str = "",
+    show_xlabel: bool = True,
+    show_ylabel: bool = True,
+    show_colorbar: bool = False,
+    cbar_ax: plt.Axes | None = None,
+    xlabel: str = "Distance along transect (m)",
+) -> plt.cm.ScalarMappable:
+    """
+    Draw one XZ % -difference panel on *ax*, colour-symmetric about zero
+    (blue = calculated wetter than truth, red = calculated drier than
+    truth, white = agreement) so over- and under-estimation are visually
+    distinguishable at a glance. Returns the ScalarMappable.
+    """
+    zb = _z_bounds(depths0)
+    xe = _x_edges(x_coords)
+
+    norm     = plt.Normalize(vmin=-diff_vmax, vmax=diff_vmax)
+    cmap_obj = plt.get_cmap(cmap)
+
+    X_mesh, Z_mesh = np.meshgrid(xe, zb)
+    masked = np.ma.masked_invalid(pct_diff.T)
+    sm = ax.pcolormesh(X_mesh, Z_mesh, masked, cmap=cmap_obj, norm=norm, shading="flat")
+    cmap_obj.set_bad(color="lightgrey")
+
+    if probe_x is not None and probe_depths is not None:
+        ax.scatter(probe_x, probe_depths, marker="v", s=40,
+                   color="black", zorder=5, label="Probe")
+
+    ax.invert_yaxis()
+    ax.set_xlim(xe[0], xe[-1])
+    ax.set_ylim(zb[-1], 0.0)
+
+    if show_xlabel:
+        ax.set_xlabel(xlabel, fontsize=8)
+    if show_ylabel:
+        ax.set_ylabel("Depth (m)", fontsize=8)
+
+    ax.set_title(title, fontsize=8, pad=3)
+    ax.tick_params(labelsize=7)
+
+    if show_colorbar and cbar_ax is not None:
+        cbar = plt.colorbar(sm, cax=cbar_ax)
+        cbar.set_label("Δθ vs. truth (%)", fontsize=8)
+        cbar.ax.tick_params(labelsize=7)
+
+    return sm
+
+
+def _compute_pct_diff(theta_calc: np.ndarray, theta_true: np.ndarray,
+                       zero_floor: float = 1e-6) -> np.ndarray:
+    """
+    Signed relative percent difference of *theta_calc* vs. *theta_true*,
+    both in the SAME units (m^3/m^3 or % vol., doesn't matter as long as
+    they match — the ratio cancels the unit):
+
+        pct_diff = (theta_calc - theta_true) / theta_true * 100
+
+    Positive  → calculated wetter than truth.
+    Negative  → calculated drier than truth.
+    Cells where ``theta_true`` is (near) zero are masked to NaN rather
+    than producing a divide-by-zero blow-up, since soil water content is
+    never truly zero in these synthetic scenarios and a near-zero truth
+    cell is far more likely a numerical/edge artefact than a meaningful
+    reference value.
+    """
+    theta_calc = np.asarray(theta_calc, dtype=float)
+    theta_true = np.asarray(theta_true, dtype=float)
+    if theta_calc.shape != theta_true.shape:
+        raise ValueError(
+            f"[_compute_pct_diff] Shape mismatch: theta_calc {theta_calc.shape} "
+            f"vs. theta_true {theta_true.shape}."
+        )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pct_diff = np.where(
+            np.abs(theta_true) > zero_floor,
+            (theta_calc - theta_true) / theta_true * 100.0,
+            np.nan,
+        )
+    return pct_diff
+
+
+def plot_water_content_pct_diff(
+    theta_calc: np.ndarray,
+    theta_true: np.ndarray,
+    x_coords: np.ndarray,
+    depths0: list[float],
+    probe_x: Sequence[float] | None = None,
+    probe_depths: Sequence[float] | None = None,
+    diff_vmax: float | None = None,
+    cmap: str = "RdBu_r",
+    title: str = "Water Content % Difference (Calculated vs. Truth)",
+    output_path: str | None = None,
+    dpi: int = 150,
+) -> plt.Figure:
+    """
+    Plot a single XZ panel of the signed % difference between a calculated
+    water-content section and its ground-truth counterpart (one epoch).
+    Both inputs must be in the same units and shaped (n_x, n_layers).
+    """
+    pct_diff = _compute_pct_diff(theta_calc, theta_true)
+
+    if diff_vmax is None:
+        finite = pct_diff[np.isfinite(pct_diff)]
+        diff_vmax = float(np.nanpercentile(np.abs(finite), 98)) if finite.size else 25.0
+        diff_vmax = max(5.0, np.ceil(diff_vmax / 5) * 5)
+
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    fig.subplots_adjust(right=0.88)
+    cbar_ax = fig.add_axes([0.90, 0.15, 0.015, 0.70])
+
+    _plot_xz_diff_panel(
+        ax=ax, pct_diff=pct_diff,
+        x_coords=x_coords, depths0=depths0,
+        probe_x=probe_x, probe_depths=probe_depths,
+        diff_vmax=diff_vmax, cmap=cmap, title=title,
+        show_colorbar=True, cbar_ax=cbar_ax,
+    )
+
+    legend_elements = [
+        mpatches.Patch(facecolor="lightgrey", edgecolor="grey",
+                       label="Truth ≈ 0 (undefined % diff, masked)"),
+    ]
+    if probe_x is not None:
+        legend_elements.append(
+            plt.Line2D([0], [0], marker="v", color="w", markerfacecolor="black",
+                       markersize=6, label="Water content probe")
+        )
+    ax.legend(handles=legend_elements, loc="lower right", fontsize=6, framealpha=0.8)
+
+    n_finite = int(np.isfinite(pct_diff).sum())
+    if n_finite:
+        mean_abs = float(np.nanmean(np.abs(pct_diff)))
+        fig.suptitle(f"{title}\nmean |Δ| = {mean_abs:.1f} %  (n={n_finite} cells)",
+                     fontsize=10, y=1.03)
+    else:
+        fig.suptitle(title, fontsize=10, y=1.01)
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[PLOT] Saved: {output_path}")
+
+    return fig
+
+
+def plot_water_content_pct_diff_timelapse(
+    theta_calc: np.ndarray,
+    theta_true: np.ndarray,
+    x_coords: np.ndarray,
+    depths0: list[float],
+    probe_x: Sequence[float] | None = None,
+    probe_depths: Sequence[float] | None = None,
+    survey_labels: Sequence[str] | None = None,
+    diff_vmax: float | None = None,
+    cmap: str = "RdBu_r",
+    n_cols: int = 2,
+    output_dir: str = ".",
+    scenario_name: str = "scenario",
+    dpi: int = 150,
+) -> plt.Figure:
+    """Grid of XZ % -difference panels, one per survey time step."""
+    if theta_calc.ndim == 2:
+        theta_calc = theta_calc[np.newaxis]
+    if theta_true.ndim == 2:
+        theta_true = theta_true[np.newaxis]
+
+    n_time, n_x, n_layers = theta_calc.shape
+
+    pct_diff_all = _compute_pct_diff(theta_calc, theta_true)
+
+    if diff_vmax is None:
+        finite = pct_diff_all[np.isfinite(pct_diff_all)]
+        diff_vmax = float(np.nanpercentile(np.abs(finite), 98)) if finite.size else 25.0
+        diff_vmax = max(5.0, np.ceil(diff_vmax / 5) * 5)
+
+    if survey_labels is None:
+        survey_labels = [f"t = {i}" for i in range(n_time)]
+
+    n_rows = int(np.ceil(n_time / n_cols))
+    fig_w  = 6.0 * n_cols + 1.2
+    fig_h  = 2.5 * n_rows
+    fig    = plt.figure(figsize=(fig_w, fig_h))
+
+    gs = fig.add_gridspec(
+        n_rows, n_cols + 1,
+        width_ratios=[1.0] * n_cols + [0.04],
+        hspace=0.45, wspace=0.22,
+        left=0.06, right=0.96, top=0.91, bottom=0.10,
+    )
+    cbar_ax = fig.add_subplot(gs[:, -1])
+    sm_ref  = None
+
+    for t in range(n_time):
+        row, col = divmod(t, n_cols)
+        ax = fig.add_subplot(gs[row, col])
+        show_y = (col == 0)
+        show_x = (row == n_rows - 1) or (t >= n_time - n_cols)
+
+        sm = _plot_xz_diff_panel(
+            ax=ax, pct_diff=pct_diff_all[t],
+            x_coords=x_coords, depths0=depths0,
+            probe_x=probe_x if t == 0 else None,
+            probe_depths=probe_depths if t == 0 else None,
+            diff_vmax=diff_vmax, cmap=cmap, title=survey_labels[t],
+            show_xlabel=show_x, show_ylabel=show_y,
+        )
+        sm_ref = sm
+
+    for t in range(n_time, n_rows * n_cols):
+        row, col = divmod(t, n_cols)
+        fig.add_subplot(gs[row, col]).set_visible(False)
+
+    if sm_ref is not None:
+        cbar = fig.colorbar(sm_ref, cax=cbar_ax)
+        cbar.set_label("Δθ vs. truth (%)", fontsize=9)
+        cbar.ax.tick_params(labelsize=8)
+
+    legend_elements = [
+        mpatches.Patch(facecolor="lightgrey", edgecolor="grey",
+                       label="Truth ≈ 0 (undefined % diff, masked)"),
+    ]
+    if probe_x is not None:
+        legend_elements.append(
+            plt.Line2D([0], [0], marker="v", color="w", markerfacecolor="black",
+                       markersize=6, label="Water content probe")
+        )
+    fig.legend(handles=legend_elements, loc="lower center",
+               ncol=len(legend_elements), fontsize=7, framealpha=0.85,
+               bbox_to_anchor=(0.46, 0.01))
+
+    fig.suptitle(f"Water Content % Difference (Calculated vs. Truth) — scenario: {scenario_name}",
+                 fontsize=11, y=0.97)
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"water_content_xz_{scenario_name}_pctdiff.png")
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[PLOT] Saved XZ % -difference timelapse: {out_path}")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Public: % difference between plot_from_pipeline and plot_truth_from_pipeline
+# ---------------------------------------------------------------------------
+
+def plot_pct_diff_from_pipeline(
+    selected_output,
+    theta_true: np.ndarray,      # (n_time, n_pos, n_layers) or (n_pos, n_layers), m^3/m^3
+    x_transect: np.ndarray,
+    depths0: list[float],
+    probe_x_coords: list[float],
+    probe_depths: list[float],
+    output_dir: str,
+    scenario_name: str = "default",
+    timelapse: bool = False,
+    survey_labels: Sequence[str] | None = None,
+    diff_vmax: float | None = None,
+) -> str | None:
+    """
+    Render the XZ % -difference figure between ``plot_from_pipeline``'s
+    calculated water content and ``plot_truth_from_pipeline``'s ground
+    truth — i.e. the figure requested to sit alongside
+    ``water_content_xz_{scenario_name}.png`` and
+    ``water_content_xz_{scenario_name}_truth.png``, saved as
+    ``water_content_xz_{scenario_name}_pctdiff.png``.
+
+    Call this the same way as ``plot_truth_from_pipeline`` (same
+    ``theta_true``, ``x_transect``, etc.) immediately after both of those
+    have run, so all three files share one scenario/epoch layout. Only
+    meaningful in synthetic mode (a ground truth must exist).
+
+    Returns the output file path, or ``None`` if rendering was skipped
+    (spatial-point mismatch between ``theta_true`` and ``x_transect``).
+    """
+    theta_calc = _extract_theta_calc(selected_output)  # m^3/m^3
+    theta_true = np.asarray(theta_true, dtype=float)   # m^3/m^3
+
+    if theta_true.ndim not in (2, 3):
+        raise ValueError(
+            f"[plot_pct_diff_from_pipeline] Expected theta_true with 2 or 3 dims "
+            f"(n_pos, n_layers) or (n_time, n_pos, n_layers); got shape {theta_true.shape}."
+        )
+    n_pos_truth = theta_true.shape[-2]
+    if n_pos_truth != len(x_transect):
+        print(
+            f"[plot_pct_diff_from_pipeline][WARN] theta_true has {n_pos_truth} spatial "
+            f"points but x_transect has {len(x_transect)}; truth and calculated arrays "
+            "may not be spatially aligned. Skipping % -difference rendering."
+        )
+        return None
+    if theta_calc.shape != theta_true.shape:
+        print(
+            f"[plot_pct_diff_from_pipeline][WARN] theta_calc shape {theta_calc.shape} "
+            f"!= theta_true shape {theta_true.shape}. Skipping % -difference rendering."
+        )
+        return None
+
+    if timelapse and theta_calc.ndim == 3:
+        fig = plot_water_content_pct_diff_timelapse(
+            theta_calc=theta_calc, theta_true=theta_true,
+            x_coords=x_transect, depths0=depths0,
+            probe_x=probe_x_coords, probe_depths=probe_depths,
+            survey_labels=survey_labels,
+            diff_vmax=diff_vmax,
+            output_dir=output_dir, scenario_name=scenario_name,
+        )
+        return os.path.join(output_dir, f"water_content_xz_{scenario_name}_pctdiff.png")
+    else:
+        tc = theta_calc[0] if theta_calc.ndim == 3 else theta_calc
+        tt = theta_true[0] if theta_true.ndim == 3 else theta_true
+        output_path = os.path.join(output_dir, f"water_content_xz_{scenario_name}_pctdiff.png")
+        plot_water_content_pct_diff(
+            theta_calc=tc, theta_true=tt,
+            x_coords=x_transect, depths0=depths0,
+            probe_x=probe_x_coords, probe_depths=probe_depths,
+            diff_vmax=diff_vmax,
+            title=f"Water Content % Difference (Calculated vs. Truth) — {scenario_name}",
+            output_path=output_path,
+        )
+        return output_path
+
+
+# ---------------------------------------------------------------------------
+# Public: INITIAL MODEL (starting guess) vs. TRUTH — two flavours
+#
+#   (1) plot_initial_model_vs_true_ec   -- depth-resolved EC_bulk (mS/m),
+#       same XZ-heatmap style as water_content_xz_*.png. The initial model
+#       (conds0) has no spatial variation by construction (it's the same
+#       starting guess at every position), so it's rendered as flat
+#       horizontal bands -- one panel for the layer-MIN guess, one for the
+#       layer-MAX guess (the two extremes of cond_ranges) -- next to the
+#       real, spatially-varying true EC_bulk panel. If the guess brackets
+#       reality, the true panel's colours should sit "between" the two
+#       flat-band panels.
+#
+#   (2) plot_initial_eca_vs_true_eca    -- per-coil apparent conductivity
+#       (ECa), which is NOT depth-resolved (each coil has an overlapping,
+#       not a discrete, depth sensitivity), so it can't use the XZ-heatmap
+#       style at all. Instead: one subplot per coil, x = position along
+#       transect, true (noisy, spatially-varying) ECa as points/line, and
+#       the initial model's min/max guesses forward-modelled through
+#       EMagPy (no inversion) into flat reference bands for comparison.
+# ---------------------------------------------------------------------------
+
+def plot_initial_model_vs_true_ec(
+    cond_ranges: Sequence[Sequence[float]],
+    depths0: list[float],
+    x_coords: np.ndarray,
+    ec_bulk_true: np.ndarray,      # (n_pos, n_layers) or (n_time, n_pos, n_layers), mS/m
+    output_dir: str,
+    scenario_name: str = "default",
+    probe_x: Sequence[float] | None = None,
+    probe_depths: Sequence[float] | None = None,
+    epoch_index: int = 0,
+    dpi: int = 150,
+) -> str:
+    """
+    Three-panel XZ comparison, same visual style/colour-scale as
+    ``water_content_xz_{scenario}.png``: the initial (starting-guess)
+    conductivity model's layer-MIN and layer-MAX bounds (flat bands,
+    since the starting guess doesn't vary spatially) next to the real,
+    spatially-varying true EC_bulk. Saved as
+    ``initial_model_vs_true_ec_xz_{scenario_name}.png``.
+
+    If ``ec_bulk_true`` carries a time-lapse axis, only ``epoch_index``
+    is shown (the starting guess is identical at every epoch anyway, so
+    there's nothing new to gain from a full multi-epoch grid here).
+    """
+    ec_bulk_true = np.asarray(ec_bulk_true, dtype=float)
+    if ec_bulk_true.ndim == 3:
+        if ec_bulk_true.shape[0] <= epoch_index:
+            raise ValueError(
+                f"[plot_initial_model_vs_true_ec] epoch_index={epoch_index} out of range "
+                f"for ec_bulk_true with {ec_bulk_true.shape[0]} epoch(s)."
+            )
+        ec_true_epoch = ec_bulk_true[epoch_index]
+    elif ec_bulk_true.ndim == 2:
+        ec_true_epoch = ec_bulk_true
+    else:
+        raise ValueError(
+            f"[plot_initial_model_vs_true_ec] Expected 2 or 3 dims, got shape {ec_bulk_true.shape}."
+        )
+
+    n_pos, n_layers = ec_true_epoch.shape
+    if n_pos != len(x_coords):
+        raise ValueError(
+            f"[plot_initial_model_vs_true_ec] ec_bulk_true has {n_pos} spatial points "
+            f"but x_coords has {len(x_coords)}."
+        )
+    if len(cond_ranges) != n_layers:
+        raise ValueError(
+            f"[plot_initial_model_vs_true_ec] cond_ranges has {len(cond_ranges)} layer(s) "
+            f"but ec_bulk_true has {n_layers}."
+        )
+
+    min_vec = np.array([r[0]  for r in cond_ranges], dtype=float)
+    max_vec = np.array([r[-1] for r in cond_ranges], dtype=float)
+
+    min_band = np.tile(min_vec, (n_pos, 1))   # flat across x -- (n_pos, n_layers)
+    max_band = np.tile(max_vec, (n_pos, 1))
+
+    vmax = max(float(np.nanpercentile(ec_true_epoch, 98)), float(max_vec.max()))
+    vmin = min(float(np.nanpercentile(ec_true_epoch, 2)),  float(min_vec.min()))
+    vmin = max(0.0, vmin)
+
+    fig = plt.figure(figsize=(16, 3.6))
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 1, 0.05],
+                          left=0.05, right=0.94, wspace=0.30)
+    ax_min, ax_max, ax_true = (fig.add_subplot(gs[0, i]) for i in range(3))
+    cbar_ax = fig.add_subplot(gs[0, 3])
+
+    zero_cv_min  = np.zeros_like(min_band)
+    zero_cv_max  = np.zeros_like(max_band)
+    zero_cv_true = np.zeros_like(ec_true_epoch)
+
+    _plot_xz_panel(
+        ax=ax_min, theta=min_band, cv=zero_cv_min, coverage=None,
+        x_coords=x_coords, depths0=depths0,
+        cmap="viridis", title="Initial model — layer MIN guess",
+        show_ylabel=True, value_label="EC_bulk (mS/m)",
+        theta_vmin=vmin, theta_vmax=vmax,
+    )
+    _plot_xz_panel(
+        ax=ax_max, theta=max_band, cv=zero_cv_max, coverage=None,
+        x_coords=x_coords, depths0=depths0,
+        cmap="viridis", title="Initial model — layer MAX guess",
+        show_ylabel=False, value_label="EC_bulk (mS/m)",
+        theta_vmin=vmin, theta_vmax=vmax,
+    )
+    sm = _plot_xz_panel(
+        ax=ax_true, theta=ec_true_epoch, cv=zero_cv_true, coverage=None,
+        x_coords=x_coords, depths0=depths0,
+        probe_x=probe_x, probe_depths=probe_depths,
+        cmap="viridis", title="True EC_bulk",
+        show_ylabel=False, show_colorbar=True, cbar_ax=cbar_ax,
+        value_label="EC_bulk (mS/m)",
+        theta_vmin=vmin, theta_vmax=vmax,
+    )
+
+    fig.suptitle(
+        f"Initial Model vs. Ground Truth — EC_bulk — scenario: {scenario_name}"
+        + (f" (epoch {epoch_index})" if ec_bulk_true.ndim == 3 else ""),
+        fontsize=11, y=1.04,
+    )
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"initial_model_vs_true_ec_xz_{scenario_name}.png")
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[PLOT] Saved: {out_path}")
+    return out_path
+
+
+def _forward_model_single_point(
+    ec_profile: Sequence[float],
+    depths0: Sequence[float],
+    coils: Sequence[str],
+    forward_model: str = "CS",
+) -> np.ndarray:
+    """
+    Forward-model ONE conductivity profile (no inversion) through EMagPy
+    to get the ECa it would produce on the given coil set -- the same
+    ``Problem.forward(...)`` call pattern used by
+    ``0_generate_synthetic_data.py`` to build the synthetic truth ECa in
+    the first place, so the two are directly comparable.
+    """
+    from emagpy import Problem
+
+    models_input = [np.array([list(ec_profile)])]
+    depths_input = [np.array([list(depths0)])]
+
+    k_point = Problem()
+    k_point.models = models_input
+    k_point.depths = depths_input
+    res_forward = k_point.forward(
+        forwardModel=forward_model, coils=list(coils),
+        models=models_input, depths=depths_input,
+    )
+    raw = res_forward[0]
+    values = raw.values if hasattr(raw, "values") else np.asarray(raw)
+    return np.asarray(values).flatten()
+
+
+def plot_initial_eca_vs_true_eca(
+    cond_ranges: Sequence[Sequence[float]],
+    depths0: list[float],
+    x_coords: np.ndarray,
+    eca_true: np.ndarray,          # (n_pos, n_coils) or (n_time, n_pos, n_coils)
+    coils: Sequence[str],
+    output_dir: str,
+    scenario_name: str = "default",
+    forward_model: str = "CS",
+    epoch_index: int = 0,
+    n_cols: int = 3,
+    dpi: int = 150,
+) -> str | None:
+    """
+    Per-coil comparison of true (measured) apparent conductivity against
+    what the initial model's layer-MIN and layer-MAX guesses would
+    forward-predict for the same coil set -- ECa isn't depth-resolved so
+    this uses per-coil x-vs-ECa panels (à la
+    ``0_generate_synthetic_data.plot_synthetic_results``'s "Apparent EC"
+    figure), not an XZ heatmap. Saved as
+    ``initial_eca_vs_true_eca_{scenario_name}.png``.
+
+    Returns ``None`` (and logs a warning) if EMagPy isn't importable or
+    the forward call fails, rather than raising -- this is a QC extra,
+    not a pipeline-critical step.
+    """
+    eca_true = np.asarray(eca_true, dtype=float)
+    if eca_true.ndim == 3:
+        eca_epoch = eca_true[epoch_index]
+    elif eca_true.ndim == 2:
+        eca_epoch = eca_true
+    else:
+        raise ValueError(
+            f"[plot_initial_eca_vs_true_eca] Expected 2 or 3 dims, got shape {eca_true.shape}."
+        )
+
+    n_pos, n_coils = eca_epoch.shape
+    if n_pos != len(x_coords):
+        raise ValueError(
+            f"[plot_initial_eca_vs_true_eca] eca_true has {n_pos} spatial points "
+            f"but x_coords has {len(x_coords)}."
+        )
+    if n_coils != len(coils):
+        raise ValueError(
+            f"[plot_initial_eca_vs_true_eca] eca_true has {n_coils} coil(s) "
+            f"but coils has {len(coils)}."
+        )
+
+    min_vec = [r[0]  for r in cond_ranges]
+    max_vec = [r[-1] for r in cond_ranges]
+
+    try:
+        eca_min = _forward_model_single_point(min_vec, depths0, coils, forward_model)
+        eca_max = _forward_model_single_point(max_vec, depths0, coils, forward_model)
+    except Exception as e:
+        print(
+            f"[plot_initial_eca_vs_true_eca][WARN] Forward-modelling the initial model "
+            f"failed ({type(e).__name__}: {e}); skipping this plot."
+        )
+        return None
+
+    n_rows = int(np.ceil(n_coils / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.2 * n_cols, 3.0 * n_rows),
+                              squeeze=False, sharex=True)
+    colors = plt.cm.tab10(np.linspace(0, 1, n_coils))
+    x_idx = np.arange(1, n_pos + 1)
+
+    for c in range(n_coils):
+        row, col = divmod(c, n_cols)
+        ax = axes[row][col]
+        ax.plot(x_idx, eca_epoch[:, c], marker="o", markersize=4, linewidth=1.3,
+                color=colors[c], label="True ECa (measured)")
+        ax.axhline(eca_min[c], linestyle="--", linewidth=1.5, color="tab:red",
+                   label="Initial model — MIN guess")
+        ax.axhline(eca_max[c], linestyle="--", linewidth=1.5, color="tab:green",
+                   label="Initial model — MAX guess")
+        ax.set_title(coils[c], fontsize=9, fontweight="bold")
+        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.tick_params(labelsize=7)
+        if col == 0:
+            ax.set_ylabel("$EC_a$ (mS/m)", fontsize=8)
+        if row == n_rows - 1:
+            ax.set_xlabel("Position index along transect", fontsize=8)
+        if c == 0:
+            ax.legend(fontsize=6, loc="best")
+
+    for c in range(n_coils, n_rows * n_cols):
+        row, col = divmod(c, n_cols)
+        axes[row][col].set_visible(False)
+
+    fig.suptitle(
+        f"Initial Model vs. True Apparent Conductivity ($EC_a$) — scenario: {scenario_name}"
+        + (f" (epoch {epoch_index})" if eca_true.ndim == 3 else ""),
+        fontsize=11, y=1.02,
+    )
+    fig.tight_layout()
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"initial_eca_vs_true_eca_{scenario_name}.png")
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[PLOT] Saved: {out_path}")
+    return out_path
 
 
 # ---------------------------------------------------------------------------

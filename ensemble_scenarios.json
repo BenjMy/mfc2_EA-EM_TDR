@@ -183,8 +183,9 @@
         0.1,
         0.3
       ],
+      "beta": [0,0.5,1],
       "method": [
-        "MCMC"
+        "ROPE"
       ],
       "forwardModel": [
         "FSlin",
@@ -231,7 +232,7 @@
     "ws_fixed_params": {
       "a": true,
       "m": true,
-      "sigma_w": true,
+      "sigma_w": false,
       "sigma_s": false
     },
     "lab_p0": [
@@ -247,8 +248,9 @@
         0.1,
         0.3
       ],
+      "beta": [0,0.5,1],
       "method": [
-        "MCMC"
+        "ROPE"
       ],
       "forwardModel": [
         "FSlin",
@@ -273,13 +275,13 @@
         60.0
       ]
     ],
-    "forward_model": "CS",
     "gamma": 0.0,
+    "forward_model": "CS",
     "num_swc_positions": 10,
     "swc_depths": null,
     "window_m": 1.0,
     "tdr_noise_std": 0.01,
-    "eca_noise_level": 0.03,
+    "eca_noise_level": 0.01,
     "alpha_range_log": null,
     "cache_tag": "field_survey_2d_dense_tdr"
   },
@@ -288,6 +290,7 @@
     "output_dir": "mfc2_outputs/field_survey_2d_real",
     "data_source": "real",
     "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm", 
     "tdr_data_dir": "./data/daily_MFC/",
     "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
     "time_tolerance_days": 1.0,
@@ -464,5 +467,71 @@
     "grid_num_x": 12,
     "grid_num_y": 6,
     "cache_tag": "moisture_2d_dense_tdr"
+  },
+"mfc2_real_synthetic_mirror": {
+    "description": "Synthetic twin of the real MFC2 deployment: real EM survey dates/point-count asymmetry (incl. the degraded 15/12/2020 epoch) and real 24-station TDR coordinates at 15/30 cm, with known ground truth for scoring.",
+    "output_dir": "mfc2_outputs/mfc2_real_synthetic_mirror",
+    "data_source": "real",
+    "em_data_dir": "./out_smoke2/EMI_MFC2_synthetic",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./out_smoke2/daily_MFC_synthetic",
+    "coord_file": "/mnt/user-data/uploads/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "MCMC"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      9
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "window_m": 3.0,
+    "spatial_match_tolerance_m": 3.0,
+    "tdr_noise_std": 0.015,
+    "eca_noise_level": 0.03,
+    "cache_tag": "mfc2_real_synthetic_mirror"
   }
 }

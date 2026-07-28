@@ -64,6 +64,12 @@ def generate_time_lapse_dataset(
     depths0: list | None = None,
     cond_ranges: list | None = None,
     homogeneous: bool = False,
+    infiltration: bool = False,
+    front_z0: float = 0.2,
+    front_speed: float = 0.5,
+    front_width: float = 0.15,
+    theta_dry: float = 0.08,
+    theta_wet: float = 0.38,
 ):
     """
     Generate synthetic 4-D subsurface property matrices (EC_bulk, ECa, θ)
@@ -77,6 +83,15 @@ def generate_time_lapse_dataset(
         points and layers at each timestep. Only temporal trend (progressive
         wetting over timesteps) varies. Useful for testing inversion behavior
         on truly uniform soil that evolves over time, without spatial confounding.
+    infiltration : bool, default False
+        When True, replaces the linear XZ/temporal gradient with a downward-
+        moving wetting-front model: at t=0 the shallow subsurface (near
+        front_z0) is wet (theta_wet) and everything below is still at the
+        pre-event dry state (theta_dry); the front then advances downward by
+        front_speed [m] per timestep, so deeper layers (e.g. ~1.2 m) wet up
+        progressively over the time-lapse sequence. front_width controls how
+        sharp the wetting front is (smaller = sharper step). Takes precedence
+        over `homogeneous` if both are set.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -127,6 +142,11 @@ def generate_time_lapse_dataset(
     ensemble_ec_apparent = []
     ensemble_theta_true = []
 
+    # Computed up-front (single shared implementation, see note near the
+    # np.save calls below) so the infiltration branch can look up each
+    # layer's true depth [m] while building the per-point profile.
+    layer_centers = geometry_utils.layer_centers(layer_bottoms).tolist()
+
     np.random.seed(42)
 
     # Pre-calculate spatial coordinate extents for normalization mapping
@@ -160,7 +180,28 @@ def generate_time_lapse_dataset(
                     # Normalized vertical fraction for depth (XZ) gradient
                     z_frac = l_idx / (num_layers - 1) if num_layers > 1 else 0.0
 
-                    if homogeneous:
+                    if infiltration:
+                        # Downward-moving wetting front: at t_idx=0 the front
+                        # sits at front_z0 (shallow -> wet, deep -> still dry).
+                        # It advances by front_speed [m] per timestep, so a
+                        # layer centered at e.g. 1.2 m starts dry and wets up
+                        # progressively once the front reaches it. A logistic
+                        # (not step) transition avoids an unrealistic sharp
+                        # discontinuity, which also helps ERT/EMI inversion
+                        # sensitivity tests. Mild XY heterogeneity nudges the
+                        # front slightly earlier/later across the transect/grid.
+                        z_depth = layer_centers[l_idx]
+                        if mode == "2d":
+                            het_offset = 0.05 * x_frac + 0.03 * y_frac
+                        else:
+                            het_offset = 0.08 * x_frac
+                        front_z_t = front_z0 + front_speed * t_idx - het_offset
+                        wet_fraction = 1.0 / (1.0 + np.exp((z_depth - front_z_t) / front_width))
+                        base_theta = theta_dry + (theta_wet - theta_dry) * wet_fraction
+
+                        theta_val = base_theta + np.random.normal(0, 0.01)
+                        theta_val = np.clip(theta_val, 0.03, 0.45)
+                    elif homogeneous:
                         # Truly homogeneous: use the pre-computed uniform theta for this timestep
                         theta_val = base_theta_homogeneous
                     else:
@@ -234,7 +275,8 @@ def generate_time_lapse_dataset(
     # run_pipeline.py::_layer_centers, and in run_pipeline_short.py; a
     # mismatch between those copies previously caused a Step 6d plotting
     # crash. depth_boundaries is unchanged and still saved/returned below.
-    layer_centers = geometry_utils.layer_centers(layer_bottoms).tolist()
+    # (layer_centers itself is now computed up-front, before the ensemble
+    # loop, so the infiltration branch can use it — see above.)
 
     np.save(os.path.join(output_dir, "synthetic_layer_centers.npy"),    np.array(layer_centers))
     np.save(os.path.join(output_dir, "synthetic_depth_boundaries.npy"), np.array(depth_boundaries))
@@ -420,7 +462,33 @@ if __name__ == "__main__":
         help="Disable spatial (XY/XZ) gradients so theta is spatially uniform. "
              "Temporal trend and noise are still applied.",
     )
+    parser.add_argument(
+        "--infiltration",
+        action="store_true",
+        help="Replace the linear XZ/temporal gradient with a downward-moving "
+             "wetting-front model (high theta near the surface at t=0, "
+             "progressively wetting deeper layers over time). Overrides "
+             "--homogeneous if both are given.",
+    )
+    parser.add_argument("--front-z0", type=float, default=0.2,
+                         help="Wetting-front depth [m] at t=0 (infiltration mode).")
+    parser.add_argument("--front-speed", type=float, default=0.5,
+                         help="Front advance rate [m/timestep] (infiltration mode).")
+    parser.add_argument("--front-width", type=float, default=0.15,
+                         help="Transition sharpness [m] of the wetting front (infiltration mode).")
+    parser.add_argument("--theta-dry", type=float, default=0.08,
+                         help="Pre-event (dry) volumetric water content (infiltration mode).")
+    parser.add_argument("--theta-wet", type=float, default=0.38,
+                         help="Post-wetting volumetric water content (infiltration mode).")
+    parser.add_argument("--depths0", type=str, default=None,
+                         help="Comma-separated layer-bottom depths [m], e.g. '0.4,0.9,1.5' "
+                              "(gives layer centers at 0.2, 0.65, 1.2 m). Defaults to [0.3, 0.6, 1.0].")
     args = parser.parse_args()
+
+    depths0 = (
+        [float(d) for d in args.depths0.split(",")]
+        if args.depths0 is not None else None
+    )
 
     res = generate_time_lapse_dataset(
         output_dir=args.out,
@@ -428,7 +496,14 @@ if __name__ == "__main__":
         mode=args.mode,
         num_x=args.num_x,
         num_y=args.num_y,
+        depths0=depths0,
         homogeneous=args.homogeneous,
+        infiltration=args.infiltration,
+        front_z0=args.front_z0,
+        front_speed=args.front_speed,
+        front_width=args.front_width,
+        theta_dry=args.theta_dry,
+        theta_wet=args.theta_wet,
     )
 
     print(f"[DATA GEN] {len(res['layer_bottoms']) + 1} layers derived from depths0={res['layer_bottoms']}")

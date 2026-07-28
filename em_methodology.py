@@ -643,6 +643,63 @@ def load_survey_positions(fnames, targetProjection: str | None = None,
     return k.surveys[0].df
 
 
+def extract_conductivity_pstd(pstd_array: np.ndarray, num_layers: int) -> np.ndarray:
+    """
+    Slice out the per-layer CONDUCTIVITY columns of an emagpy ``k.pstds[i]``
+    array (MCMC/ROPE/DREAM/SCEUA-based inversion methods only; all-zero for
+    every other method).
+
+    Background
+    ----------
+    For MCMC-family methods, ``Problem.invert()`` runs a real posterior
+    sampler (via ``spotpy``) at every measurement point, but then collapses
+    it down to just two things per point: the lowest-misfit sample (which
+    becomes ``k.models[i]`` / ``k.depths[i]``) and a per-FREE-PARAMETER
+    standard deviation computed from the best 10% of the chain (``k.pstds[i]``,
+    shape ``(num_measured_points, n_free_depths + n_free_conductivities)``).
+    The raw posterior chain itself is never retained by emagpy.
+
+    Column layout of ``k.pstds[i]`` is ``[free_depth_stds..., conductivity_stds]``
+    (this mirrors the ``vd``/``vc`` ordering used internally by
+    ``Problem.invert()``). Since this pipeline never sets ``fixedConds`` in
+    any ``k.setInit()`` call, EVERY conductivity layer is always free, so the
+    trailing ``num_layers`` columns of ``k.pstds[i]`` are always exactly the
+    per-layer conductivity posterior std -- regardless of whether depths
+    were fixed or free (which only changes how many LEADING columns exist).
+    Slicing the trailing ``num_layers`` columns therefore always gives a
+    result directly comparable, index-for-index, to a model/EC array shaped
+    ``(num_measured_points, num_layers)``.
+
+    Parameters
+    ----------
+    pstd_array : np.ndarray
+        ``k.pstds[i]`` for one epoch, shape ``(num_measured_points,
+        n_free_params)``, OR any array carrying that as its trailing two
+        axes -- e.g. this pipeline's own ``pstds_clean``, shaped
+        ``(ensemble_size, [n_time,] num_measured_points, n_free_params)``.
+        Any number of leading (ensemble/time) axes is accepted unchanged.
+        ``n_free_params >= num_layers`` whenever this pipeline's own
+        ``k.setInit()`` convention (all conductivities free) holds.
+    num_layers : int
+        Number of soil layers (== conductivity columns == ``cond_ranges`` length).
+
+    Returns
+    -------
+    np.ndarray, same leading shape as ``pstd_array`` but with the trailing
+    axis reduced to ``num_layers``
+        Per-layer conductivity MCMC posterior std [mS/m]. All-zero for
+        non-MCMC-family inversion methods (matches emagpy's own convention:
+        ``self.pstds`` is zero-initialised and only the MCMC branch ever
+        writes non-zero values into it). NaN-filled if the trailing axis
+        has fewer than ``num_layers`` columns, which would indicate an
+        emagpy version/convention mismatch rather than normal operation.
+    """
+    pstd_array = np.asarray(pstd_array, dtype=float)
+    if pstd_array.ndim < 2 or pstd_array.shape[-1] < num_layers:
+        return np.full(pstd_array.shape[:-1] + (num_layers,), np.nan, dtype=float)
+    return pstd_array[..., -num_layers:]
+
+
 # ==========================================================================
 # 3. ENSEMBLE GENERATION UTILITIES
 # ==========================================================================
@@ -1033,7 +1090,7 @@ def compute_param_sensitivity(
       the time axis is mean-collapsed before computing sensitivity so the result
       is always a per-layer vector.
     """
-    target_keys = ["alpha", "method", "forwardModel"]
+    target_keys = ["alpha", "beta", "method", "forwardModel"]
     results = {}
 
     # Collapse time axis for time-lapse arrays → uniform 3D view
@@ -1230,6 +1287,7 @@ def calibrate_petrophysical_relationship(
     fixed_params: dict[str, bool] | None = None,
     warm_start_continuation: bool = False,
     probe_depths_reflect_fitted_interfaces: bool = False,
+    theta_obs_std: float | Sequence[float] | None = None,
 ) -> list[PetroFit]:
     """
     Step 2 Core Engine: Fits Waxman-Smits parameters **separately per soil horizon**
@@ -1329,6 +1387,28 @@ def calibrate_petrophysical_relationship(
         for Step 2's raw per-ensemble-member calibration, where members are
         unordered parameter-grid combinations and continuity across them
         has no meaning.
+    theta_obs_std : float or sequence of float, optional
+        FIX ("TDR measurement uncertainty is collected but never used to
+        weight the calibration"): standard deviation [m³/m³] of ``theta_obs``
+        measurement noise -- e.g. the scenario's ``tdr_noise_std`` -- either
+        one value applied to every observation, or one value per observation
+        (same length/order as ``theta_obs``). When given, each observation's
+        contribution to the per-horizon data-misfit term (see
+        ``_log_ratio_objective`` below) is weighted by
+        ``1 / theta_obs_std**2``, renormalised so the weights average to 1
+        across each horizon's own observations -- a noisier probe reading
+        counts for proportionally less, a more precise one for
+        proportionally more, without changing the overall scale of the
+        misfit term (so ``lambda_reg`` below doesn't need retuning purely
+        because weighting was turned on). This is a simplification, not a
+        full propagation of theta-measurement noise through the
+        Waxman-Smits forward model into EC-space (that would additionally
+        depend on the candidate ``m`` at each optimizer iteration); it only
+        captures *relative* confidence between observations. ``None``
+        (default) applies uniform weighting, i.e. no behaviour change from
+        before this parameter existed. Observations dropped by the
+        NaN-observation filter below have their weight dropped too (the
+        same mask is applied to both).
 
     Returns
     -------
@@ -1361,6 +1441,25 @@ def calibrate_petrophysical_relationship(
         ensemble_size, num_positions, num_layers = models.shape
     sample_positions = list(sample_positions)
     n_samples = len(sample_positions)
+
+    # theta_obs_std -> a per-observation array (Fix "TDR measurement
+    # uncertainty ... never used to weight the calibration"). Scalar
+    # broadcasts to every observation; a sequence must match theta_obs
+    # 1:1. None (default) disables weighting entirely -- see
+    # _log_ratio_objective below.
+    if theta_obs_std is not None:
+        theta_obs_std_arr = np.broadcast_to(
+            np.asarray(theta_obs_std, dtype=float), (n_samples,)
+        ).copy()
+        if np.any(theta_obs_std_arr <= 0) or np.any(~np.isfinite(theta_obs_std_arr)):
+            print(
+                "[STEP 2][WARN] theta_obs_std contains non-positive or non-finite "
+                "value(s) -- observation weighting disabled for this call "
+                "(falling back to uniform weights) rather than dividing by zero."
+            )
+            theta_obs_std_arr = None
+    else:
+        theta_obs_std_arr = None
 
     if probe_layer_indices is not None:
         probe_layer_indices = list(probe_layer_indices)
@@ -1453,9 +1552,11 @@ def calibrate_petrophysical_relationship(
                     is_calibrated_layer = False
                     theta_layer = np.array([], dtype=float)
                     sigma_b_layer = np.array([], dtype=float)
+                    std_layer = None
                 else:
                     theta_layer = theta_obs[indices]
                     sigma_b_layer = sigma_b_full[indices]
+                    std_layer = theta_obs_std_arr[indices] if theta_obs_std_arr is not None else None
             elif n_samples >= num_layers:
                 # Assign theta_obs to this horizon using a strided slice so
                 # each layer gets a distinct, non-overlapping subset where
@@ -1465,6 +1566,7 @@ def calibrate_petrophysical_relationship(
                 end = start + step if layer < num_layers - 1 else n_samples
                 theta_layer = theta_obs[start:end]
                 sigma_b_layer = sigma_b_full[start:end]
+                std_layer = theta_obs_std_arr[start:end] if theta_obs_std_arr is not None else None
             else:
                 # Wrap-around: assign each observation to the closest layer
                 indices = [i for i in range(n_samples) if i % num_layers == layer]
@@ -1472,6 +1574,61 @@ def calibrate_petrophysical_relationship(
                     indices = list(range(n_samples))   # fallback: use all
                 theta_layer = theta_obs[indices]
                 sigma_b_layer = sigma_b_full[indices]
+                std_layer = theta_obs_std_arr[indices] if theta_obs_std_arr is not None else None
+
+            # ----------------------------------------------------------------
+            # NaN-observation filter (real-data time-lapse spatial reference
+            # grid). See geometry_utils.match_epochs_to_reference_grid and
+            # run_pipeline.py Step 1: real GEM-2 survey epochs are now matched
+            # onto a shared UNION spatial grid instead of being trimmed to a
+            # common row count, so a probe/epoch pair whose reference-grid
+            # point wasn't actually covered by that particular epoch shows up
+            # here as sigma_b_full == NaN, rather than being silently paired
+            # with an unrelated EC value the way the old row-count trim did.
+            # Drop those observations from THIS horizon's fit instead of
+            # letting a NaN reach the optimizer (the log-ratio misfit term
+            # below would otherwise turn a single NaN into a NaN objective
+            # for the whole horizon, silently discarding every OTHER valid
+            # observation too).
+            # ----------------------------------------------------------------
+            if is_calibrated_layer and sigma_b_layer.size > 0:
+                _finite = np.isfinite(sigma_b_layer)
+                if not np.all(_finite):
+                    _n_dropped = int((~_finite).sum())
+                    print(
+                        f"[STEP 2][INFO] Layer {layer}: dropping {_n_dropped} "
+                        f"observation(s) with no EC value at their survey epoch "
+                        f"(unmatched on the time-lapse spatial reference grid) "
+                        f"out of {sigma_b_layer.size} candidate(s)."
+                    )
+                    theta_layer = theta_layer[_finite]
+                    sigma_b_layer = sigma_b_layer[_finite]
+                    if std_layer is not None:
+                        std_layer = std_layer[_finite]
+
+                if sigma_b_layer.size == 0:
+                    print(
+                        f"[WARN] Layer {layer}: every candidate observation was "
+                        f"NaN (unmatched on the time-lapse spatial reference grid). "
+                        f"Leaving this horizon UNCALIBRATED for this ensemble member."
+                    )
+                    is_calibrated_layer = False
+
+            # Per-observation weights for the data-misfit term (Fix "TDR
+            # measurement uncertainty ... never used to weight the
+            # calibration"): inverse-variance, renormalised to mean 1 so the
+            # overall misfit SCALE is unchanged whether or not weighting is
+            # active -- lambda_reg below doesn't need retuning purely
+            # because theta_obs_std was supplied. Falls back to uniform
+            # weights (no-op) when theta_obs_std wasn't given, or doesn't
+            # survive the NaN filter above cleanly.
+            if (std_layer is not None and std_layer.size == theta_layer.size
+                    and theta_layer.size > 0 and np.all(np.isfinite(std_layer))
+                    and np.all(std_layer > 0)):
+                _inv_var = 1.0 / (std_layer ** 2)
+                obs_weights = _inv_var / np.mean(_inv_var)
+            else:
+                obs_weights = np.ones_like(theta_layer)
 
             p0 = p0_per_horizon[layer]
 
@@ -1504,12 +1661,38 @@ def calibrate_petrophysical_relationship(
                         sigma_s_ = max(sigma_s_, 0.0)
 
                         # 1. Standard Data Misfit (Paper Eq. 3)
+                        #
+                        # FIX (physics: log-misfit singularity at sigma_b~1 mS/m):
+                        # previously this divided by log_ert
+                        # (sum(|Δlog10 / log10(sigma_ert)|)), which blows up for
+                        # ANY observation whose bulk EC is close to 1 mS/m
+                        # (log10(1) = 0) -- squarely inside the 1-300 mS/m band
+                        # this pipeline's own em_unit sanity check treats as
+                        # typical GEM-2 field-soil EC. A single such observation
+                        # could dominate the whole horizon's misfit regardless of
+                        # fit quality elsewhere. Sum-of-squared-log10-differences
+                        # is the standard misfit for EC/resistivity data spanning
+                        # orders of magnitude (no singularity), and puts
+                        # data_misfit on the same sum-of-squares footing as the
+                        # Gaussian prior_penalty term below (previously one term
+                        # was L1-relative and the other L2 -- an apples-to-oranges
+                        # combination). NOTE: this changes the absolute scale of
+                        # data_misfit relative to the old formula, so lambda_reg
+                        # below may warrant re-tuning against real calibration
+                        # data; obs_weights (see above) are renormalised to mean 1
+                        # specifically so turning TDR-noise weighting on/off
+                        # doesn't ALSO shift this scale.
                         theta_clip = np.clip(theta_layer, 1e-6, 1.0)
                         sigma_ws = (theta_clip ** m_ / a_) * (sigma_w_ + sigma_s_)
                         sigma_ert = np.clip(sigma_b_layer, 1e-10, None)
                         log_ert = np.log10(sigma_ert)
                         log_ws  = np.log10(np.clip(sigma_ws, 1e-10, None))
-                        data_misfit = np.sum(np.abs((log_ert - log_ws) / log_ert))
+                        # FIX (TDR measurement uncertainty never used to weight
+                        # the calibration): obs_weights is inverse-variance from
+                        # theta_obs_std, renormalised to mean 1 (all-ones, i.e. a
+                        # no-op, when theta_obs_std wasn't supplied) -- see its
+                        # computation above, right before this optimizer call.
+                        data_misfit = np.sum(obs_weights * (log_ert - log_ws) ** 2)
 
                         # 2. Gaussian Prior Penalty Term Matrix
                         prior_penalty = (
@@ -1678,6 +1861,21 @@ def average_inverted_models(
     Averaging always operates on the first (ensemble) axis; all remaining
     spatial/temporal dimensions are preserved unchanged.
 
+    Note on NaN cells (real-data time-lapse spatial reference grid)
+    -----------------------------------------------------------------
+    Since ``run_pipeline.py`` Step 1 now matches real-data time-lapse
+    epochs onto a shared spatial reference grid instead of trimming to a
+    common point COUNT (see ``geometry_utils.match_epochs_to_reference_grid``),
+    ``models`` may contain NaN at ``(t, point)`` combinations that a given
+    survey epoch didn't actually cover. That NaN pattern is identical for
+    every ensemble member at a fixed ``(t, point)`` (it is a function of the
+    epoch/point only, not of which inversion parameters produced the
+    member), so the plain weighted sum below already propagates NaN
+    correctly cell-by-cell without needing a NaN-aware reduction: a cell is
+    NaN in ``rho_r`` if and only if it was NaN for every member being
+    averaged, i.e. if and only if that reference-grid point genuinely has
+    no data at that epoch.
+
     Parameters
     ----------
     models : np.ndarray
@@ -1768,6 +1966,7 @@ def recalibrate_petrophysical_relationship(
     fixed_params: dict[str, bool] | None = None,
     warm_start_continuation: bool = True,
     probe_depths_reflect_fitted_interfaces: bool = False,
+    theta_obs_std: float | Sequence[float] | None = None,
 ) -> list[PetroFit]:
     """
     Step 4 Core Engine: Re-applies Waxman-Smits regressions across cumulative
@@ -1787,6 +1986,10 @@ def recalibrate_petrophysical_relationship(
     ``fixed_params`` is forwarded unchanged -- see
     ``calibrate_petrophysical_relationship`` for the fixed-parameter mechanism
     (pin one or more of a/m/sigma_w/sigma_s to their prior value).
+
+    ``theta_obs_std`` is forwarded unchanged -- see
+    ``calibrate_petrophysical_relationship`` for the TDR-noise observation
+    weighting mechanism it enables.
 
     ``warm_start_continuation`` defaults to ``True`` here (unlike Step 2's
     raw calibration, which defaults to ``False``): ``averaged_models`` is
@@ -1811,6 +2014,7 @@ def recalibrate_petrophysical_relationship(
         fixed_params=fixed_params,
         warm_start_continuation=warm_start_continuation,
         probe_depths_reflect_fitted_interfaces=probe_depths_reflect_fitted_interfaces,
+        theta_obs_std=theta_obs_std,
     )
 
 
@@ -1840,7 +2044,10 @@ def compute_coverage_map(
     half the ensemble members produced a physically plausible result).
 
     A member's EC value at a cell is considered **invalid** when it is:
-    * NaN or infinite (numerical failure),
+    * NaN or infinite (numerical failure -- this is also how a real-data
+      time-lapse reference-grid point with no coverage at this epoch,
+      see ``geometry_utils.match_epochs_to_reference_grid``, is naturally
+      folded into "unconstrained" here without any special-casing),
     * below ``ec_min`` [mS/m] (non-physical, below instrument noise floor), or
     * above ``ec_max`` [mS/m] (non-physical saturation / forward-model blow-up).
 
@@ -1990,11 +2197,15 @@ def select_and_assess_model(
     # ------------------------------------------------------------------ #
     # 5. CV map (Eq. 8) — expressed as a fraction (not %)                #
     #    High CV (> 1.0, i.e. > 100 %) flags high-uncertainty zones.     #
+    #    A NaN cell_mean (all top-K members NaN at this cell -- e.g. a   #
+    #    real-data time-lapse reference-grid point with no coverage at   #
+    #    this epoch) is preserved as NaN here rather than folded into    #
+    #    0.0, so it is never mistaken for "zero uncertainty".            #
     # ------------------------------------------------------------------ #
     with np.errstate(divide="ignore", invalid="ignore"):
         cv_map = np.where(np.abs(cell_mean) > 1e-5,
                           cell_std / cell_mean,
-                          np.nan)
+                          np.where(np.isfinite(cell_mean), 0.0, np.nan))
 
     # ------------------------------------------------------------------ #
     # 6. Coverage map — fraction of top-K members with valid EC per cell  #
@@ -2041,7 +2252,11 @@ def ec_to_water_content(
     -------
     theta_pred : np.ndarray, shape (n_samples,)
         Predicted volumetric water content [m³/m³], one value per input EC
-        observation.
+        observation. Entries where ``ec_values`` is NaN (e.g. a probe/epoch
+        combination with no EC value on the time-lapse spatial reference
+        grid) come out as NaN as well -- callers computing an RMSE against
+        these should use a NaN-aware reduction (``np.nanmean`` /
+        ``np.nanstd``) rather than ``np.mean``/``np.std``.
 
     Notes
     -----
@@ -2111,6 +2326,13 @@ def plot_step1_ensemble_single_file(
     is now drawn using its OWN fitted depths (averaged across measurement
     points), so real depth spread across the ensemble becomes visible.
 
+    NaN-safety: ``models`` (and ``depths_ensemble``) may contain NaN cells
+    for real-data time-lapse runs whose spatial reference grid isn't fully
+    covered by every epoch (see
+    ``geometry_utils.match_epochs_to_reference_grid``). All spatial
+    reductions below use ``nanmean``/``nanmedian`` so a partially-covered
+    point never turns an otherwise-valid profile into an all-NaN one.
+
     Parameters
     ----------
     depths_ensemble : np.ndarray, optional
@@ -2135,23 +2357,23 @@ def plot_step1_ensemble_single_file(
     fig, ax = plt.subplots(figsize=(6, 7))
 
     for i in range(num_members):
-        profile_1d = np.mean(models[i], axis=0)
+        profile_1d = np.nanmean(models[i], axis=0)
         ec_padded = np.append(profile_1d, profile_1d[-1])
 
         if use_member_depths:
-            member_depths = np.mean(depths_ensemble[i], axis=0)  # (num_layers-1,)
+            member_depths = np.nanmean(depths_ensemble[i], axis=0)  # (num_layers-1,)
             plot_depths_i = [0.0] + list(member_depths) + [max_depth_view]
         else:
             plot_depths_i = [0.0] + list(depths0) + [max_depth_view]
 
         ax.step(ec_padded, plot_depths_i, where='post', alpha=0.15, color='teal')
 
-    ensemble_median = np.median(models, axis=(0, 1))
+    ensemble_median = np.nanmedian(models, axis=(0, 1))
     median_padded = np.append(ensemble_median, ensemble_median[-1])
 
     if use_member_depths:
         # Median fitted depth per interface, across members and positions
-        median_depths = np.median(np.mean(depths_ensemble, axis=1), axis=0)
+        median_depths = np.nanmedian(np.nanmean(depths_ensemble, axis=1), axis=0)
         median_plot_depths = [0.0] + list(median_depths) + [max_depth_view]
     else:
         median_plot_depths = [0.0] + list(depths0) + [max_depth_view]

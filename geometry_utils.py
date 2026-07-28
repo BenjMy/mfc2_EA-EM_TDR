@@ -44,7 +44,18 @@ Consolidated here:
       different code) across ``2_run_petro.py::_extract_ec_for_plots`` and
       ``4_run_select_assess.py::_extract_ec_at_probes``.
 
-All three are deliberately dependency-light (only ``numpy``) so any module
+  match_epochs_to_reference_grid(epoch_xy, tolerance_m)
+      Builds a UNION spatial reference grid across multiple real-data
+      survey epochs (which can have different point counts and different
+      walk orders/paths) and returns, per epoch, the row index into that
+      epoch's OWN point array matching each reference-grid point (or -1
+      when that epoch has no point within tolerance). Replaces the old
+      row-count trim (``arr[:min_pts]``) that silently paired unrelated
+      physical locations under the same array index whenever epochs
+      weren't walked in the same order. See ``run_pipeline.py`` Step 1
+      (real + time-lapse branch) for the caller.
+
+All are deliberately dependency-light (only ``numpy``) so any module
 in this pipeline can import them without pulling in ``emagpy`` or
 ``matplotlib``.
 """
@@ -202,8 +213,9 @@ def route_ec_to_horizons(
     horizon_slices : list of (start, end)
         For each horizon (index = list position), the ``[start, end)``
         slice into ``ec_extracted`` holding that horizon's values. Useful
-        for callers (e.g. plotting) that need to know which points belong
-        to which horizon without re-deriving the routing themselves.
+        for callers (e.g. plotting) that need to know which returned
+        elements belong to which horizon without re-deriving the routing
+        themselves.
     """
     timelapse = ec_array.ndim == 3
     sample_positions = list(sample_positions)
@@ -247,3 +259,478 @@ def route_ec_to_horizons(
 
     ec_extracted = np.concatenate(ec_parts) if ec_parts else np.array([], dtype=float)
     return ec_extracted, horizon_slices
+
+
+# ---------------------------------------------------------------------------
+# 4. Spatial reference-grid matching across time-lapse survey epochs
+# ---------------------------------------------------------------------------
+
+def match_epochs_to_reference_grid(
+    epoch_xy: Sequence[tuple[np.ndarray, np.ndarray]],
+    tolerance_m: float,
+    verbose: bool = False,
+    epoch_labels: Sequence[str] | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+    """
+    Build a UNION spatial reference grid across multiple survey epochs and
+    return, for each epoch, the row index into that epoch's OWN point array
+    matching each reference-grid point (or -1 if that epoch has no point
+    within ``tolerance_m`` of the reference point).
+
+    This replaces a plain row-count trim (``arr[:min_pts]``): real GEM-2
+    survey epochs are inverted independently and can differ both in point
+    COUNT and in walk ORDER (the surveyor need not retrace an identical
+    path each campaign), so pairing "row i of epoch A" with "row i of
+    epoch B" is only correct by coincidence. Matching is instead done
+    purely by coordinate: no epoch's own point set is ever reordered,
+    subsetted, or discarded -- every point from every epoch contributes to
+    (or is folded into) the reference grid, and any epoch/reference-point
+    combination without a spatial match is left for the caller to fill
+    with NaN rather than being silently paired with an unrelated location.
+
+    Algorithm
+    ---------
+    1. Reference grid = union of every epoch's own (x, y) points,
+       deduplicated greedily: a point is added to the reference grid only
+       if it is farther than ``tolerance_m`` from every point already in
+       the grid; otherwise it is considered the same physical location as
+       the nearest existing reference point.
+    2. For each epoch, every reference-grid point is nearest-neighbour
+       matched back against that epoch's own points; a match is kept only
+       if it falls within ``tolerance_m``.
+
+    Because the reference grid is seeded by iterating epochs in the given
+    order, epoch 0's own points are always included in the reference grid
+    unchanged (nothing can be closer than tolerance to a point that IS
+    already the reference point for itself), so epoch 0 always matches
+    every one of its own points with distance 0.
+
+    Parameters
+    ----------
+    epoch_xy : sequence of (x, y) np.ndarray pairs
+        One ``(x_epoch, y_epoch)`` pair per survey epoch, in the SAME row
+        order as that epoch's own inverted EC model array. ``y`` may be
+        all-zeros for a pure 1-D transect.
+    tolerance_m : float
+        Points within this distance [m] are considered the same physical
+        location. Should be set to roughly the GPS/GNSS precision of the
+        survey instrument (a few metres is typical), not the (usually
+        tighter) TDR<->EM ``window_m`` used elsewhere in this pipeline --
+        the two tolerances answer different questions ("is this the same
+        survey point across dates" vs "is this EM point close enough to
+        this probe to represent it").
+    verbose : bool, optional
+        When True, prints a structured console report covering: the
+        tolerance used, the final union grid size, each epoch's
+        contribution during grid CONSTRUCTION (how many of its own points
+        seeded a brand-new reference cell vs. were folded into an
+        already-existing one within tolerance), and each epoch's final
+        COVERAGE of the union grid (how many reference cells it matches,
+        vs. how many will come out NaN once a caller remaps its EC/depths
+        array onto the shared grid -- e.g. ``run_pipeline.py``'s
+        ``_remap_combo_to_reference``). Default ``False`` (silent, as
+        before -- this flag never changes the returned values).
+    epoch_labels : sequence of str, optional
+        Human-readable label per epoch (e.g. survey filenames) used only
+        in the verbose report. Defaults to ``"epoch {i}"`` when omitted or
+        shorter than ``epoch_xy``.
+
+    Returns
+    -------
+    ref_x, ref_y : np.ndarray
+        Reference-grid coordinates (union across all epochs).
+    matched_indices : list of np.ndarray, length = len(epoch_xy)
+        ``matched_indices[e][r]`` = row index into epoch ``e``'s own
+        ``(x, y)`` (and therefore its own inverted EC model row) that
+        matches reference point ``r``, or ``-1`` if epoch ``e`` has no
+        point within ``tolerance_m`` of reference point ``r``.
+    """
+    tol2 = float(tolerance_m) ** 2
+    n_epochs = len(epoch_xy)
+
+    ref_x_list: list[float] = []
+    ref_y_list: list[float] = []
+
+    # Per-epoch bookkeeping for the verbose grid-CONSTRUCTION report: how
+    # many of this epoch's own points became a brand-new reference cell
+    # ("new") vs. were close enough to an already-existing one to be
+    # folded into it instead ("merged"). Tracked unconditionally (cheap --
+    # just two counters per epoch) so verbose=True never needs a second pass.
+    n_own_points: list[int] = []
+    n_new_ref_points: list[int] = []
+    n_merged_into_existing: list[int] = []
+
+    for x_e, y_e in epoch_xy:
+        x_e = np.asarray(x_e, dtype=float)
+        y_e = np.asarray(y_e, dtype=float)
+        n_new = 0
+        n_merged = 0
+        for xi, yi in zip(x_e, y_e):
+            if ref_x_list:
+                d2 = (np.asarray(ref_x_list) - xi) ** 2 + (np.asarray(ref_y_list) - yi) ** 2
+                if d2.min() <= tol2:
+                    n_merged += 1
+                    continue
+            ref_x_list.append(float(xi))
+            ref_y_list.append(float(yi))
+            n_new += 1
+        n_own_points.append(len(x_e))
+        n_new_ref_points.append(n_new)
+        n_merged_into_existing.append(n_merged)
+
+    ref_x = np.asarray(ref_x_list, dtype=float)
+    ref_y = np.asarray(ref_y_list, dtype=float)
+    n_ref = len(ref_x)
+
+    matched_indices: list[np.ndarray] = []
+    for x_e, y_e in epoch_xy:
+        x_e = np.asarray(x_e, dtype=float)
+        y_e = np.asarray(y_e, dtype=float)
+        idx_for_epoch = np.full(n_ref, -1, dtype=int)
+        if n_ref > 0 and len(x_e) > 0:
+            d2 = (ref_x[:, None] - x_e[None, :]) ** 2 + (ref_y[:, None] - y_e[None, :]) ** 2
+            nearest = d2.argmin(axis=1)
+            nearest_dist2 = d2[np.arange(n_ref), nearest]
+            within = nearest_dist2 <= tol2
+            idx_for_epoch[within] = nearest[within]
+        matched_indices.append(idx_for_epoch)
+
+    if verbose:
+        _print_reference_grid_report(
+            tolerance_m=tolerance_m,
+            n_epochs=n_epochs,
+            n_ref=n_ref,
+            n_own_points=n_own_points,
+            n_new_ref_points=n_new_ref_points,
+            n_merged_into_existing=n_merged_into_existing,
+            matched_indices=matched_indices,
+            epoch_labels=epoch_labels,
+        )
+
+    return ref_x, ref_y, matched_indices
+
+
+def _print_reference_grid_report(
+    tolerance_m: float,
+    n_epochs: int,
+    n_ref: int,
+    n_own_points: list[int],
+    n_new_ref_points: list[int],
+    n_merged_into_existing: list[int],
+    matched_indices: list[np.ndarray],
+    epoch_labels: Sequence[str] | None,
+) -> None:
+    """
+    Console report for ``match_epochs_to_reference_grid(verbose=True)``.
+
+    Two tables are printed:
+
+    1. GRID CONSTRUCTION -- per epoch, how many of its own raw points
+       seeded a brand-new reference-grid cell vs. were folded into an
+       already-existing one (within ``tolerance_m``) contributed by an
+       earlier epoch. Every one of an epoch's own points ends up in
+       exactly one of these two buckets -- none are ever dropped here.
+
+    2. GRID COVERAGE -- per epoch, how many of the FINAL union grid's
+       ``n_ref`` cells that epoch actually matches (``matched_indices[e] >= 0``)
+       vs. how many will come out NaN once a caller remaps that epoch's
+       EC/depths array onto the shared grid (e.g.
+       ``run_pipeline.py``'s ``_remap_combo_to_reference``). This is the
+       number that actually determines how much NaN downstream steps
+       (Step 3 averaging, Step 4/5 RMSE, CV maps) will have to tolerate.
+    """
+    labels = list(epoch_labels) if epoch_labels else []
+    while len(labels) < n_epochs:
+        labels.append(f"epoch {len(labels)}")
+
+    label_w = max(6, min(28, max((len(l) for l in labels), default=6)))
+
+    print(f"\n{'='*78}")
+    print(" [GEOMETRY] match_epochs_to_reference_grid -- spatial reference-grid report")
+    print(f"{'='*78}")
+    print(f"  tolerance_m           : {tolerance_m} m")
+    print(f"  epochs                : {n_epochs}")
+    print(f"  union reference grid  : {n_ref} point(s)")
+
+    print(f"\n  -- Grid CONSTRUCTION (each epoch's own points, in order) --")
+    print(f"  {'epoch':<7}{'label':<{label_w}}  {'n_own_pts':>10}  {'new_ref_pts':>12}  {'merged_existing':>16}")
+    total_own = 0
+    total_new = 0
+    total_merged = 0
+    for i in range(n_epochs):
+        n_own = n_own_points[i]
+        n_new = n_new_ref_points[i]
+        n_merged = n_merged_into_existing[i]
+        total_own += n_own
+        total_new += n_new
+        total_merged += n_merged
+        print(f"  {i:<7}{labels[i][:label_w]:<{label_w}}  {n_own:>10}  {n_new:>12}  {n_merged:>16}")
+    print(f"  {'':<7}{'TOTAL':<{label_w}}  {total_own:>10}  {total_new:>12}  {total_merged:>16}"
+          f"   (new + merged == own_pts for every epoch; sanity check: "
+          f"{'OK' if total_new == n_ref else f'MISMATCH -- new pts summed to {total_new}, expected {n_ref}'})")
+
+    print(f"\n  -- Grid COVERAGE (each epoch matched back against the final "
+          f"{n_ref}-point union grid) --")
+    print(f"  {'epoch':<7}{'label':<{label_w}}  {'n_own_pts':>10}  {'matched':>8}  "
+          f"{'NaN gap':>8}  {'coverage%':>10}")
+    total_matched = 0
+    worst_epoch = None
+    worst_frac = None
+    for i in range(n_epochs):
+        idx_map = matched_indices[i]
+        n_matched = int(np.sum(idx_map >= 0))
+        n_gap = n_ref - n_matched
+        frac = (n_matched / n_ref * 100.0) if n_ref else 0.0
+        total_matched += n_matched
+        if worst_frac is None or frac < worst_frac:
+            worst_frac = frac
+            worst_epoch = i
+        print(f"  {i:<7}{labels[i][:label_w]:<{label_w}}  {n_own_points[i]:>10}  "
+              f"{n_matched:>8}  {n_gap:>8}  {frac:>9.1f}%")
+
+    total_cells = n_ref * n_epochs
+    total_nan = total_cells - total_matched
+    overall_frac = (total_matched / total_cells * 100.0) if total_cells else 0.0
+    print(f"  {'':<7}{'TOTAL':<{label_w}}  {'':>10}  {total_matched:>8}  {total_nan:>8}  "
+          f"{overall_frac:>9.1f}%")
+    print(f"\n  NaN cells this remap will introduce into models_clean : "
+          f"{total_nan} / {total_cells} EC cells ({100 - overall_frac:.1f}%), "
+          f"before layers are even factored in.")
+    if worst_epoch is not None and worst_frac is not None and worst_frac < 50.0:
+        print(f"  [WARN] Epoch {worst_epoch} ('{labels[worst_epoch]}') covers only "
+              f"{worst_frac:.1f}% of the union reference grid -- if this looks lower "
+              f"than expected, check that epoch's own point count/coordinates and "
+              f"consider raising tolerance_m (currently {tolerance_m} m).")
+    print(f"{'='*78}\n")
+
+
+# ---------------------------------------------------------------------------
+# 5. Coordinate-system (CRS) classification, reprojection, and consistency
+#    checking
+#
+# Fixes: "TDR <-> EM spatial '1 m window' -- verify it is actually matching
+# in the same CRS". _prepare_real_em_csv's _COLUMN_VARIANTS mapping accepts
+# EITHER a metric alias (X/Easting, Y/Northing) OR a geographic alias
+# (Longitude/lon/LON/LONGITUDE, Latitude/lat/LAT/LATITUDE) for the same
+# canonical 'x'/'y' columns, but every Problem.createSurvey(...) call on the
+# real-data path passed targetProjection=None regardless of which alias
+# actually matched. A GEM-2 export using the geographic alias therefore had
+# survey_df['x']/['y'] left in decimal DEGREES, while probe_table's
+# utm_x/utm_y (from SOILNET_MFC2_coordinates_sensors.csv) are in METRES --
+# subtracting the two in em_methodology._probe_distances produces a
+# "distance" off by ~5 orders of magnitude, so with window_m=1.0 literally
+# every TDR probe falls back to nearest-point matching, and that fallback
+# match is itself meaningless (nearest in mixed degrees/metres units, not
+# nearest geographically).
+#
+# These helpers are consolidated here (rather than duplicated per-caller,
+# following this module's own stated purpose) so every consumer that reads
+# a raw real-data EM CSV -- run_pipeline.py's _prepare_real_em_csv,
+# plot_pre_inversion_diagnostics.py's local copy of the same function, and
+# plot_em_diagnostics_real.py's _parse_raw_csv -- classifies and reprojects
+# coordinates identically, instead of three independently-drifting copies
+# of the same alias table making three independently-drifting assumptions
+# about units.
+# ---------------------------------------------------------------------------
+
+_METRIC_COORD_ALIASES: dict[str, set[str]] = {
+    "x": {"X", "Easting"},
+    "y": {"Y", "Northing"},
+}
+_GEOGRAPHIC_COORD_ALIASES: dict[str, set[str]] = {
+    "x": {"Longitude", "lon", "LON", "LONGITUDE"},
+    "y": {"Latitude", "lat", "LAT", "LATITUDE"},
+}
+
+
+def classify_coordinate_alias(raw_column: str, axis: str) -> str:
+    """
+    Classify a raw CSV column name as ``"metric"`` (already in the survey's
+    local projected CRS, e.g. UTM easting/northing in metres) or
+    ``"geographic"`` (decimal-degree longitude/latitude, WGS84) based on
+    which alias in ``run_pipeline.py::_prepare_real_em_csv``'s
+    ``_COLUMN_VARIANTS`` table it matched, or ``"unknown"`` if it matches
+    neither known alias set for that axis.
+
+    This is a table lookup on the COLUMN NAME, deliberately not a heuristic
+    on the column's numeric values -- see the "Non-goals" note on the
+    em_unit fix this pipeline already applies: guessing units/CRS from
+    magnitude is explicitly avoided in favour of an unambiguous, explicit
+    signal (here, which literal alias was present in the raw file).
+
+    Parameters
+    ----------
+    raw_column : str
+        The exact raw column name found in the CSV (e.g. ``'Longitude'``,
+        ``'X'``, ``'Easting'``) -- NOT the canonical ``'x'``/``'y'`` name it
+        gets renamed to.
+    axis : {'x', 'y'}
+
+    Returns
+    -------
+    str
+        ``"metric"``, ``"geographic"``, or ``"unknown"``.
+    """
+    if raw_column in _METRIC_COORD_ALIASES.get(axis, ()):
+        return "metric"
+    if raw_column in _GEOGRAPHIC_COORD_ALIASES.get(axis, ()):
+        return "geographic"
+    return "unknown"
+
+
+def auto_utm_epsg_from_lonlat(lon_mean: float, lat_mean: float) -> str:
+    """
+    Return the standard WGS84 UTM zone EPSG code (``'EPSG:326XX'`` for the
+    northern hemisphere, ``'EPSG:327XX'`` for the southern) covering the
+    given mean longitude/latitude, using the ordinary 6-degree UTM zoning
+    formula. This is a real geodetic computation from the survey's own
+    coordinates (not a guess), used so a real-data scenario doesn't need a
+    manually-configured target EPSG for the common case.
+
+    Parameters
+    ----------
+    lon_mean, lat_mean : float
+        Mean longitude/latitude [decimal degrees, WGS84] of the point set
+        being reprojected.
+
+    Returns
+    -------
+    str
+        EPSG code string, e.g. ``'EPSG:32633'`` for UTM Zone 33N.
+    """
+    zone = int((lon_mean + 180.0) // 6.0) + 1
+    zone = min(max(zone, 1), 60)
+    epsg_num = (32600 if lat_mean >= 0 else 32700) + zone
+    return f"EPSG:{epsg_num}"
+
+
+def reproject_lonlat_to_utm(
+    lon: np.ndarray,
+    lat: np.ndarray,
+    epsg: str | None = None,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """
+    Reproject WGS84 decimal-degree longitude/latitude arrays to metric UTM
+    coordinates via ``pyproj``.
+
+    Parameters
+    ----------
+    lon, lat : np.ndarray
+        Decimal-degree WGS84 coordinates.
+    epsg : str, optional
+        Target EPSG code (e.g. ``'EPSG:32633'``). When ``None`` (default),
+        the UTM zone is auto-derived from the MEAN of ``lon``/``lat`` via
+        ``auto_utm_epsg_from_lonlat`` -- appropriate for a single survey
+        whose points don't straddle a UTM zone boundary (true for any
+        realistic single-site field survey).
+
+    Returns
+    -------
+    x_m, y_m : np.ndarray
+        Projected easting/northing [m], same shape as ``lon``/``lat``.
+    epsg_used : str
+        The EPSG code actually used (useful for logging when auto-derived).
+
+    Raises
+    ------
+    ImportError
+        If ``pyproj`` is not installed -- raised with an actionable message
+        rather than silently leaving coordinates in degrees.
+    """
+    try:
+        from pyproj import Transformer
+    except ImportError as exc:
+        raise ImportError(
+            "reproject_lonlat_to_utm() requires the 'pyproj' package to "
+            "reproject geographic (Longitude/Latitude) EM survey coordinates "
+            "to metric UTM -- install it with `pip install pyproj`. Refusing "
+            "to silently leave coordinates in decimal degrees, since mixing "
+            "degrees and metres elsewhere in this pipeline (e.g. TDR probe "
+            "matching) produces a ~5-order-of-magnitude distance error."
+        ) from exc
+
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+
+    if epsg is None:
+        epsg = auto_utm_epsg_from_lonlat(float(np.mean(lon)), float(np.mean(lat)))
+
+    transformer = Transformer.from_crs("EPSG:4326", epsg, always_xy=True)
+    x_m, y_m = transformer.transform(lon, lat)
+    return np.asarray(x_m, dtype=float), np.asarray(y_m, dtype=float), epsg
+
+
+def check_crs_consistency(
+    x_a: np.ndarray,
+    y_a: np.ndarray,
+    x_b: np.ndarray,
+    y_b: np.ndarray,
+    label_a: str = "A",
+    label_b: str = "B",
+    ratio_threshold: float = 10.0,
+) -> str | None:
+    """
+    Defense-in-depth sanity check, independent of the alias-based
+    classification above: compare two point clouds that are supposed to
+    describe the same physical survey area (e.g. EM measurement points vs.
+    TDR probe locations) and flag it if their spatial extents/centroids look
+    inconsistent by roughly an order of magnitude or more -- the signature
+    of one side being in decimal degrees and the other in metres (or any
+    other CRS mismatch), independent of whether the alias-classification
+    fix above already ran or was somehow bypassed.
+
+    This intentionally does NOT try to identify or fix the mismatch -- only
+    detect and report it, mirroring the em_unit sanity check's philosophy
+    (warn loudly, let a human decide) rather than silently guessing a
+    correction.
+
+    Parameters
+    ----------
+    x_a, y_a : np.ndarray
+        Coordinates of point cloud A [m or degrees].
+    x_b, y_b : np.ndarray
+        Coordinates of point cloud B [m or degrees].
+    label_a, label_b : str, optional
+        Human-readable labels for the two point clouds, used in the
+        returned message.
+    ratio_threshold : float, optional
+        If the larger of the two point clouds' spans is more than this many
+        times the smaller (or the centroid-to-centroid distance exceeds
+        this many times the larger span), a warning message is returned.
+        Default 10.0.
+
+    Returns
+    -------
+    str or None
+        A human-readable warning message if the two point clouds look
+        CRS-inconsistent, else ``None``.
+    """
+    x_a = np.asarray(x_a, dtype=float)
+    y_a = np.asarray(y_a, dtype=float)
+    x_b = np.asarray(x_b, dtype=float)
+    y_b = np.asarray(y_b, dtype=float)
+
+    if x_a.size == 0 or x_b.size == 0:
+        return None
+
+    span_a = max(float(np.ptp(x_a)), float(np.ptp(y_a)), 1e-9)
+    span_b = max(float(np.ptp(x_b)), float(np.ptp(y_b)), 1e-9)
+    centroid_a = np.array([np.mean(x_a), np.mean(y_a)])
+    centroid_b = np.array([np.mean(x_b), np.mean(y_b)])
+    centroid_dist = float(np.linalg.norm(centroid_a - centroid_b))
+
+    span_ratio = max(span_a, span_b) / min(span_a, span_b)
+    centroid_ratio = centroid_dist / max(span_a, span_b)
+
+    if span_ratio > ratio_threshold or centroid_ratio > ratio_threshold:
+        return (
+            f"'{label_a}' (span~{span_a:.2f}, centroid=({centroid_a[0]:.2f}, "
+            f"{centroid_a[1]:.2f})) vs '{label_b}' (span~{span_b:.2f}, "
+            f"centroid=({centroid_b[0]:.2f}, {centroid_b[1]:.2f})) -- "
+            f"span ratio {span_ratio:.1f}x, centroid offset {centroid_dist:.2f} "
+            f"({centroid_ratio:.1f}x the larger span). This is the signature "
+            f"of a coordinate-system mismatch (e.g. one side in decimal "
+            f"degrees, the other in metres) rather than a genuinely distant "
+            f"survey point."
+        )
+    return None

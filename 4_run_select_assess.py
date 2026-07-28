@@ -144,18 +144,50 @@ def run_select_assess(
 
         # Convert predicted Bulk EC to Volumetric Water Content (VWC / Theta) using Waxman-Smits,
         # routed per-probe through its own horizon's calibrated parameters.
+        #
+        # NOTE (real-data time-lapse spatial reference grid): a probe/epoch
+        # pair whose reference-grid point wasn't covered by that particular
+        # survey epoch (see geometry_utils.match_epochs_to_reference_grid and
+        # run_pipeline.py Step 1) yields ec_val = NaN above, which propagates
+        # through ec_to_water_content() into a NaN theta_pred entry for that
+        # probe (documented on ec_to_water_content's own docstring). That is
+        # expected and handled explicitly below via nanmean rather than mean,
+        # so a handful of epoch-uncovered probes no longer poison the RMSE
+        # for the ENTIRE stack depth K.
         theta_pred = EMmethod.ec_to_water_content(
             ec_predicted, current_fit, probe_layer_indices=resolved_layer_indices
         )
 
-        # Compute RMSE for the current stack of size K = k + 1
-        rmse_k = np.sqrt(np.mean((theta_obs - theta_pred) ** 2))
+        # Compute RMSE for the current stack of size K = k + 1.
+        # FIX (NaN propagation): plain np.mean turns a single NaN entry
+        # (unmatched reference-grid point at this probe's survey epoch,
+        # see note above) into a NaN for the WHOLE rmse_by_k[k] value, which
+        # then silently breaks np.argmin(rmse_by_k) below (NaN comparisons
+        # are never True, so argmin's behaviour with NaNs present is
+        # undefined/unstable). np.nanmean correctly scores stack depth K
+        # against only the probes that actually have data at each of their
+        # respective survey epochs.
+        _sq_err = (theta_obs - theta_pred) ** 2
+        if np.all(np.isnan(_sq_err)):
+            rmse_k = float("nan")
+        else:
+            rmse_k = float(np.sqrt(np.nanmean(_sq_err)))
         rmse_by_k.append(rmse_k)
 
     rmse_by_k = np.array(rmse_by_k)
 
     # 2. Identify the optimal stack depth (1-based index)
-    optimal_idx = np.argmin(rmse_by_k)
+    if np.all(np.isnan(rmse_by_k)):
+        raise ValueError(
+            "[CRITICAL] Every candidate stack depth K produced an all-NaN "
+            "RMSE (theta_obs vs. theta_pred never overlapped on a real "
+            "value). This means none of the TDR probes had ANY valid EC at "
+            "their own survey epoch on the time-lapse spatial reference "
+            "grid -- check spatial_match_tolerance_m and the TDR<->EM "
+            "window_m matching diagnostics (probe_em_matching*.png) before "
+            "re-running."
+        )
+    optimal_idx = int(np.nanargmin(rmse_by_k))
     optimal_K = optimal_idx + 1
     min_rmse = rmse_by_k[optimal_idx]
 
@@ -181,6 +213,14 @@ def run_select_assess(
     w_view = weights_k.reshape((optimal_K,) + (1,) * n_extra)   # (K, 1, 1, …)
 
     # Weighted mean rho_c
+    # NOTE (real-data time-lapse spatial reference grid): the NaN pattern in
+    # `selected_subset` is identical across the ensemble (K) axis for any
+    # fixed (t, point) -- it is a property of the survey epoch/reference-grid
+    # point, not of which inversion parameters produced a given member (see
+    # geometry_utils.match_epochs_to_reference_grid and
+    # em_methodology.average_inverted_models). So this plain weighted sum
+    # already yields NaN if and only if that cell genuinely has no data at
+    # any of the K members, without needing a NaN-aware reduction here.
     subset_mean = np.sum(w_view * selected_subset, axis=0)
 
     # Weighted std sd_c with Bessel-like correction: sqrt(K/(K-1) * sum(w_i*(rho_i-rho_c)^2))
@@ -190,8 +230,22 @@ def run_select_assess(
         sq_dev = w_view * (selected_subset - subset_mean) ** 2
         subset_std = np.sqrt((optimal_K / (optimal_K - 1)) * np.sum(sq_dev, axis=0))
 
-    # CV expressed as a fraction (> 1.0 means > 100%, i.e. high uncertainty)
-    cv_map = np.where(np.abs(subset_mean) > 1e-5, subset_std / subset_mean, 0.0)
+    # CV expressed as a fraction (> 1.0 means > 100%, i.e. high uncertainty).
+    # FIX (NaN handling): a NaN `subset_mean` (all K members NaN at this
+    # cell -- e.g. a real-data time-lapse reference-grid point uncovered at
+    # every epoch that survived into the top-K subset) previously fell
+    # through to the `else` branch of np.where (since comparisons with NaN
+    # are always False) and was silently reported as CV = 0.0, i.e. "zero
+    # uncertainty" for a cell that actually has NO data whatsoever. It is
+    # now preserved as NaN, matching the convention used everywhere else in
+    # this pipeline (see em_methodology.compute_coverage_map, which already
+    # treats non-finite EC as "invalid" and will independently flag the same
+    # cell via a low/negative `coverage` value used for plot hatching).
+    cv_map = np.where(
+        np.isfinite(subset_mean) & (np.abs(subset_mean) > 1e-5),
+        subset_std / subset_mean,
+        np.where(np.isfinite(subset_mean), 0.0, np.nan),
+    )
 
     # 4. Generate and save Figure 3 Optimization Curve
     if generate_plots:
@@ -238,7 +292,11 @@ def run_select_assess(
             print(f"[WARN] Optimal-model petrophysical calibration plot failed: {e}")
 
     def _ec_grid_to_theta(ec_grid: np.ndarray, fit) -> np.ndarray:
-        """Convert a (..., n_layers) EC grid to θ using per-horizon WS params."""
+        """Convert a (..., n_layers) EC grid to θ using per-horizon WS params.
+        NaN EC cells (real-data time-lapse reference-grid points uncovered
+        at this epoch) propagate to NaN θ cells -- expected and handled by
+        downstream plotting, which already uses nan-aware reductions
+        (e.g. plot_solution_diagnostics.plot_solution_swc uses np.nanmean)."""
         original_shape = ec_grid.shape
         n_layers = original_shape[-1]
         ec_flat = ec_grid.reshape(-1, n_layers)
@@ -390,7 +448,12 @@ def _extract_ec_at_probes(
     -------
     np.ndarray
         Flat sigma_b values, concatenated per horizon in the same order as
-        ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta``.
+        ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta``. May
+        contain NaN entries for real-data time-lapse probe/epoch pairs
+        whose spatial reference-grid point wasn't covered by that epoch
+        (see geometry_utils.match_epochs_to_reference_grid); the caller
+        (``plot_optimal_petrophysical_calibration``) simply won't plot
+        those points (matplotlib scatter silently skips NaN).
     """
     # Horizon routing now delegates to the single shared implementation in
     # geometry_utils.py (pipeline_improvement_report.md, section 6 / action
@@ -477,7 +540,11 @@ def plot_optimal_petrophysical_calibration(
 
     # ---- Theoretical Waxman-Smits curves, per horizon ---------------------
     if len(ec_values) > 0:
-        ec_line = np.linspace(ec_values.min() * 0.8, ec_values.max() * 1.2, 100)
+        _finite_ec = ec_values[np.isfinite(ec_values)]
+        if _finite_ec.size > 0:
+            ec_line = np.linspace(_finite_ec.min() * 0.8, _finite_ec.max() * 1.2, 100)
+        else:
+            ec_line = np.linspace(0.1, 100.0, 100)
     else:
         ec_line = np.linspace(0.1, 100.0, 100)
 

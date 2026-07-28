@@ -44,6 +44,7 @@ import plot_tdr_diagnostics as ptdrdiag
 import plot_solution_diagnostics as psol
 import plot_ini_model as pim
 import plot_probe_matching as ppm
+import plot_pre_inversion_diagnostics as preinvdiag
 
 step0   = importlib.import_module("0_generate_synthetic_data")
 step2   = importlib.import_module("2_run_petro")
@@ -329,7 +330,8 @@ class PipelineReporter:
 # HELPERS & PARALLEL WORKERS
 # ===========================================================================
 
-def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None) -> str:
+def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None
+                         ) -> tuple[str, str, "str | None"]:
     """
     Convert a raw GEM-2 survey CSV into the comma-separated, emagpy-column-named
     format that ``createSurvey`` requires.
@@ -342,6 +344,25 @@ def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None) ->
     The function auto-detects the delimiter and tries each known column-name
     pattern in turn, so new file vintages only require adding an entry to
     ``_COLUMN_VARIANTS`` rather than touching the call sites.
+
+    FIX (TDR<->EM CRS mismatch): Variant A's ``X``/``Y`` (or ``Easting``/
+    ``Northing``) are already metric (UTM-like) coordinates, but Variant B's
+    ``Longitude``/``Latitude`` are decimal-degree WGS84 -- and until this fix,
+    BOTH were renamed to the same generic ``x``/``y`` columns with no CRS
+    metadata, then handed to ``createSurvey(..., targetProjection=None)``
+    unchanged. Since TDR probe coordinates (``probe_table['utm_x'/'utm_y']``)
+    are always metric UTM, a Variant-B file left every distance computed in
+    ``em_methodology._probe_distances`` off by ~5 orders of magnitude
+    (degrees vs metres), silently forcing 100% of TDR probes into
+    nearest-point ``window_m`` fallback matching against a geographically
+    meaningless "nearest" point. This function now classifies which alias
+    actually matched (``geometry_utils.classify_coordinate_alias``) and, if
+    it was the geographic one, reprojects lon/lat to metric UTM
+    (``geometry_utils.reproject_lonlat_to_utm``, auto-picking the UTM zone
+    from this file's own mean coordinates) BEFORE writing the processed CSV
+    -- so every downstream consumer (filterRepeated, Step 1 inversion
+    workers, TDR<->EM window matching, plotting) reads already-metric x/y
+    and needs no further CRS awareness at all.
 
     Parameters
     ----------
@@ -359,9 +380,22 @@ def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None) ->
         compute elapsed time between consecutive points, which isn't used
         by ``filterRepeated``'s actual filtering logic (interdist only).
 
-    Returns the path to the processed file written under *processed_dir*.
+    Returns
+    -------
+    out_path : str
+        Path to the processed file written under *processed_dir*. Its
+        'x'/'y' columns are ALWAYS metric after this function returns,
+        regardless of which alias the raw file used.
+    coord_kind : {'metric', 'geographic'}
+        Which alias category the raw file's x/y columns matched. Purely
+        informational for the caller's logging/report -- the processed CSV
+        itself is metric either way.
+    epsg_used : str or None
+        The EPSG code the geographic->UTM reprojection used, or ``None``
+        if the raw file was already metric (no reprojection needed).
     """
     import pandas as pd
+    import geometry_utils as _geo
 
     # Canonical emagpy target column names mapped to lists of raw-CSV aliases
     # tried in order.  Add new aliases here when new file vintages appear.
@@ -413,13 +447,234 @@ def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None) ->
             f"Add the raw column name(s) to _COLUMN_VARIANTS in _prepare_real_em_csv()."
         )
 
+    # --- 3. Classify which alias matched x/y, and reproject if geographic -----
+    x_raw = next(raw for raw, canon in rename_map.items() if canon == 'x')
+    y_raw = next(raw for raw, canon in rename_map.items() if canon == 'y')
+    x_kind = _geo.classify_coordinate_alias(x_raw, 'x')
+    y_kind = _geo.classify_coordinate_alias(y_raw, 'y')
+
+    if x_kind != y_kind or x_kind == "unknown":
+        raise ValueError(
+            f"[REAL DATA] Cannot preprocess '{os.path.basename(raw_path)}': "
+            f"x resolved via column '{x_raw}' (classified '{x_kind}') but y "
+            f"resolved via column '{y_raw}' (classified '{y_kind}') -- refusing "
+            f"to guess a coordinate system from an inconsistent/unrecognised "
+            f"pairing. Both must be either metric (X/Easting, Y/Northing) or "
+            f"geographic (Longitude/lon, Latitude/lat)."
+        )
+    coord_kind = x_kind  # == y_kind, both "metric" or "geographic"
+
     out_df = df[list(rename_map.keys())].rename(columns=rename_map)
+
+    epsg_used: "str | None" = None
+    if coord_kind == "geographic":
+        x_m, y_m, epsg_used = _geo.reproject_lonlat_to_utm(
+            out_df['x'].to_numpy(dtype=float), out_df['y'].to_numpy(dtype=float),
+        )
+        print(
+            f"[REAL DATA] '{os.path.basename(raw_path)}': x/y resolved via "
+            f"geographic alias ('{x_raw}'/'{y_raw}', decimal degrees) -- "
+            f"reprojected to metric UTM ({epsg_used}, auto-detected from this "
+            f"file's own mean coordinates) before writing the processed CSV."
+        )
+        out_df['x'] = x_m
+        out_df['y'] = y_m
+    # else: already metric (X/Easting, Y/Northing) -- no reprojection needed.
+
     if survey_date is not None:
         out_df['date'] = pd.Timestamp(survey_date).strftime('%Y-%m-%d')
     out_df.to_csv(out_path, index=False)
-    return out_path
+    return out_path, coord_kind, epsg_used
 
 
+
+
+def _check_em_unit_sanity(csv_path: str, em_unit: str,
+                          expected_range_ms_m: tuple[float, float] = (1.0, 300.0)) -> dict:
+    """
+    Defense-in-depth sanity check for the em_unit configuration (see fix
+    "em_unit defaults to 'ppt' but real GEM-2 data is 'ppm'" -- item 4,
+    "Non-goals": this deliberately does NOT try to auto-detect the correct
+    unit from column names or magnitude and silently correct it; it only
+    warns, loudly, so a human decides).
+
+    After ``Problem.createSurvey(..., unit=em_unit)`` converts the raw
+    quadrature/in-phase columns to LIN ECa [mS/m], this logs the median
+    |ECa| across all coils and flags it if it lands more than three orders
+    of magnitude outside the range typical of real field soils surveyed
+    with a GEM-2 (~1-300 mS/m). Getting ``em_unit`` backwards (``'ppt'``
+    instead of ``'ppm'`` or vice versa) changes every ECa value by exactly
+    1000x, which is precisely the kind of error this catches -- and, per
+    the "Non-goals" note, this generalises to catching a *different*
+    instrument/unit mismatch later too, not just this one historical bug.
+
+    Never raises -- failures here are logged as [WARN] and the caller
+    proceeds; this is a diagnostic, not a hard gate (the hard gate for
+    *missing* em_unit on real-data scenarios is
+    ``scenario_loader._validate``).
+
+    Parameters
+    ----------
+    csv_path : str
+        Path to an already emagpy-ready (comma-separated, canonical coil
+        column names) EM survey CSV -- i.e. the output of
+        ``_prepare_real_em_csv`` / ``filter_repeated_em_points``.
+    em_unit : str
+        The 'ppm' / 'ppt' value actually being used for this survey.
+    expected_range_ms_m : (float, float), optional
+        Expected (min, max) |ECa| [mS/m] for a plausible field survey.
+        Default (1.0, 300.0), matching GEM-2 field-soil experience
+        elsewhere in this codebase (see the '2d_real' scenario's
+        cond_ranges, comparably scoped).
+
+    Returns
+    -------
+    dict
+        ``{"file": <basename>, "level": "OK"|"INFO"|"WARN"|"ERROR",
+        "median_abs_eca": float|None, "message": str}`` -- structured so a
+        caller with access to a ``PipelineReporter`` can fold this into the
+        Markdown run report (``reporter.log(result["message"])``) rather
+        than this check only ever being visible in stdout, which is what
+        happened before this fix (see fix "Is this step in the log
+        recorder?").
+    """
+    fname = os.path.basename(csv_path)
+    try:
+        from emagpy import Problem
+        k = Problem()
+        k.createSurvey(csv_path, unit=em_unit)
+        df = k.surveys[0].df
+        coils = list(getattr(k.surveys[0], "coils", []))
+        eca_cols = [c for c in coils if c in df.columns]
+        if not eca_cols:
+            msg = f"[REAL DATA] '{fname}': no LIN ECa columns found -- em_unit sanity check skipped."
+            print(msg)
+            return {"file": fname, "level": "OK", "median_abs_eca": None, "message": msg}
+        vals = df[eca_cols].to_numpy(dtype=float)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            msg = f"[REAL DATA] '{fname}': no finite LIN ECa values -- em_unit sanity check skipped."
+            print(msg)
+            return {"file": fname, "level": "OK", "median_abs_eca": None, "message": msg}
+
+        median_abs = float(np.median(np.abs(vals)))
+        lo, hi = expected_range_ms_m
+
+        if median_abs < lo / 1000.0 or median_abs > hi * 1000.0:
+            level = "WARN"
+            msg = (
+                f"[REAL DATA][WARN] '{fname}': median |LIN ECa| = {median_abs:.4g} mS/m "
+                f"is >1000x outside the typical field-soil range ({lo:g}-{hi:g} mS/m) "
+                f"for em_unit='{em_unit}'. This is the signature of a wrong em_unit "
+                f"(GEM-2 quadrature exports are 'ppm'; GF Instruments CMD exports are "
+                f"'ppt' -- mixing them up scales every ECa value by ~1000x). Double-check "
+                f"the 'em_unit' field for this scenario before trusting this run's results."
+            )
+        elif median_abs < lo or median_abs > hi:
+            level = "INFO"
+            msg = (
+                f"[REAL DATA][INFO] '{fname}': median |LIN ECa| = {median_abs:.4g} mS/m "
+                f"is outside the typical {lo:g}-{hi:g} mS/m field-soil range for "
+                f"em_unit='{em_unit}', but not by the ~1000x factor a unit mismatch would "
+                f"produce -- likely just unusual field conditions rather than a config "
+                f"error. No action needed unless the inverted EC also looks implausible."
+            )
+        else:
+            level = "OK"
+            msg = (f"[REAL DATA] '{fname}': median |LIN ECa| = {median_abs:.4g} mS/m "
+                   f"(em_unit='{em_unit}') -- within the expected field-soil range.")
+
+        print(msg)
+        return {"file": fname, "level": level, "median_abs_eca": median_abs, "message": msg}
+    except Exception as e:
+        msg = (f"[REAL DATA][WARN] em_unit sanity check failed for "
+               f"'{fname}' ({type(e).__name__}: {e}) -- skipping.")
+        print(msg)
+        return {"file": fname, "level": "WARN", "median_abs_eca": None, "message": msg}
+
+
+def _extract_temperature_by_epoch(
+    load_tdr_dataframe_fn, tdr_dir: str, coord_file: str,
+    em_dates: list, time_tolerance_days: float,
+) -> "list[float | None]":
+    """
+    Best-effort extraction of measured soil temperature per EM survey
+    epoch, for the temperature correction fix ("temperature correction is
+    currently a complete no-op" -- run_pipeline.py previously hardcoded
+    TEMP_PROFILES = TEMP_REF, so the correction factor
+    ``1 + alpha*(T - T_ref)`` was always exactly 1, regardless of scenario
+    or data source).
+
+    Mirrors the same ``time_tolerance_days`` date-matching window
+    ``0_real_data_loader.prepare_real_dataset`` uses for SWC, but for
+    whichever column(s) look like a temperature reading (column name
+    containing ``'temp'``, case-insensitive -- the same simple substring
+    convention that module already uses for SWC column detection,
+    ``'swc' in c.lower()``, in ``load_tdr_dataframe``).
+
+    Deliberately reuses ``load_tdr_dataframe`` (which already returns every
+    raw column from the TDR Excel sheets, including any temperature column,
+    since it's a plain inner-merge with coordinates -- not just the SWC
+    columns ``prepare_real_dataset`` explicitly extracts) rather than
+    modifying ``prepare_real_dataset``'s own return contract, which other
+    callers rely on unchanged.
+
+    Parameters
+    ----------
+    load_tdr_dataframe_fn : callable
+        The ``load_tdr_dataframe`` function from ``0_real_data_loader``,
+        already resolved by the caller (``_load_real_data``) via whichever
+        import path succeeded there.
+    tdr_dir, coord_file : str
+        Same paths passed to ``prepare_real_dataset``.
+    em_dates : list of datetime.datetime
+        One per EM survey epoch, same order as ``em_files``.
+    time_tolerance_days : float
+        Same matching half-window used for SWC<->EM date matching.
+
+    Returns
+    -------
+    list of float or None, same length/order as ``em_dates``. ``None`` for
+    any epoch with no temperature column found at all, or no matched
+    reading within tolerance for that specific epoch -- callers MUST treat
+    ``None`` as "no correction possible for this epoch", never as "0
+    degrees" (which would silently apply a large, wrong correction).
+    """
+    try:
+        df_probes, _ = load_tdr_dataframe_fn(tdr_dir, coord_file)
+    except Exception as e:
+        print(f"[REAL DATA][WARN] Could not reload TDR data for temperature "
+              f"extraction ({type(e).__name__}: {e}) -- temperature correction "
+              f"will be skipped for this run.")
+        return [None] * len(em_dates)
+
+    temp_cols = [c for c in df_probes.columns if "temp" in c.lower()]
+    if not temp_cols:
+        print("[REAL DATA] No temperature column found in TDR data (looked "
+              "for any column containing 'temp') -- temperature correction "
+              "will be skipped for this run unless 'soil_temperature_c' is "
+              "set explicitly in the scenario config.")
+        return [None] * len(em_dates)
+
+    print(f"[REAL DATA] Temperature column(s) detected for correction: {temp_cols}")
+    tolerance = datetime.timedelta(days=time_tolerance_days)
+    temps: "list[float | None]" = []
+    for em_dt in em_dates:
+        window = df_probes[
+            (df_probes["Timestamp"] >= em_dt - tolerance) &
+            (df_probes["Timestamp"] <= em_dt + tolerance)
+        ]
+        if window.empty:
+            temps.append(None)
+            continue
+        vals = window[temp_cols].to_numpy(dtype=float)
+        vals = vals[np.isfinite(vals)]
+        temps.append(float(np.mean(vals)) if vals.size else None)
+
+    n_found = sum(1 for t in temps if t is not None)
+    print(f"[REAL DATA] Measured temperature matched for {n_found}/{len(em_dates)} "
+          f"epoch(s) (tolerance ±{time_tolerance_days} day(s)).")
+    return temps
 
 
 def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
@@ -443,28 +698,45 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
     inversion worker.
 
     Returns:
-        tuple: (em_files, observations, probe_table, em_dates, raw_em_files)
-               where em_files contains the PROCESSED paths ready for emagpy,
-               observations is a list of dicts with keys:
-               probe_index, time_index, depth, swc, em_dates is the
+        tuple: (em_files, observations, probe_table, em_dates, raw_em_files,
+                real_data_diagnostics)
+               where em_files contains the PROCESSED paths ready for emagpy
+               (always metric x/y, regardless of which raw column alias the
+               instrument export used -- see the CRS-mismatch fix on
+               _prepare_real_em_csv), observations is a list of dicts with
+               keys: probe_index, time_index, depth, swc, em_dates is the
                list of datetime objects (one per EM survey epoch, same
-               order/length as em_files), and raw_em_files contains the
+               order/length as em_files), raw_em_files contains the
                original, untouched GEM-2 CSV paths (pre-processing, pre-
                filterRepeated) in the same order — kept around solely so
                diagnostic plotting (Step 1b) can show the full per-epoch
                footprint before the row-count trim, instead of the already
-               column-renamed and duplicate-filtered processed files.
+               column-renamed and duplicate-filtered processed files —
+               and real_data_diagnostics is a dict with keys
+               'coord_kinds' (list of per-file {'file','coord_kind',
+               'epsg_used'} dicts), 'em_unit_checks' (list of per-file
+               _check_em_unit_sanity() result dicts), 'crs_consistency'
+               (single {'level','message'} verdict vs. probe_table),
+               'n_geographic_reprojected' (int), and 'temp_by_epoch'
+               (list[float|None], one measured soil temperature per
+               em_dates entry, or None where no 'temp'-named TDR column /
+               no matched reading was found -- feeds the temperature
+               correction fix, see main()'s TEMPERATURE CORRECTION
+               section) -- returned (rather than
+               only printed) specifically so the caller can fold these
+               diagnostics into the PipelineReporter's Markdown report;
+               see fix "Is this step in the log recorder?".
     """
     from pathlib import Path
 
     # Import the real data loader
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
-        from l0_real_data_loader import prepare_real_dataset, filter_repeated_em_points  # Adjust import as needed
+        from l0_real_data_loader import prepare_real_dataset, filter_repeated_em_points, load_tdr_dataframe  # Adjust import as needed
     except ImportError:
         # Try alternate name
         try:
-            from _0_real_data_loader import prepare_real_dataset, filter_repeated_em_points
+            from _0_real_data_loader import prepare_real_dataset, filter_repeated_em_points, load_tdr_dataframe
         except ImportError:
             # Fallback: try from current script directory
             import importlib.util
@@ -479,6 +751,7 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
             spec.loader.exec_module(real_data_module)
             prepare_real_dataset = real_data_module.prepare_real_dataset
             filter_repeated_em_points = real_data_module.filter_repeated_em_points
+            load_tdr_dataframe = real_data_module.load_tdr_dataframe
 
     print(f"[REAL DATA] Loading from:")
     print(f"  EM directory  : {em_dir}")
@@ -493,17 +766,32 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
     )
 
     # Convert each raw semicolon-delimited GEM-2 CSV into an emagpy-ready
-    # comma-separated file with correctly named coil columns.
+    # comma-separated file with correctly named coil columns. As of the
+    # CRS-mismatch fix, _prepare_real_em_csv also reprojects geographic
+    # (Longitude/Latitude) files to metric UTM in-place, so every returned
+    # em_files path is guaranteed metric regardless of which raw column
+    # alias the instrument export used.
     processed_dir = os.path.join(em_dir, "_emagpy_ready")
     print(f"[REAL DATA] Pre-processing {len(raw_em_files)} EM files → {processed_dir}")
     em_files = []
+    coord_kind_records: list[dict] = []
+    em_unit_check_records: list[dict] = []
     for raw_path, survey_date in zip(raw_em_files, em_dates):
         try:
-            proc_path = _prepare_real_em_csv(raw_path, processed_dir, survey_date=survey_date)
+            proc_path, coord_kind, epsg_used = _prepare_real_em_csv(
+                raw_path, processed_dir, survey_date=survey_date,
+            )
             filter_repeated_em_points(proc_path, tolerance=filter_repeated_tolerance,
                                        unit=em_unit)
+            em_unit_check_records.append(_check_em_unit_sanity(proc_path, em_unit))
             em_files.append(proc_path)
-            print(f"  [OK] {os.path.basename(raw_path)} → {os.path.basename(proc_path)}")
+            coord_kind_records.append({
+                "file": os.path.basename(raw_path), "coord_kind": coord_kind,
+                "epsg_used": epsg_used,
+            })
+            epsg_note = f", reprojected via {epsg_used}" if epsg_used else ""
+            print(f"  [OK] {os.path.basename(raw_path)} → {os.path.basename(proc_path)} "
+                  f"(coords: {coord_kind}{epsg_note})")
         except Exception as e:
             print(f"  [WARN] Skipping '{os.path.basename(raw_path)}': {e}")
 
@@ -513,24 +801,106 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
             "Check that the raw CSVs match the expected GEM-2 column layout."
         )
 
+    n_geo = sum(1 for r in coord_kind_records if r["coord_kind"] == "geographic")
+    if n_geo:
+        print(f"[REAL DATA] {n_geo}/{len(coord_kind_records)} EM survey file(s) used "
+              f"geographic (Longitude/Latitude) columns and were reprojected "
+              f"to metric UTM -- see per-file '(coords: ...)' lines above.")
+
+    # ------------------------------------------------------------------
+    # CRS CONSISTENCY SANITY CHECK (item 3 of the fix, defense-in-depth)
+    #   Independent of the alias-based classification above: compare the
+    #   final (now-metric, by construction) EM survey coordinates against
+    #   probe_table's own utm_x/utm_y. Catches ANY residual CRS mismatch
+    #   -- e.g. a raw file whose alias matched but whose actual values are
+    #   in a different projection than probe_table's coordinates, or a
+    #   pyproj/UTM-zone auto-detection edge case -- rather than relying
+    #   solely on the classification fix above being sufficient.
+    # ------------------------------------------------------------------
+    crs_consistency = {"level": "OK", "message": None}
+    try:
+        import pandas as _pd
+        _first_ok_path = em_files[0]
+        _first_df = _pd.read_csv(_first_ok_path)
+        _em_x = _first_df["x"].to_numpy(dtype=float)
+        _em_y = (_first_df["y"].to_numpy(dtype=float)
+                if "y" in _first_df.columns else np.zeros_like(_em_x))
+        _px = probe_table["utm_x"].to_numpy(dtype=float) if "utm_x" in probe_table.columns else np.array([])
+        _py = probe_table["utm_y"].to_numpy(dtype=float) if "utm_y" in probe_table.columns else np.array([])
+        _valid_probes = (_px != 0.0) | (_py != 0.0)
+        if _px.size and _valid_probes.any():
+            _crs_msg = geometry_utils.check_crs_consistency(
+                _em_x, _em_y, _px[_valid_probes], _py[_valid_probes],
+                label_a=f"EM survey ({os.path.basename(_first_ok_path)})",
+                label_b="TDR probes (probe_table utm_x/utm_y)",
+            )
+            if _crs_msg:
+                crs_consistency = {
+                    "level": "WARN",
+                    "message": (f"Possible CRS mismatch between EM survey and TDR probe "
+                                f"coordinates: {_crs_msg}"),
+                }
+                print(f"[REAL DATA][WARN] {crs_consistency['message']}")
+            else:
+                crs_consistency = {
+                    "level": "OK",
+                    "message": ("EM survey and TDR probe coordinates occupy consistent "
+                                "spatial extents."),
+                }
+                print(f"[REAL DATA] CRS consistency check: {crs_consistency['message']} OK.")
+        else:
+            crs_consistency = {"level": "SKIPPED",
+                               "message": "No valid probe_table utm_x/utm_y to compare against."}
+    except Exception as _crs_exc:
+        crs_consistency = {
+            "level": "WARN",
+            "message": f"CRS consistency check failed to run: {type(_crs_exc).__name__}: {_crs_exc}",
+        }
+        print(f"[REAL DATA][WARN] {crs_consistency['message']} -- skipping.")
+
     print(f"[REAL DATA] ✓ Loaded {len(em_files)} EM surveys (processed)")
     print(f"[REAL DATA] ✓ Loaded {len(probe_table)} probe locations")
     print(f"[REAL DATA] ✓ Loaded {len(observations)} matched observations")
 
-    return em_files, observations, probe_table, em_dates, raw_em_files
+    # ------------------------------------------------------------------
+    # TEMPERATURE EXTRACTION (fix "temperature correction is currently a
+    # complete no-op"). Best-effort: never raises, returns all-None on any
+    # failure so the caller (main()) simply skips the correction and logs
+    # that explicitly, rather than the run failing over an optional signal.
+    # ------------------------------------------------------------------
+    temp_by_epoch = _extract_temperature_by_epoch(
+        load_tdr_dataframe, tdr_dir, coord_file, em_dates, time_tolerance_days,
+    )
+
+    real_data_diagnostics = {
+        "coord_kinds": coord_kind_records,      # one dict per successfully-loaded EM file
+        "em_unit_checks": em_unit_check_records,  # one dict per successfully-loaded EM file
+        "crs_consistency": crs_consistency,       # single verdict vs. probe_table
+        "n_geographic_reprojected": n_geo,
+        "temp_by_epoch": temp_by_epoch,           # list[float|None], one per em_dates entry
+    }
+
+    return em_files, observations, probe_table, em_dates, raw_em_files, real_data_diagnostics
 
 
 def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
-                          drop_coils=None) -> str:
+                          drop_coils=None, spatial_match_tolerance_m=None) -> str:
     """
     Stable content hash of everything that determines the inversion outputs
     cached in Step 1 (ensemble_cache_*.pkl). Used to auto-invalidate a cache
     whenever depths0 / fixed_depths / param_grid / cond_ranges / gamma /
-    drop_coils drift from what produced it — even if a human forgot to bump
-    cache_tag. Relying on cache_tag alone is fragile: nothing previously
-    verified that the cached depths_clean/models_clean actually matched the
-    live scenario config, so an edited depths0 with a stale cache_tag would
-    silently reuse ensemble models built from the old depths0.
+    drop_coils / spatial_match_tolerance_m drift from what produced it —
+    even if a human forgot to bump cache_tag. Relying on cache_tag alone is
+    fragile: nothing previously verified that the cached
+    depths_clean/models_clean actually matched the live scenario config, so
+    an edited depths0 with a stale cache_tag would silently reuse ensemble
+    models built from the old depths0.
+
+    ``spatial_match_tolerance_m`` only matters for real-data time-lapse runs
+    (see ``geometry_utils.match_epochs_to_reference_grid`` /
+    ``main()``'s Step 1); pass ``None`` for synthetic or single-survey real
+    runs so the fingerprint is unaffected by a field that plays no role in
+    how those caches were built.
     """
     payload = {
         "depths0": list(depths0),
@@ -539,6 +909,7 @@ def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
         "cond_ranges": [list(r) for r in cond_ranges],
         "gamma": gamma,
         "drop_coils": drop_coils,
+        "spatial_match_tolerance_m": spatial_match_tolerance_m,
     }
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
@@ -555,10 +926,10 @@ def _is_timelapse(fnames) -> bool:
 _build_inversion_bnds = geometry_utils.build_inversion_bnds
 
 
-def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | None, str | None]:
+def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | None, np.ndarray | None, str | None]:
     """
     Worker function executed in an isolated process space.
-    Returns (task_idx, models_array, depths_array, error_message).
+    Returns (task_idx, models_array, depths_array, pstd_array, error_message).
 
     ``error_message`` is ``None`` on success, otherwise a one-line
     "ExceptionType: message" string sent back to the main process for
@@ -571,6 +942,20 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
     ``EMmethod.drop_coils_from_problem``) used to exclude a noisy
     frequency channel from the survey before inversion. It is stripped
     out before being forwarded to ``k.invert()``.
+
+    ``pstd_array`` (FIX "use the full MCMC, not just a single selected
+    model"): emagpy's MCMC-family inversion methods (MCMC/ROPE/DREAM/SCEUA)
+    run a real posterior sampler per measurement point, but ``k.invert()``
+    only ever keeps the lowest-misfit sample (-> ``k.models[0]``/
+    ``k.depths[0]``, the only thing this worker used to return) plus a
+    per-point, per-free-parameter posterior standard deviation in
+    ``k.pstds[0]`` -- computed from the best 10% of the sampled chain. That
+    array was previously read by nobody in this pipeline. It's captured
+    here and returned alongside models/depths so Step 1 can propagate it
+    through the same caching/packing/spatial-remap machinery already used
+    for ``depths_clean``. For non-MCMC-family methods emagpy itself
+    zero-initialises ``k.pstds`` and never overwrites it, so this is a
+    harmless all-zero array in that case -- no method-branching needed here.
     """
     task_idx, fname, depths0, conds0, fixed_depths_list, invert_kwargs = args
     from emagpy import Problem
@@ -620,12 +1005,22 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
         clean_kwargs = {key: v for key, v in invert_kwargs.items()
                         if key not in ("targetProjection", "em_unit", "drop_coils")}
         k.invert(**clean_kwargs)
-        return task_idx, np.asarray(k.models[0]), np.asarray(k.depths[0]), None
+        models_arr = np.asarray(k.models[0])
+        depths_arr = np.asarray(k.depths[0])
+        pstd_list = getattr(k, "pstds", None)
+        if pstd_list and len(pstd_list) > 0:
+            pstd_arr = np.asarray(pstd_list[0], dtype=float)
+        else:
+            # Defensive fallback only -- emagpy always appends a (possibly
+            # all-zero) entry to k.pstds inside invert(); this covers only
+            # an unexpected emagpy version mismatch, not normal operation.
+            pstd_arr = np.zeros((models_arr.shape[0], 0), dtype=float)
+        return task_idx, models_arr, depths_arr, pstd_arr, None
     except Exception as e:
         err_msg = f"{type(e).__name__}: {e}"
         print(f"\n[ERROR] Inversion failed for task {task_idx}: {err_msg}")
         print(traceback.format_exc())
-        return task_idx, None, None, err_msg
+        return task_idx, None, None, None, err_msg
 
 
 # _layer_centers is now the single shared implementation in
@@ -716,7 +1111,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          drop_coils=None, homogeneous: bool | None = None,
          num_swc_positions: int | None = None,
          swc_depths: list[float] | None = None,
-         window_m: float | None = None):
+         window_m: float | None = None,
+         em_unit: str | None = None,
+         beta: list[float] | None = None,
+         gamma: float | None = None):
     """
     Run the full EA-EM pipeline.
 
@@ -770,6 +1168,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         averaging window used to match TDR probes to EM measurement
         indices). ``None`` (default) uses the scenario value (or 1.0 if
         unset / no scenario given).
+    em_unit : {'ppm', 'ppt'} or None, optional
+        Overrides the scenario's ``em_unit`` (physical unit of the
+        quadrature/in-phase columns in the EM survey CSV: ``'ppm'`` for
+        GEM-2 / CMD-Explorer instruments -- what this pipeline's real-data
+        branch actually ingests -- ``'ppt'`` for GF Instruments CMD series).
+        ``None`` (default) uses the scenario value; for real-data
+        scenarios ``scenario_loader`` now REQUIRES ``em_unit`` to be set
+        explicitly in the JSON (see ``scenario_loader._validate``), so this
+        parameter exists purely as an ad-hoc CLI override, not a way to
+        avoid setting it in the scenario. Ignored (falls back to
+        ``"ppt"``) when no scenario is given at all.
     """
     mode = mode.lower().strip()
 
@@ -785,7 +1194,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         COND_RANGES       = cfg.cond_ranges
         GAMMA             = cfg.gamma
         _cache_path_override = cfg.cache_path
-        EM_UNIT           = getattr(cfg, "em_unit", "ppt")
+        EM_UNIT           = em_unit if em_unit is not None else getattr(cfg, "em_unit", "ppt")
     else:
         OUTPUT_DIR        = "mfc2_outputs"
         REALIZATION_INDEX = 0
@@ -799,7 +1208,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         COND_RANGES = [[5.0, 250.0], [5.0, 250.0], [10.0], [10.0]]
         GAMMA             = 0.0
         _cache_path_override = None
-        EM_UNIT           = "ppt"
+        EM_UNIT           = em_unit if em_unit is not None else "ppt"
+
+    # --beta / --gamma CLI overrides (mirror the --window-m / --swc-depths
+    # pattern: CLI value wins over whatever the scenario config set).
+    if beta is not None:
+        PARAM_GRID = dict(PARAM_GRID)
+        PARAM_GRID["beta"] = list(beta)
+    if gamma is not None:
+        GAMMA = gamma
 
     ECA_NOISE_LEVEL = getattr(cfg, "eca_noise_level", 0.0) if cfg is not None else 0.0
     TDR_NOISE_STD   = getattr(cfg, "tdr_noise_std",   0.01) if cfg is not None else 0.01
@@ -839,6 +1256,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     MATCHING_WARN_FRACTION  = getattr(cfg, "matching_warn_fraction", 0.5) if cfg is not None else 0.5
     MATCHING_ERROR_FRACTION = getattr(cfg, "matching_error_fraction", None) if cfg is not None else None
 
+    # Real-data time-lapse spatial reference-grid tolerance (report:
+    # "spatial reference-grid matching, not row trimming"). Only used in
+    # Step 1 when data_source == "real" and multiple survey epochs are
+    # present; see geometry_utils.match_epochs_to_reference_grid. Computed
+    # here (rather than inline in Step 1) so it can feed the Step 1 cache
+    # fingerprint below regardless of whether Step 1 ends up being a cache
+    # hit or a fresh run.
+    SPATIAL_MATCH_TOLERANCE_M = (
+        getattr(cfg, "spatial_match_tolerance_m", 2.0) if cfg is not None else 2.0
+    )
+
     # Initialise run reporter
     _scenario_name = cfg.name if cfg is not None else "default"
     reporter = PipelineReporter(
@@ -873,12 +1301,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         "ws_fixed_params":    str(WS_FIXED_PARAMS) if WS_FIXED_PARAMS else "(none — a/m/sigma_w/sigma_s all free)",
         "lab_p0":             str(LAB_P0) if LAB_P0 else "(none — using DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0])",
         "homogeneous":        HOMOGENEOUS,
+        "spatial_match_tolerance_m (real time-lapse)": SPATIAL_MATCH_TOLERANCE_M,
     })
 
     try:
         # -----------------------------------------------------------------------
         # STEP 0 — DATA PREPARATION (SYNTHETIC OR REAL)
         # -----------------------------------------------------------------------
+        REAL_DATA_DIAG = None  # populated below only when data_source == "real";
+                               # referenced later (temperature correction) regardless of branch
         if data_source == "real":
             reporter.step("Step 0", "Loading real EM and TDR field data")
             reporter.log(f"[PIPELINE] STEP 0: Loading real field observations...")
@@ -888,11 +1319,67 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter.log(f"           Drop coils      : {DROP_COILS if DROP_COILS else '(none)'}")
 
             # Load real data
-            EM_FNAMES, observations_list, probe_table, EM_DATES, RAW_EM_FNAMES = _load_real_data(
+            EM_FNAMES, observations_list, probe_table, EM_DATES, RAW_EM_FNAMES, REAL_DATA_DIAG = _load_real_data(
                 em_dir, tdr_dir, coord_file,
                 time_tolerance_days=getattr(cfg, "time_tolerance_days", 1.0),
                 em_unit=EM_UNIT,
             )
+
+            # -----------------------------------------------------------------------
+            # Fold the CRS classification/reprojection + em_unit sanity-check
+            # diagnostics into the Markdown run report. Previously these were
+            # print()-only (visible in the console, but absent from
+            # pipeline_report_*.md) -- see fix "Is this step in the log
+            # recorder?". _load_real_data now returns them structured
+            # specifically so they can be logged here.
+            # -----------------------------------------------------------------------
+            _coord_rows = [
+                [r["file"], r["coord_kind"], r["epsg_used"] or "—"]
+                for r in REAL_DATA_DIAG["coord_kinds"]
+            ]
+            reporter.table(
+                "Step 0 — EM survey coordinate system per file",
+                ["File", "Coordinate kind", "EPSG used (if reprojected)"],
+                _coord_rows,
+                note=(
+                    f"{REAL_DATA_DIAG['n_geographic_reprojected']}/{len(_coord_rows)} file(s) "
+                    "used geographic (Longitude/Latitude) columns and were auto-reprojected "
+                    "to metric UTM before any distance/matching computation."
+                ),
+            )
+            reporter.metric(
+                "Real EM files reprojected (geographic → UTM)",
+                f"{REAL_DATA_DIAG['n_geographic_reprojected']}/{len(_coord_rows)}",
+            )
+
+            _em_unit_rows = [
+                [r["file"], r["level"],
+                 f"{r['median_abs_eca']:.4g}" if r["median_abs_eca"] is not None else "—"]
+                for r in REAL_DATA_DIAG["em_unit_checks"]
+            ]
+            reporter.table(
+                "Step 0 — em_unit sanity check (median |LIN ECa| per file)",
+                ["File", "Level", "Median abs(ECa) [mS/m]"],
+                _em_unit_rows,
+                note=f"em_unit='{EM_UNIT}'; expected field-soil range ~1-300 mS/m.",
+            )
+            _em_unit_warn_files = [r["file"] for r in REAL_DATA_DIAG["em_unit_checks"] if r["level"] == "WARN"]
+            if _em_unit_warn_files:
+                reporter.log(
+                    f"[STEP 0][WARN] em_unit sanity check flagged {len(_em_unit_warn_files)} "
+                    f"file(s) as likely em_unit mismatches: {_em_unit_warn_files}. "
+                    "See the table above."
+                )
+
+            _crs = REAL_DATA_DIAG["crs_consistency"]
+            reporter.log(f"[STEP 0] CRS consistency check ({_crs['level']}): {_crs['message']}")
+            reporter.metric("CRS consistency check (EM vs. TDR probes)", _crs["level"])
+            if _crs["level"] == "WARN":
+                reporter.log(
+                    "[STEP 0][WARN] EM survey and TDR probe coordinates look "
+                    "spatially inconsistent -- see message above. TDR<->EM window "
+                    "matching (Step 1) may be unreliable until this is resolved."
+                )
 
             # Extract observations into dict structure for processing
             # observations_list contains: probe_index, time_index, depth, swc
@@ -1015,6 +1502,130 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.end_step("Step 0b")
 
         # -----------------------------------------------------------------------
+        # STEP 1a — PRE-INVERSION IMPORT/FILTER/SPATIAL-MATCHING DIAGNOSTICS
+        #   Renders sanity-check figures (import/filter summary, reference-
+        #   grid coverage, optional tolerance sweep, TDR<->EM point matching).
+        #   Placed HERE -- immediately after Step 0b and before the cache
+        #   check / ProcessPoolExecutor dispatch below -- so it genuinely
+        #   runs before any inversion work, not merely before the
+        #   reporter.step("Step 1", ...) bookkeeping call (that call is just
+        #   where the log entry is made; the actual expensive computation
+        #   starts right after this block, at the "cache_hit" check).
+        #   Consumes EM_FNAMES/RAW_EM_FNAMES/EM_DATES/probe_table/
+        #   observations_list -- already imported, pre-processed, and
+        #   filterRepeated'd by Step 0's _load_real_data() call above -- so
+        #   this does NOT re-run that IMPORT/PRE-PROCESS/FILTER chain a
+        #   second time; only the (cheap, position-only) spatial reference-
+        #   grid matching and the figures themselves are computed here.
+        #   Only runs in real-data mode; wrapped in try/except so a plot
+        #   failure never aborts the pipeline.
+        # -----------------------------------------------------------------------
+        if data_source == "real":
+            reporter.step("Step 1a", "Pre-inversion import/filter/spatial-matching diagnostics")
+            reporter.log(" [PIPELINE] STEP 1a: PRE-INVERSION DIAGNOSTICS (reusing Step 0 data)")
+            try:
+                _pre_inv_result = preinvdiag.run_pre_inversion_diagnostics_from_pipeline(
+                    em_files=EM_FNAMES,
+                    raw_em_files=RAW_EM_FNAMES,
+                    em_dates=EM_DATES,
+                    probe_table=probe_table,
+                    observations=observations_list,
+                    output_dir=OUTPUT_DIR,
+                    time_tolerance_days=getattr(cfg, "time_tolerance_days", 1.0),
+                    spatial_match_tolerance_m=SPATIAL_MATCH_TOLERANCE_M,
+                    window_m=(
+                        window_m if window_m is not None
+                        else (getattr(cfg, "window_m", 1.0) if cfg is not None else 1.0)
+                    ),
+                    matching_warn_fraction=MATCHING_WARN_FRACTION,
+                )
+                reporter.log(
+                    f"[STEP 1a] {len(_pre_inv_result['figures'])} diagnostic figure(s) written "
+                    f"to '{os.path.join(OUTPUT_DIR, 'diagnostics', 'pre_inversion')}'"
+                )
+                reporter.metric("Pre-inversion diagnostic figures", len(_pre_inv_result["figures"]))
+                reporter.metric("Pre-inversion — reference grid size", _pre_inv_result["n_ref_points"])
+                if _pre_inv_result["zero_obs_epochs"]:
+                    reporter.log(
+                        f"[STEP 1a][WARN] {len(_pre_inv_result['zero_obs_epochs'])} epoch(s) "
+                        f"matched ZERO TDR observations within the configured "
+                        f"time_tolerance_days: epoch index(es) {_pre_inv_result['zero_obs_epochs']}. "
+                        "Consider raising time_tolerance_days."
+                    )
+                _match_summary = _pre_inv_result.get("matching_summary")
+                if _match_summary is not None:
+                    reporter.log(f"[STEP 1a] {_match_summary.message}")
+            except Exception as _pre_inv_exc:
+                reporter.log(
+                    f"[STEP 1a][WARN] Pre-inversion diagnostics failed (pipeline continues): "
+                    f"{type(_pre_inv_exc).__name__}: {_pre_inv_exc}"
+                )
+            reporter.end_step("Step 1a")
+        elif data_source == "synthetic":
+            # Synthetic epochs share one fixed grid by construction, so the
+            # real-data-only import/filter/reference-grid machinery above
+            # (Figures 1-3) doesn't apply here. The one thing worth
+            # checking before the (potentially long) Step 1 inversion is
+            # still the probe<->EM spatial-matching diagnostic (Figure 4 on
+            # the real-data path) -- see
+            # preinvdiag.run_pre_inversion_diagnostics_synthetic_from_pipeline
+            # for details, including the CRS-consistency check this reuses
+            # from the real-data path.
+            reporter.step("Step 1a", "Pre-inversion synthetic spatial-matching diagnostics")
+            reporter.log(" [PIPELINE] STEP 1a: PRE-INVERSION DIAGNOSTICS (synthetic)")
+            try:
+                _synth_utm_x_path = os.path.join(OUTPUT_DIR, "synthetic_utm_x.npy")
+                _synth_utm_y_path = os.path.join(OUTPUT_DIR, "synthetic_utm_y.npy")
+                _synth_utm_x = (np.load(_synth_utm_x_path)
+                                if mode == "2d" and os.path.exists(_synth_utm_x_path) else None)
+                _synth_utm_y = (np.load(_synth_utm_y_path)
+                                if mode == "2d" and os.path.exists(_synth_utm_y_path) else None)
+
+                _pre_inv_result_synth = preinvdiag.run_pre_inversion_diagnostics_synthetic_from_pipeline(
+                    em_files=EM_FNAMES if timelapse else [EM_FNAMES],
+                    output_dir=OUTPUT_DIR,
+                    depths0=DEPTHS0,
+                    layer_centers=synthetic_geometry["layer_centers"],
+                    num_swc_positions=(
+                        getattr(cfg, "num_swc_positions", 4) if cfg is not None else 4
+                    ),
+                    swc_depths=(
+                        getattr(cfg, "swc_depths", None) if cfg is not None else None
+                    ),
+                    window_m=(
+                        window_m if window_m is not None
+                        else (getattr(cfg, "window_m", 1.0) if cfg is not None else 1.0)
+                    ),
+                    matching_warn_fraction=MATCHING_WARN_FRACTION,
+                    mode=mode,
+                    utm_x=_synth_utm_x,
+                    utm_y=_synth_utm_y,
+                )
+                reporter.log(
+                    f"[STEP 1a] {len(_pre_inv_result_synth['figures'])} diagnostic figure(s) written "
+                    f"to '{os.path.join(OUTPUT_DIR, 'diagnostics')}'"
+                )
+                reporter.metric(
+                    "Pre-inversion diagnostic figures (synthetic)",
+                    len(_pre_inv_result_synth["figures"]),
+                )
+                _match_summary_synth = _pre_inv_result_synth.get("matching_summary")
+                if _match_summary_synth is not None:
+                    reporter.log(f"[STEP 1a] {_match_summary_synth.message}")
+                _crs_synth = _pre_inv_result_synth.get("crs_consistency")
+                if _crs_synth:
+                    reporter.log(
+                        f"[STEP 1a][WARN] Possible CRS mismatch between synthetic EM "
+                        f"survey and probe coordinates: {_crs_synth}"
+                    )
+            except Exception as _pre_inv_exc:
+                reporter.log(
+                    f"[STEP 1a][WARN] Pre-inversion synthetic diagnostics failed "
+                    f"(pipeline continues): {type(_pre_inv_exc).__name__}: {_pre_inv_exc}"
+                )
+            reporter.end_step("Step 1a")
+
+        # -----------------------------------------------------------------------
         # STEP 1 — PARALLEL ENSEMBLE INVERSION
         # -----------------------------------------------------------------------
         print("\n" + "=" * 80)
@@ -1030,12 +1641,27 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
         # Content fingerprint of everything that determines Step 1's output.
         # Guards against a stale cache_tag: if depths0/fixed_depths/param_grid/
-        # cond_ranges/gamma/drop_coils changed since the cache was written but
-        # cache_tag wasn't bumped to match, we still detect the drift here and
-        # force a fresh inversion instead of silently reusing outdated models.
+        # cond_ranges/gamma/drop_coils/spatial_match_tolerance_m changed since
+        # the cache was written but cache_tag wasn't bumped to match, we still
+        # detect the drift here and force a fresh inversion instead of
+        # silently reusing outdated models. spatial_match_tolerance_m only
+        # matters for real-data time-lapse runs -- pass None otherwise so it
+        # never spuriously invalidates a synthetic/single-survey cache.
+        _fingerprint_tolerance = (
+            SPATIAL_MATCH_TOLERANCE_M if (data_source == "real" and timelapse) else None
+        )
         current_fingerprint = _config_fingerprint(
             DEPTHS0, FIXED_DEPTHS, PARAM_GRID, COND_RANGES, GAMMA, DROP_COILS,
+            spatial_match_tolerance_m=_fingerprint_tolerance,
         )
+
+        # Real-data time-lapse spatial reference grid coordinates (union
+        # across all survey epochs -- see geometry_utils.match_epochs_to_
+        # reference_grid). None for synthetic data and for real single-survey
+        # (non-time-lapse) runs, where no cross-epoch spatial matching is
+        # needed. Populated either from a cache hit below or freshly built
+        # in the "no cache" branch further down.
+        REAL_DATA_REFERENCE_XY = None
 
         cache_hit = False
         if os.path.exists(cache_path):
@@ -1050,15 +1676,35 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             elif cached_fingerprint != current_fingerprint:
                 print("[CACHE][STALE] Cached ensemble was built from a different "
                       "config (depths0/fixed_depths/param_grid/cond_ranges/gamma/"
-                      "drop_coils changed) but cache_tag was not updated to match. "
+                      "drop_coils/spatial_match_tolerance_m changed) but cache_tag "
+                      "was not updated to match. "
                       f"cached={cached_fingerprint} current={current_fingerprint}. "
                       "Ignoring stale cache and re-running inversion.")
             else:
                 models_clean   = cache_data["models_clean"]
                 param_metadata = cache_data["param_metadata"]
                 depths_clean   = cache_data.get("depths_clean")
+                pstds_clean    = cache_data.get("pstds_clean")
+                REAL_DATA_REFERENCE_XY = cache_data.get("reference_xy")
                 if depths_clean is None:
                     print("[CACHE][WARN] Cache predates depth capture — re-run to update.")
+                if pstds_clean is None:
+                    print(
+                        "[CACHE][WARN] Cache predates the MCMC-posterior-std capture "
+                        "('use the full MCMC, not just a single selected model') and "
+                        "has no stored pstds_clean. MCMC uncertainty reporting will "
+                        "be skipped this run -- delete this cache and re-run to "
+                        "populate it."
+                    )
+                if data_source == "real" and timelapse and REAL_DATA_REFERENCE_XY is None:
+                    print(
+                        "[CACHE][WARN] Cache predates the spatial reference-grid "
+                        "fix (report: 'spatial reference-grid matching, not row "
+                        "trimming') and has no stored reference-grid coordinates. "
+                        "Falling back to loading epoch-0 survey positions only "
+                        "for probe placement -- delete this cache and re-run for "
+                        "the full union-of-all-epochs reference grid."
+                    )
                 print(f"[CACHE] Loaded {models_clean.shape[0]} ensemble members "
                       f"(config fingerprint verified: {current_fingerprint}).")
                 cache_hit = True
@@ -1077,9 +1723,11 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                                                         em_unit=EM_UNIT)
 
             alphas         = PARAM_GRID.get("alpha",        [0.03])
+            betas          = PARAM_GRID.get("beta",         [0.0])
             methods        = PARAM_GRID.get("method",       ["L-BFGS-B"])
             forward_models = PARAM_GRID.get("forwardModel", ["FSlin"])
-            combinations   = [(a, m, f) for a in alphas for m in methods for f in forward_models]
+            combinations   = [(a, b, m, f) for a in alphas for b in betas
+                              for m in methods for f in forward_models]
 
             # Full Cartesian-product expansion of per-layer starting conductivities
             # (was previously a zip-style pairing that only ever produced the
@@ -1102,18 +1750,19 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             print(f"[INFO] Inversion bnds (depths+conds, {len(bnds_list)} params): {bnds_list}")
 
             combo_list = []
-            for alpha, method, f_model in combinations:
+            for alpha, beta, method, f_model in combinations:
                 for conds0 in cond_sets:
-                    combo_list.append((alpha, method, f_model, list(conds0)))
+                    combo_list.append((alpha, beta, method, f_model, list(conds0)))
 
             files_to_process = EM_FNAMES if timelapse else [EM_FNAMES]
             tasks = []
             task_meta = {}          # task_idx -> dict describing the combo, for failure reporting
             global_task_idx = 0
-            for c_idx, (alpha, method, f_model, conds0) in enumerate(combo_list):
+            for c_idx, (alpha, beta, method, f_model, conds0) in enumerate(combo_list):
                 for t_idx, file_path in enumerate(files_to_process):
                     invert_kwargs = {
-                        "alpha": alpha, "method": method,
+                        "alpha": alpha, "beta": beta, "gamma": GAMMA,
+                        "method": method,
                         "forwardModel": f_model, "targetProjection": None,
                         "em_unit": EM_UNIT, "drop_coils": DROP_COILS,
                         "bnds": bnds_list,
@@ -1122,7 +1771,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                                    fixed_depths_list, invert_kwargs))
                     task_meta[global_task_idx] = {
                         "combo_idx": c_idx, "t_idx": t_idx, "file": file_path,
-                        "alpha": alpha, "method": method, "forwardModel": f_model,
+                        "alpha": alpha, "beta": beta, "method": method,
+                        "forwardModel": f_model,
                         "conds0": conds0,
                     }
                     global_task_idx += 1
@@ -1139,42 +1789,54 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
                 )
                 for res in results:
-                    t_idx_res, m_res, d_res, err_res = res
-                    unordered_results.append((t_idx_res, m_res, d_res))
+                    t_idx_res, m_res, d_res, p_res, err_res = res
+                    unordered_results.append((t_idx_res, m_res, d_res, p_res))
                     if err_res is not None:
                         failed_tasks.append((t_idx_res, err_res))
 
-            sorted_results = [(m, d) for _, m, d in sorted(unordered_results, key=lambda x: x[0])]
+            sorted_results = [(m, d, p) for _, m, d, p in sorted(unordered_results, key=lambda x: x[0])]
 
             packed_models = []
             packed_depths = []
+            # FIX ("use the full MCMC, not just a single selected model"):
+            # per-point, per-free-parameter MCMC/ROPE/DREAM/SCEUA posterior
+            # std from emagpy's k.pstds (all-zero for non-MCMC-family
+            # methods), packed/cached/remapped in lockstep with
+            # packed_models/packed_depths below. See
+            # EMmethod.extract_conductivity_pstd for how the per-layer
+            # conductivity columns are later sliced out of this.
+            packed_pstds = []
             valid_param_metadata = []
             discarded_combos = []   # combos dropped because >=1 of their timesteps failed
 
-            for c_idx, (alpha, method, f_model, conds0) in enumerate(combo_list):
+            for c_idx, (alpha, beta, method, f_model, conds0) in enumerate(combo_list):
                 combo_models = []
                 combo_depths = []
+                combo_pstds = []
                 combo_failed = False
                 fail_t_idx = None
                 for t_idx in range(n_time):
                     flat_idx = c_idx * n_time + t_idx
-                    model_result, depths_result = sorted_results[flat_idx]
+                    model_result, depths_result, pstd_result = sorted_results[flat_idx]
                     if model_result is None:
                         combo_failed = True
                         fail_t_idx = t_idx
                         break
                     combo_models.append(model_result)
                     combo_depths.append(depths_result)
+                    combo_pstds.append(pstd_result)
                 if not combo_failed:
                     packed_models.append(combo_models if timelapse else combo_models[0])
                     packed_depths.append(combo_depths if timelapse else combo_depths[0])
+                    packed_pstds.append(combo_pstds if timelapse else combo_pstds[0])
                     valid_param_metadata.append({
-                        "alpha": alpha, "method": method,
+                        "alpha": alpha, "beta": beta, "method": method,
                         "forwardModel": f_model, "conds0": conds0,
                     })
                 else:
                     discarded_combos.append({
-                        "combo_idx": c_idx, "alpha": alpha, "method": method,
+                        "combo_idx": c_idx, "alpha": alpha, "beta": beta,
+                        "method": method,
                         "forwardModel": f_model, "conds0": conds0,
                         "failed_at_t_idx": fail_t_idx,
                     })
@@ -1207,7 +1869,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                         flog.write(
                             f"task_idx={t_idx_f} combo_idx={meta.get('combo_idx')} "
                             f"t_idx={meta.get('t_idx')} file={meta.get('file')} "
-                            f"alpha={meta.get('alpha')} method={meta.get('method')} "
+                            f"alpha={meta.get('alpha')} beta={meta.get('beta')} "
+                            f"method={meta.get('method')} "
                             f"forwardModel={meta.get('forwardModel')} conds0={meta.get('conds0')} "
                             f"-- {err_f}\n"
                         )
@@ -1224,43 +1887,171 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 raise ValueError("[CRITICAL] All inversion combinations failed.")
 
             # ------------------------------------------------------------------
-            # FIX: Real EM surveys can have different numbers of measurement
-            # points across time steps (the surveyor walks slightly different
-            # paths each campaign).  np.array() can't form a uniform 4-D array
-            # from inhomogeneous (combo, time) lists in that case.
+            # SPATIAL ASSEMBLY OF THE ENSEMBLE ACROSS EPOCHS
             #
-            # Solution: find the minimum point count across ALL (combo, t_idx)
-            # combinations and trim every individual model to that length before
-            # stacking.  This preserves the spatial overlap common to all
-            # surveys, mirrors emagpy's own trimSurveys() logic, and produces
-            # a well-formed (n_combos, n_time, n_pts_min, n_layers) array.
+            # Real GEM-2 time-lapse surveys are inverted independently per
+            # epoch (no trimSurveys / temporal coupling) and can differ both
+            # in point COUNT and in walk ORDER across campaigns -- the
+            # surveyor need not retrace an identical path every visit.
+            #
+            # FIX ("spatial reference-grid matching, not row trimming"):
+            # previously every epoch was sliced to `arr[:min_pts]` -- the
+            # minimum point count across ALL epochs -- which pairs "row i of
+            # epoch A" with "row i of epoch B" purely by array position. For
+            # anything other than the shortest epoch (and any epoch not
+            # walked in identical order), that silently paired UNRELATED
+            # physical locations under the same spatial index, and threw
+            # away every point beyond the shortest survey's count even
+            # though those points were successfully inverted.
+            #
+            # Real data (time-lapse): build a UNION spatial reference grid
+            # across every epoch's own measurement points
+            # (geometry_utils.match_epochs_to_reference_grid), then
+            # nearest-neighbour remap each epoch's own inverted EC array
+            # onto that shared grid, leaving NaN for any epoch that didn't
+            # cover a given reference point. No epoch's own points are ever
+            # reordered, subsetted, or discarded; NaN-safe downstream
+            # handling (Steps 2-5, see em_methodology.py /
+            # 4_run_select_assess.py) treats an unmatched cell as "no data"
+            # rather than silently pairing it with an unrelated location.
+            #
+            # Synthetic data: point counts are consistent across epochs by
+            # construction (same generator, same grid, every timestep), so
+            # the defensive min_pts trim is kept unchanged as a backward-
+            # compatible no-op safety net.
             # ------------------------------------------------------------------
             if timelapse:
-                # packed_models[combo_idx] is a list of n_time arrays,
-                # each shaped (n_pts_t, n_layers).  Find the global minimum.
-                min_pts = min(
-                    arr.shape[0]
-                    for combo in packed_models
-                    for arr in combo
-                )
-                if min_pts < max(arr.shape[0] for combo in packed_models for arr in combo):
+                if data_source == "real":
                     reporter.log(
-                        f"[STEP1][FIX] Inhomogeneous point counts across surveys detected. "
-                        f"Trimming all time-step models to {min_pts} points "
-                        f"(the minimum across all {n_time} survey epochs and "
-                        f"{len(packed_models)} combos)."
+                        f"[STEP1] Building spatial reference grid across {n_time} "
+                        f"real-data survey epochs (tolerance="
+                        f"{SPATIAL_MATCH_TOLERANCE_M} m) instead of trimming to a "
+                        f"common point COUNT -- see 'spatial reference-grid "
+                        f"matching, not row trimming'."
                     )
-                packed_models = [
-                    [arr[:min_pts] for arr in combo]
-                    for combo in packed_models
-                ]
-                packed_depths = [
-                    [arr[:min_pts] for arr in combo]
-                    for combo in packed_depths
-                ]
+
+                    epoch_xy: list[tuple[np.ndarray, np.ndarray]] = []
+                    for t_idx, fname in enumerate(EM_FNAMES):
+                        _pos_df = EMmethod.load_survey_positions(
+                            fname, targetProjection=None, em_unit=EM_UNIT,
+                        )
+                        _x_epoch = _pos_df["x"].to_numpy(dtype=float)
+                        _y_epoch = (
+                            _pos_df["y"].to_numpy(dtype=float)
+                            if "y" in _pos_df.columns else np.zeros_like(_x_epoch)
+                        )
+                        _n_model_pts = packed_models[0][t_idx].shape[0]
+                        if len(_x_epoch) != _n_model_pts:
+                            # Position table and inverted model disagree on
+                            # row count for this epoch (shouldn't normally
+                            # happen since both are read from the same
+                            # already-deduplicated processed CSV, but guard
+                            # defensively rather than mis-pairing points).
+                            reporter.log(
+                                f"[STEP1][WARN] Epoch {t_idx} "
+                                f"('{os.path.basename(fname)}'): position table has "
+                                f"{len(_x_epoch)} rows but its inverted model has "
+                                f"{_n_model_pts} rows. Truncating the shorter of the "
+                                f"two before spatial matching so coordinates and EC "
+                                f"values stay row-aligned for this epoch."
+                            )
+                            _n_use = min(len(_x_epoch), _n_model_pts)
+                            _x_epoch = _x_epoch[:_n_use]
+                            _y_epoch = _y_epoch[:_n_use]
+                        epoch_xy.append((_x_epoch, _y_epoch))
+
+                    ref_x, ref_y, matched_indices = geometry_utils.match_epochs_to_reference_grid(
+                        epoch_xy, tolerance_m=SPATIAL_MATCH_TOLERANCE_M,
+                    )
+                    n_ref = len(ref_x)
+
+                    for t_idx in range(n_time):
+                        n_matched = int(np.sum(matched_indices[t_idx] >= 0))
+                        reporter.log(
+                            f"[STEP1]   Epoch {t_idx} ('{os.path.basename(EM_FNAMES[t_idx])}'): "
+                            f"{len(epoch_xy[t_idx][0])} own point(s) -> "
+                            f"{n_matched}/{n_ref} reference-grid cell(s) matched "
+                            f"({n_ref - n_matched} left as NaN for this epoch)."
+                        )
+                    reporter.metric("Spatial reference grid — union points across epochs", n_ref)
+                    reporter.metric(
+                        "Spatial reference grid — tolerance (m)", SPATIAL_MATCH_TOLERANCE_M
+                    )
+
+                    def _remap_combo_to_reference(arr_per_time: list[np.ndarray]) -> list[np.ndarray]:
+                        """Remap one combo's list of per-epoch (n_pts_t, n_layers)
+                        (or (n_pts_t, n_interfaces) for depths) arrays onto the
+                        shared (n_ref, n_layers) reference grid, NaN-filling any
+                        reference point that particular epoch didn't cover."""
+                        remapped = []
+                        for t_idx, arr in enumerate(arr_per_time):
+                            out = np.full((n_ref, arr.shape[-1]), np.nan, dtype=float)
+                            idx_map = matched_indices[t_idx]
+                            valid = idx_map >= 0
+                            if np.any(valid):
+                                out[valid] = arr[idx_map[valid]]
+                            remapped.append(out)
+                        return remapped
+
+                    packed_models = [_remap_combo_to_reference(combo) for combo in packed_models]
+                    packed_depths = [_remap_combo_to_reference(combo) for combo in packed_depths]
+                    # pstd arrays share the exact same per-epoch row order/
+                    # count as models/depths (same k, same survey), so the
+                    # same coordinate-based remap applies unchanged.
+                    packed_pstds  = [_remap_combo_to_reference(combo) for combo in packed_pstds]
+
+                    REAL_DATA_REFERENCE_XY = (ref_x, ref_y)
+                else:
+                    # Synthetic data: point counts already consistent across
+                    # epochs by construction; keep the historical defensive
+                    # min_pts trim as a backward-compatible no-op safety net.
+                    min_pts = min(
+                        arr.shape[0]
+                        for combo in packed_models
+                        for arr in combo
+                    )
+                    if min_pts < max(arr.shape[0] for combo in packed_models for arr in combo):
+                        reporter.log(
+                            f"[STEP1][FIX] Inhomogeneous point counts across surveys detected. "
+                            f"Trimming all time-step models to {min_pts} points "
+                            f"(the minimum across all {n_time} survey epochs and "
+                            f"{len(packed_models)} combos)."
+                        )
+                    packed_models = [
+                        [arr[:min_pts] for arr in combo]
+                        for combo in packed_models
+                    ]
+                    packed_depths = [
+                        [arr[:min_pts] for arr in combo]
+                        for combo in packed_depths
+                    ]
+                    packed_pstds = [
+                        [arr[:min_pts] for arr in combo]
+                        for combo in packed_pstds
+                    ]
+                    REAL_DATA_REFERENCE_XY = None
 
             models_clean   = np.array(packed_models)
             depths_clean   = np.array(packed_depths)
+            # FIX ("use the full MCMC, not just a single selected model"):
+            # per-point/per-free-parameter MCMC posterior std, packed
+            # through the exact same combo/time/spatial-remap machinery as
+            # models_clean/depths_clean above. All-zero for non-MCMC-family
+            # inversion methods (emagpy's own convention -- see
+            # _invert_single_worker's docstring). Object dtype is used when
+            # packing wouldn't otherwise produce a clean rectangular array
+            # (e.g. a mix of column counts should never happen within one
+            # scenario, since num_layers/free-depths is fixed for the whole
+            # run, but np.array(..., dtype=object) is a safe fallback
+            # rather than a hard crash if it ever does).
+            try:
+                pstds_clean = np.array(packed_pstds)
+            except ValueError:
+                print("[CACHE][WARN] packed_pstds entries have inconsistent shapes "
+                      "(unexpected -- num_layers/free-depths should be constant "
+                      "within one scenario run). Storing as an object array; "
+                      "downstream MCMC-uncertainty reporting will be skipped.")
+                pstds_clean = np.array(packed_pstds, dtype=object)
             param_metadata = valid_param_metadata
 
             print(f"[CACHE] Saving matrix {models_clean.shape} to '{cache_path}' "
@@ -1270,7 +2061,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     "models_clean": models_clean,
                     "param_metadata": param_metadata,
                     "depths_clean": depths_clean,
+                    "pstds_clean": pstds_clean,
                     "config_fingerprint": current_fingerprint,
+                    "reference_xy": REAL_DATA_REFERENCE_XY,
                 }, f)
 
         # -----------------------------------------------------------------------
@@ -1296,6 +2089,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             for t_idx_diag, file_path_diag in enumerate(files_to_process_diag):
                 invert_kwargs_diag = {
                     "alpha": meta["alpha"],
+                    "beta": meta.get("beta", 0.0),
+                    "gamma": GAMMA,
                     "method": meta["method"],
                     "forwardModel": meta["forwardModel"],
                     "targetProjection": None,
@@ -1323,6 +2118,69 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             n_time = 1
 
         # -----------------------------------------------------------------------
+        # MCMC POSTERIOR UNCERTAINTY  (FIX: "use the full MCMC, not just a
+        # single selected model")
+        #   emagpy's MCMC-family methods (MCMC/ROPE/DREAM/SCEUA) sample a
+        #   real posterior per measurement point but k.invert() only ever
+        #   kept the lowest-misfit sample; the per-point/per-layer posterior
+        #   std it also computes (k.pstds) is now captured all the way
+        #   through Step 1's caching/packing/spatial-remap (see
+        #   _invert_single_worker and pstds_clean above) and summarised
+        #   here. This is independent of, and complementary to, the
+        #   across-realisation RMSE-weighted CV computed later in Step 5:
+        #   that CV quantifies spread ACROSS the param_grid ensemble, this
+        #   quantifies spread WITHIN each individual MCMC inversion.
+        # -----------------------------------------------------------------------
+        _MCMC_FAMILY_METHODS = {"MCMC", "ROPE", "DREAM", "SCEUA"}
+        _methods_used = set(PARAM_GRID.get("method", []))
+        _mcmc_used = bool(_methods_used & _MCMC_FAMILY_METHODS)
+
+        if _mcmc_used and pstds_clean is not None and pstds_clean.dtype != object:
+            try:
+                cond_pstd = EMmethod.extract_conductivity_pstd(pstds_clean, num_layers)
+                _finite = cond_pstd[np.isfinite(cond_pstd)]
+                _nonzero = _finite[_finite > 0]
+                pstd_npy_path = os.path.join(OUTPUT_DIR, "mcmc_conductivity_pstd.npy")
+                np.save(pstd_npy_path, cond_pstd)
+                reporter.log(
+                    f"[STEP1] MCMC-family method(s) detected in param_grid "
+                    f"({sorted(_methods_used & _MCMC_FAMILY_METHODS)}). Captured "
+                    f"per-point/per-layer posterior std (best-10%-of-chain std, "
+                    f"emagpy's own k.pstds) for all {ensemble_size} ensemble "
+                    f"member(s) -> saved to '{pstd_npy_path}', shape {cond_pstd.shape}."
+                )
+                if _nonzero.size > 0:
+                    reporter.log(
+                        f"[STEP1] MCMC posterior std (conductivity, mS/m, cells with "
+                        f"std>0 only, n={_nonzero.size}): "
+                        f"mean={np.mean(_nonzero):.3f}  median={np.median(_nonzero):.3f}  "
+                        f"p90={np.percentile(_nonzero, 90):.3f}  max={np.max(_nonzero):.3f}"
+                    )
+                    reporter.metric("MCMC posterior std — mean [mS/m]", f"{np.mean(_nonzero):.4f}")
+                    reporter.metric("MCMC posterior std — median [mS/m]", f"{np.median(_nonzero):.4f}")
+                else:
+                    reporter.log(
+                        "[STEP1][WARN] MCMC-family method configured, but every "
+                        "captured posterior std is zero/NaN. This usually means "
+                        "nSample was left too small for the chain to explore "
+                        "beyond a single point, or every member actually ran a "
+                        "non-MCMC fallback. Check invert_kwargs['options'] "
+                        "(nSample) if you were expecting real posterior spread."
+                    )
+            except Exception as _pstd_exc:
+                reporter.log(
+                    f"[STEP1][WARN] MCMC posterior-std summary failed "
+                    f"(pipeline continues): {type(_pstd_exc).__name__}: {_pstd_exc}"
+                )
+        elif _mcmc_used:
+            reporter.log(
+                "[STEP1][INFO] MCMC-family method configured but no usable "
+                "pstds_clean is available (likely an older cache — see the "
+                "[CACHE][WARN] above). Delete the ensemble cache and re-run "
+                "to capture MCMC posterior uncertainty."
+            )
+
+        # -----------------------------------------------------------------------
         # EFFECTIVE DEPTHS FOR TDR PROBE HORIZON ROUTING
         #   Fix for: "[WARN] Step 2: probe_layer_indices were derived from the
         #   starting depths0 values ... inspect individual member interface
@@ -1346,6 +2204,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   assigning probes to horizons"). DEPTHS0 itself is left untouched
         #   everywhere else (inversion setup, bounds, plot axes, etc.); only
         #   probe-to-horizon routing uses EFFECTIVE_DEPTHS0.
+        #
+        #   NOTE: real-data time-lapse depths_clean may contain NaN rows for
+        #   reference-grid points a given epoch didn't cover (see the
+        #   spatial reference-grid matching above); nanmedian is used below
+        #   so those cells are simply excluded rather than poisoning the
+        #   whole median.
         # -----------------------------------------------------------------------
         _depths_fixed_bool = (
             FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS)
@@ -1356,7 +2220,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         else:
             _fitted = np.asarray(depths_clean, dtype=float)
             _avg_axes = tuple(range(_fitted.ndim - 1))  # everything but the interfaces axis
-            _fitted_median = np.median(_fitted, axis=_avg_axes)
+            _fitted_median = np.nanmedian(_fitted, axis=_avg_axes)
             _fitted_sorted = np.sort(_fitted_median)
             if not np.array_equal(_fitted_median, _fitted_sorted):
                 reporter.log(
@@ -1492,6 +2356,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                {"axis 1 — n_measured_points": f"{_npts} spatial measurement positions",
                 "axis 2 — n_layers": f"{_nlyr} soil horizons per profile"}),
             "param_grid α values": str(PARAM_GRID.get("alpha", [])),
+            "param_grid β values (lateral smoothing)": str(PARAM_GRID.get("beta", [0.0])),
+            "gamma (temporal smoothing, TL only)": str(GAMMA),
             "param_grid methods": str(PARAM_GRID.get("method", [])),
             "param_grid forward models": str(PARAM_GRID.get("forwardModel", [])),
             "initial conductivity ranges": str(COND_RANGES),
@@ -1501,13 +2367,68 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
         # -----------------------------------------------------------------------
         # TEMPERATURE CORRECTION
+        #   FIX ("temperature correction is currently a complete no-op"): this
+        #   used to hardcode TEMP_PROFILES = TEMP_REF, so the correction
+        #   factor 1 + alpha*(T - T_ref) was always exactly 1 -- the step
+        #   ran, was logged, and corrected nothing, for every scenario and
+        #   every data source. Resolution order:
+        #     1. scenario 'soil_temperature_c' override (works for both
+        #        synthetic and real data -- explicit, always wins).
+        #     2. real data: per-epoch measured temperature auto-detected
+        #        from a 'temp'-named TDR column (_extract_temperature_by_epoch,
+        #        called inside _load_real_data -> REAL_DATA_DIAG['temp_by_epoch']).
+        #        Missing epochs are filled with the mean of whichever epochs
+        #        WERE matched (rather than leaving those cells uncorrected
+        #        while their neighbours are, which would introduce a
+        #        different, undocumented artifact).
+        #     3. otherwise: SKIP the correction entirely (identity) and log
+        #        that explicitly -- never silently pretend to correct.
         # -----------------------------------------------------------------------
-        TEMP_ALPHA    = 0.023
-        TEMP_REF      = 20.0
-        TEMP_PROFILES = TEMP_REF
-        models_clean  = EMmethod.apply_temperature_correction(
-            models_clean, TEMP_PROFILES, alpha=TEMP_ALPHA, T_ref=TEMP_REF
-        )
+        TEMP_ALPHA = 0.023
+        TEMP_REF   = 20.0
+        SOIL_TEMPERATURE_C = getattr(cfg, "soil_temperature_c", None) if cfg is not None else None
+
+        TEMP_PROFILES = None
+        _temp_source = "none"
+        if SOIL_TEMPERATURE_C is not None:
+            _temp_val = np.asarray(SOIL_TEMPERATURE_C, dtype=float)
+            TEMP_PROFILES = _temp_val if _temp_val.ndim > 0 else float(_temp_val)
+            _temp_source = f"scenario override (soil_temperature_c={SOIL_TEMPERATURE_C})"
+        elif data_source == "real" and REAL_DATA_DIAG is not None and REAL_DATA_DIAG.get("temp_by_epoch"):
+            _temps = REAL_DATA_DIAG["temp_by_epoch"]
+            if any(t is not None for t in _temps):
+                _known = [t for t in _temps if t is not None]
+                _mean_fallback = float(np.mean(_known))
+                _resolved = [t if t is not None else _mean_fallback for t in _temps]
+                _n_filled = len(_temps) - len(_known)
+                if timelapse:
+                    TEMP_PROFILES = np.asarray(_resolved, dtype=float).reshape(-1, 1, 1)  # (n_time,1,1)
+                else:
+                    TEMP_PROFILES = float(_resolved[0])
+                _temp_source = (
+                    f"measured (TDR 'temp' column, per-epoch mean; "
+                    f"{len(_known)}/{len(_temps)} epoch(s) had a direct match"
+                    + (f", {_n_filled} filled with the {len(_known)}-epoch mean" if _n_filled else "")
+                    + ")"
+                )
+
+        if TEMP_PROFILES is None:
+            reporter.log(
+                "[STEP 1][INFO] Temperature correction SKIPPED (identity -- EC values "
+                "are NOT corrected for temperature) -- no measured soil temperature "
+                "available and no scenario 'soil_temperature_c' override set. Supply "
+                "'soil_temperature_c' in the scenario, or ensure the TDR data includes "
+                "a column with 'temp' in its name, to enable this correction."
+            )
+        else:
+            reporter.log(
+                f"[STEP 1] Applying temperature correction "
+                f"(source: {_temp_source}, alpha={TEMP_ALPHA}, T_ref={TEMP_REF}°C)."
+            )
+            models_clean = EMmethod.apply_temperature_correction(
+                models_clean, TEMP_PROFILES, alpha=TEMP_ALPHA, T_ref=TEMP_REF
+            )
+        reporter.metric("Temperature correction", _temp_source)
 
         plot_models = models_clean[:, 0] if timelapse else models_clean
         plot_depths = (depths_clean[:, 0]
@@ -1552,40 +2473,80 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # That zero-length position table is what crashed x_transect.min()
         # downstream with "zero-size array to reduction operation minimum".
         #
-        # Fix: read positions from the FIRST survey file only (same file/row
-        # order emagpy used when inverting that file in Step 1), and slice to
-        # the authoritative num_measured_points already established by the
-        # row-count trim above. This avoids emagpy's coordinate-based
-        # trimSurveys() entirely for position extraction.
+        # Fix (first pass): read positions from the FIRST survey file only
+        # (same file/row order emagpy used when inverting that file in
+        # Step 1), and slice to the authoritative num_measured_points
+        # already established by the row-count trim above. This avoided
+        # emagpy's coordinate-based trimSurveys() entirely for position
+        # extraction, but for real time-lapse data still implicitly assumed
+        # "spatial index i" meant the same physical location at every
+        # epoch.
+        #
+        # FIX (spatial reference-grid matching, this revision): for real
+        # time-lapse runs, Step 1 above now builds a UNION spatial
+        # reference grid across ALL epochs (see
+        # geometry_utils.match_epochs_to_reference_grid) instead of a
+        # row-count trim, and models_clean's spatial axis IS that
+        # reference grid. Position extraction here must use the SAME
+        # reference-grid coordinates -- reusing only EM_FNAMES[0]'s raw
+        # survey positions would silently go back to "index i means
+        # epoch-0's own point i", which is no longer what models_clean's
+        # spatial axis represents for t > 0. This also means TDR-probe <->
+        # EM-point window matching (further below) now operates against a
+        # single, epoch-independent coordinate set, instead of implicitly
+        # reusing epoch 0's geometry for every epoch's observations.
         # -----------------------------------------------------------------------
-        first_em_fname = EM_FNAMES[0] if timelapse else EM_FNAMES
-        survey_df = EMmethod.load_survey_positions(first_em_fname, targetProjection=None,
-                                                   em_unit=EM_UNIT)
+        if data_source == "real" and timelapse and REAL_DATA_REFERENCE_XY is not None:
+            import pandas as pd
 
-        if len(survey_df) == 0:
-            raise ValueError(
-                f"[CRITICAL] First EM survey file '{first_em_fname}' produced an "
-                "empty position table (no rows). Check the file is readable and "
-                "contains valid 'x'/'y' columns."
-            )
-        if len(survey_df) < num_measured_points:
-            raise ValueError(
-                f"[CRITICAL] First EM survey file '{first_em_fname}' has only "
-                f"{len(survey_df)} positions, fewer than the {num_measured_points} "
-                "points retained in the inverted ensemble (models_clean). "
-                "Positions and models would be misaligned -- aborting rather "
-                "than silently producing spatially incorrect output."
-            )
-        if len(survey_df) > num_measured_points:
+            ref_x, ref_y = REAL_DATA_REFERENCE_XY
+            if len(ref_x) != num_measured_points:
+                raise ValueError(
+                    f"[CRITICAL] Spatial reference-grid point count ({len(ref_x)}) "
+                    f"does not match models_clean's spatial axis "
+                    f"({num_measured_points}); the ensemble cache or reference-grid "
+                    "construction is inconsistent. Delete the ensemble cache "
+                    f"('{cache_path}') and re-run."
+                )
+            survey_df = pd.DataFrame({"x": ref_x, "y": ref_y})
+            x_transect = ref_x
             reporter.log(
-                f"[PIPELINE][INFO] First EM survey file has {len(survey_df)} raw "
-                f"positions; trimming to the {num_measured_points} points kept "
-                "across all combos/time-steps (row-count trim applied earlier "
-                "in Step 1)."
+                f"[PIPELINE][INFO] Real-data time-lapse: using the "
+                f"{len(ref_x)}-point spatial reference grid (union of all "
+                f"{n_time} survey epochs, see 'spatial reference-grid "
+                "matching, not row trimming') for probe placement/matching "
+                "and XY plotting, instead of the first epoch's raw survey "
+                "positions alone."
             )
+        else:
+            first_em_fname = EM_FNAMES[0] if timelapse else EM_FNAMES
+            survey_df = EMmethod.load_survey_positions(first_em_fname, targetProjection=None,
+                                                       em_unit=EM_UNIT)
 
-        survey_df  = survey_df.iloc[:num_measured_points].reset_index(drop=True)
-        x_transect = survey_df["x"].to_numpy(dtype=float)
+            if len(survey_df) == 0:
+                raise ValueError(
+                    f"[CRITICAL] First EM survey file '{first_em_fname}' produced an "
+                    "empty position table (no rows). Check the file is readable and "
+                    "contains valid 'x'/'y' columns."
+                )
+            if len(survey_df) < num_measured_points:
+                raise ValueError(
+                    f"[CRITICAL] First EM survey file '{first_em_fname}' has only "
+                    f"{len(survey_df)} positions, fewer than the {num_measured_points} "
+                    "points retained in the inverted ensemble (models_clean). "
+                    "Positions and models would be misaligned -- aborting rather "
+                    "than silently producing spatially incorrect output."
+                )
+            if len(survey_df) > num_measured_points:
+                reporter.log(
+                    f"[PIPELINE][INFO] First EM survey file has {len(survey_df)} raw "
+                    f"positions; trimming to the {num_measured_points} points kept "
+                    "across all combos/time-steps (row-count trim applied earlier "
+                    "in Step 1)."
+                )
+
+            survey_df  = survey_df.iloc[:num_measured_points].reset_index(drop=True)
+            x_transect = survey_df["x"].to_numpy(dtype=float)
 
         # ------------------------------------------------------------------
         # SWC sensor count and depths — driven by scenario config, with
@@ -1795,6 +2756,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # sit at those first few survey indices (this is the dense
             # vertical stack of identical EC values visible in
             # petro_calibration.png).
+            #
+            # `survey_df` here is the spatial reference grid built above
+            # for real time-lapse runs (or the epoch-0/single-survey
+            # positions otherwise), so station matching is against the
+            # SAME coordinate set models_clean's spatial axis actually
+            # represents.
             # ------------------------------------------------------------
             station_position_results = EMmethod.extract_sample_positions_from_survey(
                 survey_df=survey_df, models=models_clean,
@@ -1941,6 +2908,21 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.log(" [PIPELINE] STEP 2: WAXMAN-SMITS PETROPHYSICAL CALIBRATION")
         reporter.log("=" * 80)
 
+        # FIX ("TDR measurement uncertainty is collected but never used to
+        # weight the calibration"): only pass a genuine positive std through
+        # -- TDR_NOISE_STD is deliberately forced to 0.0 for real-data runs
+        # (this pipeline has no real per-probe noise estimate there yet),
+        # and 1/0^2 weighting would be nonsensical/unstable. None disables
+        # weighting entirely inside calibrate_petrophysical_relationship,
+        # i.e. no behaviour change for real-data runs from before this fix.
+        _theta_obs_std_step2 = TDR_NOISE_STD if TDR_NOISE_STD and TDR_NOISE_STD > 0 else None
+        reporter.log(
+            f"[STEP 2] TDR observation weighting: "
+            + (f"ENABLED (theta_obs_std={_theta_obs_std_step2})"
+               if _theta_obs_std_step2 is not None else
+               "disabled (no positive tdr_noise_std available for this run)")
+        )
+
         fits_step2 = step2.run_petro(
             models=models_clean, sample_positions=sample_positions,
             sample_times=sample_times, theta_obs=theta_obs,
@@ -1950,6 +2932,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             fixed_params=WS_FIXED_PARAMS,
             probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
             lab_p0=LAB_P0,
+            theta_obs_std=_theta_obs_std_step2,
         )
 
         # ------------------------------------------------------------------
@@ -1962,10 +2945,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             f"(one per ensemble member, {_n_horizons} horizons each)"
         )
         reporter.log(
-            f"[STEP 2] Ensemble RMSE — mean: {np.mean(_all_rmse):.5f}  "
-            f"std: {np.std(_all_rmse):.5f}  "
-            f"min: {np.min(_all_rmse):.5f}  "
-            f"max: {np.max(_all_rmse):.5f}  [m³/m³]"
+            f"[STEP 2] Ensemble RMSE — mean: {np.nanmean(_all_rmse):.5f}  "
+            f"std: {np.nanstd(_all_rmse):.5f}  "
+            f"min: {np.nanmin(_all_rmse):.5f}  "
+            f"max: {np.nanmax(_all_rmse):.5f}  [m³/m³]"
         )
 
         # Count SWC sensors per horizon
@@ -2089,6 +3072,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             fixed_params=WS_FIXED_PARAMS,
             probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
             lab_p0=LAB_P0,
+            theta_obs_std=_theta_obs_std_step2,  # same resolved value used in Step 2, see fix note there
         )
 
         # ------------------------------------------------------------------
@@ -2101,12 +3085,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             f"(one per cumulative averaged model K=1…{_n_fits4})."
         )
         reporter.log(
-            f"[STEP 4] RMSE across K — mean: {np.mean(_rmse4_all):.5f}  "
-            f"std: {np.std(_rmse4_all):.5f}  "
-            f"min: {np.min(_rmse4_all):.5f} (best K)  "
-            f"max: {np.max(_rmse4_all):.5f}  [m³/m³]"
+            f"[STEP 4] RMSE across K — mean: {np.nanmean(_rmse4_all):.5f}  "
+            f"std: {np.nanstd(_rmse4_all):.5f}  "
+            f"min: {np.nanmin(_rmse4_all):.5f} (best K)  "
+            f"max: {np.nanmax(_rmse4_all):.5f}  [m³/m³]"
         )
-        _best4 = fits_step4[int(np.argmin(_rmse4_all))]
+        _best4 = fits_step4[int(np.nanargmin(_rmse4_all))]
         _hz4_rows: dict[str, str] = {}
         for _hz in _best4.horizon_fits:
             if _hz.is_calibrated:
@@ -2122,8 +3106,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     f"{_hz.sigma_w:.2f} mS/m / {_hz.sigma_s:.2f} mS/m / RMSE=N/A"
                 )
         reporter.args_table(
-            f"Step 4 — Best recalibrated fit (K={int(np.argmin(_rmse4_all))+1}, "
-            f"RMSE={np.min(_rmse4_all):.5f} m³/m³)",
+            f"Step 4 — Best recalibrated fit (K={int(np.nanargmin(_rmse4_all))+1}, "
+            f"RMSE={np.nanmin(_rmse4_all):.5f} m³/m³)",
             _hz4_rows,
         )
 
@@ -2174,10 +3158,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter.log(f"[STEP 5] CV map shape : {_cv.shape}")
 
         reporter.log(
-            f"[STEP 5] CV map stats — mean: {np.mean(_cv):.4f}  "
-            f"max: {np.max(_cv):.4f}  "
+            f"[STEP 5] CV map stats — mean: {np.nanmean(_cv):.4f}  "
+            f"max: {np.nanmax(_cv):.4f}  "
             f"fraction of cells with CV>0.5: "
-            f"{100*np.mean(_cv > 0.5):.1f} %"
+            f"{100*np.nanmean(_cv > 0.5):.1f} %  "
+            f"(NaN cells, e.g. unmatched real-data time-lapse reference-grid "
+            f"points, excluded from these statistics: "
+            f"{100*np.mean(np.isnan(_cv)):.1f} % of cells are NaN)"
         )
 
         # theta_calc
@@ -2192,9 +3179,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             else:
                 reporter.log(f"[STEP 5] theta_calc shape : {_tc.shape}")
             reporter.log(
-                f"[STEP 5] theta_calc stats — mean: {np.mean(_tc):.4f}  "
-                f"min: {np.min(_tc):.4f}  "
-                f"max: {np.max(_tc):.4f}  [m³/m³]"
+                f"[STEP 5] theta_calc stats — mean: {np.nanmean(_tc):.4f}  "
+                f"min: {np.nanmin(_tc):.4f}  "
+                f"max: {np.nanmax(_tc):.4f}  [m³/m³]"
             )
 
         # -----------------------------------------------------------------------
@@ -2269,6 +3256,106 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             utm_y=utm_y,
         )
 
+        # Ground-truth counterpart of the plot above (water_content_xz_<scenario>_truth.png
+        # / water_content_xy_<scenario>_truth.png) -- only available in synthetic mode,
+        # where theta_true_realization is the known ground truth used to generate the
+        # synthetic surveys. No truth exists for real field data, so this is skipped there.
+        if data_source == "synthetic" and theta_true_realization is not None:
+            try:
+                pwc.plot_truth_from_pipeline(
+                    theta_true=theta_true_realization,
+                    x_transect=x_transect,
+                    depths0=DEPTHS0,
+                    probe_x_coords=PROBE_X_COORDS,
+                    probe_y_coords=PROBE_Y_COORDS,
+                    probe_depths=PROBE_DEPTHS,
+                    output_dir=OUTPUT_DIR,
+                    scenario_name=cfg.name if cfg else "default",
+                    timelapse=timelapse,
+                    survey_labels=None,
+                    utm_x=utm_x,
+                    utm_y=utm_y,
+                )
+                reporter.log(
+                    f"[STEP 6] Ground-truth XZ (and XY, if 2-D) water-content "
+                    f"plots -> {OUTPUT_DIR}/water_content_xz_"
+                    f"{(cfg.name if cfg else 'default')}_truth.png"
+                )
+            except Exception as e:
+                reporter.log(f"[STEP 6][WARN] plot_truth_from_pipeline failed: {e}")
+
+            # % -difference between the calculated and ground-truth XZ
+            # sections above -- (theta_calc - theta_true) / theta_true * 100,
+            # signed (over- vs. under-estimation), masked where truth ≈ 0.
+            try:
+                pctdiff_path = pwc.plot_pct_diff_from_pipeline(
+                    selected_output=selected_output,
+                    theta_true=theta_true_realization,
+                    x_transect=x_transect,
+                    depths0=DEPTHS0,
+                    probe_x_coords=PROBE_X_COORDS,
+                    probe_depths=PROBE_DEPTHS,
+                    output_dir=OUTPUT_DIR,
+                    scenario_name=cfg.name if cfg else "default",
+                    timelapse=timelapse,
+                    survey_labels=None,
+                )
+                if pctdiff_path is not None:
+                    reporter.log(f"[STEP 6] Calculated-vs-truth %% difference -> {pctdiff_path}")
+            except Exception as e:
+                reporter.log(f"[STEP 6][WARN] plot_pct_diff_from_pipeline failed: {e}")
+
+            # Initial model (starting guess, conds0's layer MIN/MAX bounds) vs.
+            # ground truth -- a QC check for whether the inversion's starting
+            # point plausibly brackets reality, BEFORE any inversion runs.
+            # Two flavours: depth-resolved EC_bulk (XZ heatmap, same style as
+            # water_content_xz_*.png) and per-coil apparent conductivity (ECa),
+            # which isn't depth-resolved so gets its own per-coil panel style.
+            try:
+                _ec_true_path = os.path.join(OUTPUT_DIR, "synthetic_time_lapse_ec.npy")
+                _eca_true_path = os.path.join(OUTPUT_DIR, "synthetic_time_lapse_eca.npy")
+
+                if os.path.exists(_ec_true_path):
+                    _ec_bulk_true = np.load(_ec_true_path)[REALIZATION_INDEX]
+                    ini_ec_path = pwc.plot_initial_model_vs_true_ec(
+                        cond_ranges=COND_RANGES,
+                        depths0=DEPTHS0,
+                        x_coords=x_transect,
+                        ec_bulk_true=_ec_bulk_true,
+                        output_dir=OUTPUT_DIR,
+                        scenario_name=cfg.name if cfg else "default",
+                        probe_x=PROBE_X_COORDS,
+                        probe_depths=PROBE_DEPTHS,
+                    )
+                    reporter.log(f"[STEP 6] Initial model vs. true EC_bulk -> {ini_ec_path}")
+                else:
+                    reporter.log(
+                        "[STEP 6][WARN] 'synthetic_time_lapse_ec.npy' not found; "
+                        "skipping initial-model-vs-true-EC_bulk plot."
+                    )
+
+                if os.path.exists(_eca_true_path):
+                    _eca_true = np.load(_eca_true_path)[REALIZATION_INDEX]
+                    ini_eca_path = pwc.plot_initial_eca_vs_true_eca(
+                        cond_ranges=COND_RANGES,
+                        depths0=DEPTHS0,
+                        x_coords=x_transect,
+                        eca_true=_eca_true,
+                        coils=step0.COILS_LIST,
+                        output_dir=OUTPUT_DIR,
+                        scenario_name=cfg.name if cfg else "default",
+                        forward_model=PARAM_GRID.get("forwardModel", ["FSlin"])[0],
+                    )
+                    if ini_eca_path is not None:
+                        reporter.log(f"[STEP 6] Initial model vs. true ECa -> {ini_eca_path}")
+                else:
+                    reporter.log(
+                        "[STEP 6][WARN] 'synthetic_time_lapse_eca.npy' not found; "
+                        "skipping initial-model-vs-true-ECa plot."
+                    )
+            except Exception as e:
+                reporter.log(f"[STEP 6][WARN] Initial-model-vs-truth diagnostics failed: {e}")
+
         # -----------------------------------------------------------------------
         # SUMMARY
         # -----------------------------------------------------------------------
@@ -2296,6 +3383,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # not EMagPy's hardcoded 2-100 mS/m default.
         _base_inv_kwargs = {
             "alpha":        PARAM_GRID.get("alpha",        [0.03])[0],
+            "beta":         PARAM_GRID.get("beta",         [0.0])[0],
+            "gamma":        GAMMA,
             "method":       PARAM_GRID.get("method",       ["L-BFGS-B"])[0],
             "forwardModel": PARAM_GRID.get("forwardModel", ["FSlin"])[0],
             "bnds":         _build_inversion_bnds(DEPTHS0, _fixed_depths_list_6b, COND_RANGES),
@@ -2491,8 +3580,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 f"  (n_points={_cv_shape[0]}, n_layers={_cv_shape[1]})"
             )
         )
-        reporter.metric("CV map mean (relative uncertainty)", f"{np.mean(selected_output.cv_map):.4f}")
-        reporter.metric("CV map max",                          f"{np.max(selected_output.cv_map):.4f}")
+        reporter.metric("CV map mean (relative uncertainty)", f"{np.nanmean(selected_output.cv_map):.4f}")
+        reporter.metric("CV map max",                          f"{np.nanmax(selected_output.cv_map):.4f}")
         if selected_output.theta_calc is not None:
             _tc_shape = selected_output.theta_calc.shape
             reporter.metric(
@@ -2502,7 +3591,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     if len(_tc_shape) == 3 else ""
                 )
             )
-            reporter.metric("theta_calc mean [m³/m³]", f"{np.mean(selected_output.theta_calc):.4f}")
+            reporter.metric("theta_calc mean [m³/m³]", f"{np.nanmean(selected_output.theta_calc):.4f}")
         reporter.metric("Timelapse mode",          timelapse)
         reporter.metric("Number of SWC probes",    len(PROBE_X_COORDS))
         reporter.metric("Probe placement mode",    "2D UTM grid" if mode == "2d" else "1D transect")
@@ -2522,7 +3611,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         _cv_sh = selected_output.cv_map.shape
         reporter.log(f"  CV map shape             : {_cv_sh}"
                      + (f"  (n_time, n_points, n_layers)" if len(_cv_sh)==3 else "  (n_points, n_layers)"))
-        reporter.log(f"  CV map mean / max        : {np.mean(selected_output.cv_map):.4f} / {np.max(selected_output.cv_map):.4f}")
+        reporter.log(f"  CV map mean / max        : {np.nanmean(selected_output.cv_map):.4f} / {np.nanmax(selected_output.cv_map):.4f}")
         reporter.log(f"  Quality gate             : {quality_gate_result.level}"
                      + (f"  ({'; '.join(quality_gate_result.reasons)})"
                         if quality_gate_result.reasons else ""))
@@ -2603,6 +3692,32 @@ if __name__ == "__main__":
              "each SWC/TDR probe to nearby EM measurement indices. "
              "Overrides 'window_m' in the scenario config when passed; "
              "falls back to the scenario value (or 1.0) otherwise.",
+    )
+    parser.add_argument(
+        "--em-unit", default=None, choices=["ppm", "ppt"],
+        help="Physical unit of the quadrature/in-phase columns in the EM "
+             "survey CSV. 'ppm' for GEM-2 / CMD-Explorer real-data "
+             "instruments (this pipeline's real-data branch only ingests "
+             "GEM-2 quadrature exports, i.e. 'ppm'); 'ppt' for GF "
+             "Instruments CMD series. Overrides 'em_unit' in the scenario "
+             "config when passed -- note that scenario_loader now REQUIRES "
+             "em_unit to be set in the scenario JSON for data_source='real', "
+             "so this flag is an ad-hoc override, not a substitute for "
+             "setting it correctly there.",
+    )
+    parser.add_argument(
+        "--beta", nargs="+", type=float, default=None, metavar="B",
+        help="One or more beta values [lateral/spatial smoothing, emagpy "
+             "inversion] to sweep, e.g. --beta 0.0 0.1 0.5. Overrides the "
+             "'beta' entry in the scenario's param_grid when passed; falls "
+             "back to the scenario value (or [0.0]) otherwise.",
+    )
+    parser.add_argument(
+        "--gamma", type=float, default=None, metavar="G",
+        help="Temporal regularisation between time steps (>= 0), only used "
+             "for time-lapse (multi-epoch) inversions. Overrides 'gamma' in "
+             "the scenario config when passed; falls back to the scenario "
+             "value (or 0.0) otherwise.",
     )
     args = parser.parse_args() 
     
@@ -2710,7 +3825,10 @@ if __name__ == "__main__":
              homogeneous=(True if args.homogeneous else None),
              num_swc_positions=args.num_swc_positions,
              swc_depths=args.swc_depths,
-             window_m=args.window_m)
+             window_m=args.window_m,
+             em_unit=args.em_unit,
+             beta=args.beta,
+             gamma=args.gamma)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

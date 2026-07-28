@@ -61,8 +61,13 @@ class ScenarioConfig:
         ``list``  → per-interface control (same length as depths0).
     param_grid : dict[str, list]
         Inversion parameter Cartesian grid fed to
-        ``generate_ensemble_em_survey``.  Recognised keys: alpha, method,
-        forwardModel.
+        ``generate_ensemble_em_survey``.  Recognised keys: alpha, beta,
+        method, forwardModel. ``beta`` is EMagPy's lateral (within-epoch,
+        neighbouring-profile) smoothing weight -- the spatial counterpart
+        to ``alpha`` (per-profile vertical smoothing) and ``gamma``
+        (temporal, time-lapse-only smoothing, see the ``gamma`` field
+        below). Defaults to ``[0.0]`` (no lateral smoothing) when omitted,
+        matching EMagPy's own ``invert(beta=0.0, ...)`` default.
     cond_ranges : list[list[float]]
         Per-layer conductivity starting bounds [mS/m], length = n_layers.
         Each inner list is [min, max] or [single_value].
@@ -230,6 +235,59 @@ class ScenarioConfig:
     [1.5, 1.8, 50.0, 5.0] for every horizon, unchanged from before."""
 
     # ------------------------------------------------------------------
+    # Real-data time-lapse spatial reference grid
+    # (pipeline_review.md / real_data_pipeline_fixes.md, issue 2:
+    # "spatial reference-grid matching, not row trimming")
+    # ------------------------------------------------------------------
+    spatial_match_tolerance_m: float = 2.0
+    """Real-data time-lapse only. Distance [m] within which two survey
+    epochs' measurement points are considered "the same physical location"
+    when building the shared spatial reference grid used to assemble
+    models_clean across epochs (see
+    geometry_utils.match_epochs_to_reference_grid and
+    run_pipeline.py Step 1). This REPLACES the old behaviour of trimming
+    every epoch to the globally-shortest epoch's point COUNT
+    (`arr[:min_pts]`), which silently paired unrelated physical locations
+    whenever epochs weren't walked in identical order.  Distinct from
+    `window_m` (which governs TDR-probe <-> EM-point matching, a different
+    question). Should be set to roughly the GPS/GNSS precision of the EM
+    instrument used for real-data surveys; a few metres is typical.
+    Ignored for synthetic data (point counts are consistent by
+    construction) and for real single-survey (non-time-lapse) runs."""
+
+    # ------------------------------------------------------------------
+    # Temperature correction
+    # FIX ("temperature correction is currently a complete no-op"):
+    # run_pipeline.py previously hardcoded the temperature fed into
+    # em_methodology.apply_temperature_correction to exactly T_ref, so the
+    # correction factor 1 + alpha*(T - T_ref) was always exactly 1 --
+    # the step ran, was logged, and corrected nothing, for every scenario.
+    # ------------------------------------------------------------------
+    soil_temperature_c: float | list | None = None
+    """Explicit soil temperature [deg C] for the temperature correction
+    applied to inverted EC before petrophysical calibration (see
+    em_methodology.apply_temperature_correction, Eq. 1 of Loiseau et al.).
+    Accepts a scalar (uniform temperature for the whole run) or a list
+    broadcastable against the model shape per
+    apply_temperature_correction's own docstring (e.g. one value per
+    layer, or one value per time step for time-lapse data).
+
+    When set, this OVERRIDES any measured per-epoch temperature
+    auto-detected from real TDR data (a column containing 'temp' in its
+    name -- see run_pipeline.py's _extract_temperature_by_epoch).
+
+    None (default):
+      - real-data scenarios fall back to the auto-detected per-epoch
+        measured temperature if a 'temp'-named column is found in the TDR
+        data; if none is found, the correction is explicitly SKIPPED
+        (identity -- NOT silently applied as a no-op the way it used to
+        be) and logged as such.
+      - synthetic scenarios always skip the correction (there is no
+        measured temperature to fall back to); set this explicitly to
+        test the correction's effect on synthetic data.
+    """
+
+    # ------------------------------------------------------------------
     # Quality gates (pipeline_improvement_report.md, section 4:
     # "Uncertainty & quality as gates, not just numbers")
     # ------------------------------------------------------------------
@@ -342,6 +400,7 @@ class ScenarioConfig:
                 f"  Time tolerance  : ±{self.time_tolerance_days} days",
                 f"  EM unit         : {self.em_unit}  "
                 f"({'GEM-2 / ppm sensor' if self.em_unit == 'ppm' else 'GF Instruments / ppt sensor'})",
+                f"  Spatial match tol (time-lapse epochs): ±{self.spatial_match_tolerance_m} m",
             ]
         lines += [
             f"  Drop coils      : {self.drop_coils if self.drop_coils else '(none)'}",
@@ -362,7 +421,24 @@ class ScenarioConfig:
 
 _REQUIRED = {"depths0", "fixed_depths", "param_grid", "cond_ranges"}
 _SKIP_KEYS = {"_comment", "_schema"}
-_VALID_METHODS = {"L-BFGS-B", "CG", "Nelder-Mead", "SLSQP", "TNC","MCMC"}
+# NOTE on this whitelist vs. EMagPy's actual Problem.invert(method=...) options:
+# scipy-backed:  L-BFGS-B, TNC, CG, Nelder-Mead
+# spotpy-backed (MCMC-family): MCMC, ROPE, DREAM, SCEUA
+#   - only ROPE supports alpha/beta/gamma smoothing among the MCMC family;
+#     MCMC/DREAM/SCEUA silently ignore it (see EMagPy docs).
+# GN is also accepted by invert() (Gauss-Newton, distinct from the separate
+# invertGN() helper) but isn't whitelisted here since this pipeline hasn't
+# exercised it -- add it if/when needed.
+# ANN is deliberately NOT included: it requires tensorflow and takes extra
+# kwargs (nsample, noise, annplot) this pipeline's invert_kwargs plumbing
+# doesn't currently populate.
+# SLSQP is kept for backward compatibility with existing scenarios, though
+# it isn't in EMagPy's own documented method list for invert() -- it's
+# passed straight through to scipy.optimize.minimize(), which does support
+# it, so it likely works, but treat it as unconfirmed/unofficial rather
+# than an EMagPy-documented option.
+_VALID_METHODS = {"L-BFGS-B", "CG", "Nelder-Mead", "SLSQP", "TNC",
+                   "MCMC", "ROPE", "DREAM", "SCEUA"}
 _VALID_FORWARD_MODELS = {"CS", "FSlin", "FS", "QP"}
 
 
@@ -544,6 +620,30 @@ def _validate(name: str, raw: dict) -> None:
                 f"Scenario '{name}': time_tolerance_days must be a positive "
                 f"number, got {ttd!r}."
             )
+        # FIX (em_unit defaults to 'ppt' but real GEM-2 data is 'ppm'):
+        # this pipeline's real-data branch (0_real_data_loader.py's
+        # EM_HEADER_MAP / run_pipeline.py's _COLUMN_VARIANTS) only ever
+        # ingests GEM-2 multi-frequency quadrature exports
+        # (Q_425Hz, Q_1525Hz, ...) -- a 'ppm' instrument. Nothing enforced
+        # that previously: the ScenarioConfig dataclass default and this
+        # loader's own em_unit fallback below are both 'ppt' (the
+        # GF-Instruments convention), so a real-data scenario that simply
+        # omitted 'em_unit' silently inverted every ECa value ~1000x too
+        # large. Require it to be present explicitly for data_source='real'
+        # so a missing/forgotten em_unit fails loudly at scenario-load
+        # time, before the (potentially 30+ minute) Step 1 inversion runs,
+        # rather than silently corrupting the whole run's EC values.
+        if "em_unit" not in raw:
+            raise ValueError(
+                f"Scenario '{name}': data_source is 'real' but 'em_unit' is not set. "
+                f"This pipeline's real-data branch only ingests GEM-2 multi-frequency "
+                f"quadrature exports (Q_425Hz, Q_1525Hz, ...), which are a 'ppm' "
+                f"instrument -- NOT the GF-Instruments 'ppt' default this loader "
+                f"otherwise falls back to. Leaving em_unit unset previously silently "
+                f"inflated every inverted ECa value by ~1000x. Add "
+                f'"em_unit": "ppm" to this scenario explicitly (or "ppt" only if you '
+                f"have verified this scenario's data really is GF-Instruments-format)."
+            )
 
     em_unit = raw.get("em_unit", "ppt")
     if em_unit not in ("ppm", "ppt"):
@@ -610,6 +710,31 @@ def _validate(name: str, raw: dict) -> None:
                 raise ValueError(_lab_p0_err)
         else:
             raise ValueError(_lab_p0_err)
+
+    # ---- Real-data time-lapse spatial reference grid -------------------
+    spatial_tol = raw.get("spatial_match_tolerance_m", None)
+    if spatial_tol is not None:
+        if not isinstance(spatial_tol, (int, float)) or spatial_tol <= 0:
+            raise ValueError(
+                f"Scenario '{name}': spatial_match_tolerance_m must be a "
+                f"positive number, got {spatial_tol!r}."
+            )
+
+    # ---- Temperature correction -----------------------------------------
+    soil_temp = raw.get("soil_temperature_c", None)
+    if soil_temp is not None:
+        _soil_temp_err = (
+            f"Scenario '{name}': soil_temperature_c must be null, a single "
+            f"number, or a list of numbers, got {soil_temp!r}."
+        )
+        if isinstance(soil_temp, (int, float)) and not isinstance(soil_temp, bool):
+            pass
+        elif isinstance(soil_temp, list) and len(soil_temp) > 0 and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in soil_temp
+        ):
+            pass
+        else:
+            raise ValueError(_soil_temp_err)
 
     # ---- Quality gates (report item 4) ---------------------------------
     for _field_name, _lo, _hi in [
@@ -848,6 +973,13 @@ def load_scenario(
         time_tolerance_days = float(raw.get("time_tolerance_days", 1.0)),
         em_unit           = str(raw.get("em_unit", "ppt")),
         drop_coils        = drop_coils,
+        spatial_match_tolerance_m = float(raw.get("spatial_match_tolerance_m", 2.0)),
+        soil_temperature_c = (
+            float(raw["soil_temperature_c"])
+            if isinstance(raw.get("soil_temperature_c"), (int, float))
+            else ([float(v) for v in raw["soil_temperature_c"]]
+                  if raw.get("soil_temperature_c") is not None else None)
+        ),
         quality_gate_cv_mean_warn = float(raw.get("quality_gate_cv_mean_warn", 0.3)),
         quality_gate_cv_high_threshold = float(raw.get("quality_gate_cv_high_threshold", 1.0)),
         quality_gate_cv_high_fraction_warn = float(raw.get("quality_gate_cv_high_fraction_warn", 0.3)),

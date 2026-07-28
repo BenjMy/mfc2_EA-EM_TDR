@@ -111,6 +111,21 @@ def _parse_raw_csv(path: str) -> pd.DataFrame:
     Load one raw GEM-2 CSV and rename columns to canonical emagpy names.
     Mirrors _prepare_real_em_csv() in run_pipeline.py but returns a DataFrame
     instead of writing a file, so we can work directly with raw coordinates.
+
+    FIX (TDR<->EM CRS mismatch): like run_pipeline.py's own
+    _prepare_real_em_csv, the x/y columns here may resolve via either a
+    metric alias (X/Easting, Y/Northing) or a geographic alias
+    (Longitude/lon, Latitude/lat). Every figure in this module overlays TDR
+    probe locations (``probe_table['utm_x'/'utm_y']``, always metric UTM)
+    directly onto these coordinates (``_overlay_probes``) -- if left in
+    decimal degrees, that overlay would be meaningless (probes plotting
+    nowhere near the EM footprint, or the whole EM point cloud collapsing
+    to a speck at plot scale). This now classifies the matched alias
+    (``geometry_utils.classify_coordinate_alias``) and reprojects geographic
+    coordinates to metric UTM (``geometry_utils.reproject_lonlat_to_utm``,
+    auto-detecting the UTM zone from this file's own mean coordinates)
+    before returning, so every plot built from this DataFrame is guaranteed
+    metric.
     """
     with open(path, "r", errors="replace") as fh:
         first = next((ln.strip() for ln in fh if ln.strip()), "")
@@ -137,7 +152,30 @@ def _parse_raw_csv(path: str) -> pd.DataFrame:
         )
 
     keep = list(rename.keys())
-    return df[keep].rename(columns=rename).reset_index(drop=True)
+    out_df = df[keep].rename(columns=rename).reset_index(drop=True)
+
+    if "x" in out_df.columns and "y" in out_df.columns:
+        import geometry_utils
+        x_raw = next(raw for raw, canon in rename.items() if canon == "x")
+        y_raw = next(raw for raw, canon in rename.items() if canon == "y")
+        x_kind = geometry_utils.classify_coordinate_alias(x_raw, "x")
+        y_kind = geometry_utils.classify_coordinate_alias(y_raw, "y")
+        if x_kind != y_kind or x_kind == "unknown":
+            raise ValueError(
+                f"Cannot parse '{os.path.basename(path)}': x resolved via '{x_raw}' "
+                f"('{x_kind}') but y resolved via '{y_raw}' ('{y_kind}') -- "
+                f"inconsistent/unrecognised coordinate columns."
+            )
+        if x_kind == "geographic":
+            x_m, y_m, epsg_used = geometry_utils.reproject_lonlat_to_utm(
+                out_df["x"].to_numpy(dtype=float), out_df["y"].to_numpy(dtype=float),
+            )
+            print(f"[DIAG] '{os.path.basename(path)}': geographic x/y ('{x_raw}'/'{y_raw}') "
+                  f"reprojected to metric UTM ({epsg_used}, auto-detected).")
+            out_df["x"] = x_m
+            out_df["y"] = y_m
+
+    return out_df
 
 
 def _freq_cols_in(df: pd.DataFrame) -> list[str]:
