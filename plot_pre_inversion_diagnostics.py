@@ -918,6 +918,7 @@ def run_pre_inversion_diagnostics_synthetic_from_pipeline(
     mode: str = "1d",
     utm_x: "np.ndarray | None" = None,
     utm_y: "np.ndarray | None" = None,
+    probe_xyz_file: "str | None" = None,
 ) -> dict:
     """
     Synthetic-data counterpart of ``run_pre_inversion_diagnostics_from_pipeline``.
@@ -947,17 +948,17 @@ def run_pre_inversion_diagnostics_synthetic_from_pipeline(
 
     Also runs the same CRS-consistency sanity check used on the real-data
     path (``geometry_utils.check_crs_consistency``) between the survey's own
-    x/y (as loaded from the CSV -- local grid coordinates in 1-D mode, or
-    whatever ``EMmethod.load_survey_positions`` returns in 2-D mode) and the
-    2-D probe coordinates (built from ``utm_x``/``utm_y``, i.e. ABSOLUTE UTM
-    -- offset by the Alento survey origin, ~515000 m E / ~4468000 m N).
-    In 2-D synthetic mode these two coordinate sets are NOT in the same
-    frame (the survey CSV's own 'x'/'y' columns are local grid coordinates,
-    not UTM), so this check is expected to flag a mismatch there -- this is
-    a genuine latent bug in the post-inversion probe-matching call inside
-    ``run_pipeline.main()`` (identical construction), not an artifact of
-    this diagnostic. Surfacing it here, before the expensive Step 1
-    inversion, is the point.
+    x/y (as loaded from the CSV -- local grid coordinates) and the 2-D probe
+    coordinates. As of the fix below, probe coordinates are always built
+    from the survey's own local x_survey/y_survey (never from ``utm_x``/
+    ``utm_y``, the ABSOLUTE-UTM grid offset by the Alento survey origin,
+    ~515000 m E / ~4468000 m N), so both sides of this check are in the
+    SAME frame by construction and it is expected to pass cleanly in
+    synthetic mode. (Previously this compared local survey coordinates
+    against the absolute-UTM grid and reliably flagged a false-positive
+    mismatch -- see git history / pipeline_review.md for the old
+    behaviour.) ``utm_x``/``utm_y`` are still accepted as parameters for
+    backward compatibility but are no longer used for probe placement.
 
     Parameters
     ----------
@@ -998,6 +999,21 @@ def run_pre_inversion_diagnostics_synthetic_from_pipeline(
         2-D-mode UTM grid coordinates
         (``synthetic_utm_x.npy`` / ``synthetic_utm_y.npy``, written by Step
         0). Required for 2-D-mode probe placement; ignored in 1-D mode.
+    probe_xyz_file : str, optional
+        Path to an explicit probe-location CSV (``run_pipeline.py``'s
+        ``--probe-xyz``). When the actual pipeline run is going to use an
+        explicit probe file (rather than auto-placed ``num_swc_positions``
+        x ``swc_depths``), this diagnostic MUST be told about it too --
+        otherwise it fabricates a different, auto-placed probe layout
+        (wrong count AND wrong locations) that has nothing to do with the
+        probes the real inversion will use. When given, this loads the
+        same file via ``run_pipeline.load_probe_xyz_file`` and
+        re-localizes it into the survey's local frame using the same
+        offset method ``run_pipeline.main()`` itself uses for synthetic
+        runs (translate so the probe grid's own min x/y lands on the
+        survey's min x/y, preserving relative spacing), overriding
+        ``num_swc_positions``/``swc_depths`` entirely -- mirroring
+        ``run_pipeline.main()``'s own precedence rules exactly.
 
     Returns
     -------
@@ -1043,20 +1059,59 @@ def run_pre_inversion_diagnostics_synthetic_from_pipeline(
     # own local x-range), just computed pre-inversion against the raw
     # survey's own point count instead of models_clean's.
     # ------------------------------------------------------------------
-    num_positions = min(num_swc_positions, num_points)
-    tdr_depths = swc_depths if swc_depths is not None else list(layer_centers)
-
-    if mode == "2d" and utm_x is not None and utm_y is not None and len(utm_x) > 0:
-        step = max(1, len(utm_x) // num_positions)
-        sample_indices = list(range(0, len(utm_x), step))[:num_positions]
-        unique_xy_coords = [(float(utm_x[i]), float(utm_y[i])) for i in sample_indices]
+    if probe_xyz_file is not None:
+        # Mirror run_pipeline.main()'s own precedence: an explicit
+        # --probe-xyz file overrides num_swc_positions/swc_depths entirely,
+        # with no cartesian (position x depth) expansion -- the file's own
+        # rows ARE the probes. Load it the same way run_pipeline.py does,
+        # via a deferred import (avoids a module-level circular import,
+        # since run_pipeline.py imports this module at load time; by the
+        # time this function actually runs, run_pipeline is fully loaded).
+        import run_pipeline as _rp
+        _raw_px, _raw_py, probe_depths, _probe_labels = _rp.load_probe_xyz_file(probe_xyz_file)
+        # The file's x/y are real-world absolute coordinates (e.g. actual
+        # UTM), but the synthetic survey's own x/y (x_survey/y_survey) are
+        # always a LOCAL grid near (0, 0) -- same mismatch run_pipeline.py
+        # itself fixes for synthetic runs. Re-localize by translating so
+        # the probe grid's own min x/y lands on the survey's min x/y,
+        # preserving the file's internal relative layout exactly.
+        _px = np.asarray(_raw_px, dtype=float)
+        _py = np.asarray(_raw_py, dtype=float)
+        if _px.size and len(x_survey):
+            _dx = float(x_survey.min()) - float(_px.min())
+            _dy = float(y_survey.min()) - float(_py.min())
+            probe_x_coords = (_px + _dx).tolist()
+            probe_y_coords = (_py + _dy).tolist()
+        else:
+            probe_x_coords = _raw_px
+            probe_y_coords = _raw_py
+        print(f"[PRE-INVERSION DIAG] Using {len(probe_x_coords)} explicit probe(s) "
+              f"from --probe-xyz '{probe_xyz_file}' (re-localized to the synthetic "
+              f"survey's local frame) instead of auto-placed num_swc_positions="
+              f"{num_swc_positions} x swc_depths.")
     else:
-        unique_x = list(np.linspace(x_survey.min(), x_survey.max(), num_positions))
-        unique_xy_coords = [(x, 0.0) for x in unique_x]
+        num_positions = min(num_swc_positions, num_points)
+        tdr_depths = swc_depths if swc_depths is not None else list(layer_centers)
 
-    probe_x_coords = [xy[0] for xy in unique_xy_coords for _ in tdr_depths]
-    probe_y_coords = [xy[1] for xy in unique_xy_coords for _ in tdr_depths]
-    probe_depths   = [d     for _  in unique_xy_coords for d in tdr_depths]
+        # NOTE (fix): probe placement for synthetic scenarios must stay in the
+        # SAME local coordinate frame as the survey CSV's own x/y (x_survey/
+        # y_survey) -- never the absolute-UTM synthetic_utm_x/y grid (utm_x/
+        # utm_y below), which is offset by the real-world survey origin
+        # (~515000 mE / ~4468000 mN) and lives in a different frame entirely.
+        # Mixing the two is exactly the CRS-mismatch bug this diagnostic used
+        # to (correctly) flag. utm_x/utm_y are accepted for backward
+        # compatibility but are intentionally UNUSED for placement now.
+        if mode == "2d" and len(x_survey) > 0 and np.ptp(y_survey) > 0:
+            step = max(1, num_points // num_positions)
+            sample_indices = list(range(0, num_points, step))[:num_positions]
+            unique_xy_coords = [(float(x_survey[i]), float(y_survey[i])) for i in sample_indices]
+        else:
+            unique_x = list(np.linspace(x_survey.min(), x_survey.max(), num_positions))
+            unique_xy_coords = [(x, 0.0) for x in unique_x]
+
+        probe_x_coords = [xy[0] for xy in unique_xy_coords for _ in tdr_depths]
+        probe_y_coords = [xy[1] for xy in unique_xy_coords for _ in tdr_depths]
+        probe_depths   = [d     for _  in unique_xy_coords for d in tdr_depths]
 
     # ------------------------------------------------------------------
     # CRS consistency sanity check -- same defense-in-depth check used on

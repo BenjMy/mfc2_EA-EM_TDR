@@ -200,6 +200,43 @@ def _plot_xz_panel(
 # Core XY single-panel (plan view: easting vs northing)
 # ---------------------------------------------------------------------------
 
+def _interpolate_to_grid(
+    utm_x: np.ndarray,
+    utm_y: np.ndarray,
+    values: np.ndarray,
+    grid_resolution: int = 200,
+    interp_method: str = "linear",
+) -> tuple[np.ndarray, tuple[float, float, float, float]]:
+    """
+    Interpolate scattered (utm_x, utm_y, values) onto a regular grid for
+    ``imshow``-style rendering. Returns (grid_values, extent) where extent
+    is (xmin, xmax, ymin, ymax) as consumed by ``ax.imshow(..., extent=...)``.
+
+    Falls back to 'nearest' for any grid cell the primary ``interp_method``
+    leaves as NaN (this happens outside the convex hull of the input points
+    for 'linear'/'cubic'), so the map has no empty holes.
+    """
+    from scipy.interpolate import griddata
+
+    xmin, xmax = float(np.min(utm_x)), float(np.max(utm_x))
+    ymin, ymax = float(np.min(utm_y)), float(np.max(utm_y))
+
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(xmin, xmax, grid_resolution),
+        np.linspace(ymin, ymax, grid_resolution),
+    )
+
+    points = np.column_stack([utm_x, utm_y])
+    grid_values = griddata(points, values, (grid_x, grid_y), method=interp_method)
+
+    if interp_method != "nearest" and np.isnan(grid_values).any():
+        fallback = griddata(points, values, (grid_x, grid_y), method="nearest")
+        nan_mask = np.isnan(grid_values)
+        grid_values[nan_mask] = fallback[nan_mask]
+
+    return grid_values, (xmin, xmax, ymin, ymax)
+
+
 def _plot_xy_panel(
     ax: plt.Axes,
     theta_layer_mean: np.ndarray,  # (n_points,) mean θ over layers, % vol.
@@ -216,20 +253,64 @@ def _plot_xy_panel(
     probe_utm_x: Sequence[float] | None = None,
     probe_utm_y: Sequence[float] | None = None,
     scatter_size: float = 60.0,
+    cbar_label: str = "θ (% vol.)",
+    render_mode: str = "scatter",
+    grid_resolution: int = 200,
+    interp_method: str = "linear",
+    show_probes: bool = True,
+    probe_indices: Sequence[int] | None = None,
+    probe_marker: str = "v",
+    probe_size: float = 50.0,
+    probe_color: str = "black",
+    probe_label: str = "Probe",
 ) -> plt.cm.ScalarMappable:
-    """Draw one XY plan-view panel on *ax*. Returns the ScalarMappable."""
+    """
+    Draw one XY plan-view panel on *ax*. Returns the ScalarMappable.
+
+    render_mode : {"scatter", "imshow"}
+        "scatter" (default, unchanged behaviour) draws one square marker per
+        measurement point -- exact values, but gappy/blocky for sparse or
+        irregular grids. "imshow" interpolates the scattered points onto a
+        regular grid (see ``_interpolate_to_grid``) and renders a smooth
+        continuous raster; use ``grid_resolution``/``interp_method`` to
+        control the interpolation.
+    show_probes, probe_indices : control which/whether probe markers are
+        drawn. ``probe_indices`` selects a subset of the probe_utm_x/y
+        arrays (e.g. to declutter a dense probe layout); None (default)
+        shows all of them.
+    """
     norm     = plt.Normalize(vmin=theta_vmin, vmax=theta_vmax)
     cmap_obj = plt.get_cmap(cmap)
 
-    sc = ax.scatter(
-        utm_x, utm_y,
-        c=theta_layer_mean, cmap=cmap_obj, norm=norm,
-        s=scatter_size, marker="s", linewidths=0,
-    )
+    if render_mode == "imshow":
+        grid_values, extent = _interpolate_to_grid(
+            utm_x, utm_y, theta_layer_mean,
+            grid_resolution=grid_resolution, interp_method=interp_method,
+        )
+        sc = ax.imshow(
+            grid_values, extent=extent, origin="lower",
+            cmap=cmap_obj, norm=norm, aspect="auto", interpolation="nearest",
+        )
+    elif render_mode == "scatter":
+        sc = ax.scatter(
+            utm_x, utm_y,
+            c=theta_layer_mean, cmap=cmap_obj, norm=norm,
+            s=scatter_size, marker="s", linewidths=0,
+        )
+    else:
+        raise ValueError(
+            f"render_mode must be 'scatter' or 'imshow', got {render_mode!r}."
+        )
 
-    if probe_utm_x is not None and probe_utm_y is not None:
-        ax.scatter(probe_utm_x, probe_utm_y,
-                   marker="v", s=50, color="black", zorder=5, label="Probe")
+    if show_probes and probe_utm_x is not None and probe_utm_y is not None:
+        if probe_indices is not None:
+            _px = np.asarray(probe_utm_x)[list(probe_indices)]
+            _py = np.asarray(probe_utm_y)[list(probe_indices)]
+        else:
+            _px, _py = probe_utm_x, probe_utm_y
+        ax.scatter(_px, _py,
+                   marker=probe_marker, s=probe_size, color=probe_color,
+                   zorder=5, label=probe_label)
 
     if show_xlabel:
         ax.set_xlabel("UTM Easting (m)", fontsize=8)
@@ -242,7 +323,7 @@ def _plot_xy_panel(
 
     if show_colorbar and cbar_ax is not None:
         cbar = plt.colorbar(sc, cax=cbar_ax)
-        cbar.set_label("θ (% vol.)", fontsize=8)
+        cbar.set_label(cbar_label, fontsize=8)
         cbar.ax.tick_params(labelsize=7)
 
     return sc
@@ -427,6 +508,14 @@ def plot_water_content_xy(
     dpi: int = 150,
     probe_utm_x: Sequence[float] | None = None,
     probe_utm_y: Sequence[float] | None = None,
+    render_mode: str = "scatter",
+    grid_resolution: int = 200,
+    interp_method: str = "linear",
+    show_probes: bool = True,
+    probe_indices: Sequence[int] | None = None,
+    probe_marker: str = "v",
+    probe_size: float = 50.0,
+    probe_color: str = "black",
 ) -> plt.Figure:
     """
     Plot a plan-view XY map of θ at a chosen layer or averaged over all
@@ -441,6 +530,13 @@ def plot_water_content_xy(
     layer_index : int or None
         If None (default), the map shows the depth-average over all layers.
         Pass an integer (0-based) to show a single layer.
+    render_mode : {"scatter", "imshow"}
+        "scatter" (default) draws one square marker per measurement point.
+        "imshow" interpolates onto a regular grid for a smooth raster --
+        see ``grid_resolution``/``interp_method``.
+    show_probes, probe_indices, probe_marker, probe_size, probe_color :
+        Control which probe markers are drawn and how. ``probe_indices``
+        (None = all) selects a subset of ``probe_utm_x``/``probe_utm_y``.
     """
     if theta_calc.ndim == 2:
         if layer_index is not None:
@@ -465,9 +561,13 @@ def plot_water_content_xy(
         title=f"{title}\n({layer_str})" if layer_str else title,
         show_colorbar=True, cbar_ax=cbar_ax,
         probe_utm_x=probe_utm_x, probe_utm_y=probe_utm_y,
+        render_mode=render_mode, grid_resolution=grid_resolution,
+        interp_method=interp_method, show_probes=show_probes,
+        probe_indices=probe_indices, probe_marker=probe_marker,
+        probe_size=probe_size, probe_color=probe_color,
     )
 
-    if probe_utm_x is not None:
+    if probe_utm_x is not None and show_probes:
         ax.legend(fontsize=7, loc="upper right")
 
     if output_path:
@@ -497,8 +597,23 @@ def plot_water_content_xy_timelapse(
     dpi: int = 150,
     probe_utm_x: Sequence[float] | None = None,
     probe_utm_y: Sequence[float] | None = None,
+    render_mode: str = "scatter",
+    grid_resolution: int = 200,
+    interp_method: str = "linear",
+    show_probes: bool = True,
+    probe_indices: Sequence[int] | None = None,
+    probe_marker: str = "v",
+    probe_size: float = 50.0,
+    probe_color: str = "black",
 ) -> plt.Figure:
-    """Grid of XY plan-view panels, one per survey time step (2-D mode)."""
+    """
+    Grid of XY plan-view panels, one per survey time step (2-D mode).
+
+    render_mode : {"scatter", "imshow"} -- see ``plot_water_content_xy``.
+    show_probes, probe_indices, probe_marker, probe_size, probe_color :
+        Control which probe markers are drawn (on the first panel only,
+        as before) and how.
+    """
     if theta_calc.ndim == 3:
         if layer_index is not None:
             theta_maps = theta_calc[:, :, layer_index]
@@ -543,6 +658,10 @@ def plot_water_content_xy_timelapse(
             show_xlabel=show_x, show_ylabel=show_y,
             probe_utm_x=probe_utm_x if t == 0 else None,
             probe_utm_y=probe_utm_y if t == 0 else None,
+            render_mode=render_mode, grid_resolution=grid_resolution,
+            interp_method=interp_method, show_probes=show_probes,
+            probe_indices=probe_indices, probe_marker=probe_marker,
+            probe_size=probe_size, probe_color=probe_color,
         )
         sc_ref = sc
 
@@ -748,11 +867,19 @@ def plot_from_pipeline(
     # 2-D mode extras (optional — passed through from run_pipeline when in 2d mode)
     utm_x: np.ndarray | None = None,
     utm_y: np.ndarray | None = None,
-    probe_y_coords: list[float] | None = None,   # UTM northing of each probe — for XY markers
+    probe_y_coords: list[float] | None = None,   # DEPRECATED for XY use — see probe_utm_y
     y_transect: np.ndarray | None = None,
+    xy_render_mode: str = "scatter",
+    probe_utm_x: list[float] | None = None,
+    probe_utm_y: list[float] | None = None,
 ) -> None:
     """
     Render all water-content figures from pipeline output.
+
+    xy_render_mode : {"scatter", "imshow"}
+        Rendering for the XY plan-view plots (2-D mode only). "scatter"
+        (default, unchanged) draws one square per measurement point;
+        "imshow" interpolates onto a smooth raster.
 
     XZ figures are always produced (cross-section view).
     XY figures are produced when ``utm_x`` and ``utm_y`` are supplied
@@ -764,11 +891,23 @@ def plot_from_pipeline(
         UTM coordinates of each measurement point; loaded by run_pipeline
         from ``synthetic_utm_x.npy`` / ``synthetic_utm_y.npy`` when
         ``--mode 2d`` was used.
-    probe_y_coords : list of float or None
-        UTM northing of each TDR probe, same order as ``probe_x_coords``.
-        When supplied together with ``utm_x``/``utm_y``, probe markers are
-        drawn on XY plan-view plots.  In 1-D mode all values are 0.0 and
-        markers are omitted from XY plots automatically.
+    probe_x_coords, probe_y_coords : list of float
+        Probe position in the SAME LOCAL frame as ``x_transect`` (and, if
+        given, ``y_transect``). Used only for the XZ transect plot's probe
+        markers -- never for the XY plan-view plot. In synthetic 2-D runs
+        this is deliberately NOT the same as the probe's absolute UTM
+        position (see ``probe_utm_x``/``probe_utm_y`` below); passing local
+        coordinates here and letting them leak into the UTM-based XY plot
+        was the cause of a past bug where the XY plan-view's probe marker
+        (and, on shared axes, the whole survey grid) appeared mislocated.
+    probe_utm_x, probe_utm_y : list of float or None
+        Absolute UTM position of each TDR probe, same order as
+        ``probe_x_coords``. This -- NOT ``probe_x_coords``/``probe_y_coords``
+        -- is what gets plotted on the XY plan-view figure. Required (along
+        with ``utm_x``/``utm_y``) for probe markers to appear on the XY
+        plot; if omitted, XY plots are still produced but without probe
+        markers. In 1-D mode there is no meaningful UTM probe position, so
+        pass None (the default).
     y_transect : ndarray or None
         Local y-offsets (northing) used as a second spatial axis in XZ plots
         when the transect is truly 2-D.  Usually not needed; pass None.
@@ -798,14 +937,25 @@ def plot_from_pipeline(
 
     has_utm = (utm_x is not None and utm_y is not None)
 
-    # Resolve probe UTM coords for XY marker overlay.
-    # In 2-D mode probe_x_coords and probe_y_coords are real UTM values.
-    # In 1-D mode probe_y_coords are all 0.0 — suppress XY markers in that case.
+    # Resolve probe UTM coords for XY marker overlay. Prefer the explicit
+    # probe_utm_x/probe_utm_y (true absolute UTM). Only if the caller didn't
+    # supply those do we fall back to treating probe_x_coords/probe_y_coords
+    # as UTM -- which is ONLY correct when the caller guarantees those are
+    # actually UTM values (not the local-frame values used for the XZ plot).
     _probe_utm_x: list[float] | None = None
     _probe_utm_y: list[float] | None = None
-    if has_utm and probe_y_coords is not None:
+    if has_utm and probe_utm_x is not None and probe_utm_y is not None:
+        _probe_utm_x = list(probe_utm_x)
+        _probe_utm_y = list(probe_utm_y)
+    elif has_utm and probe_y_coords is not None:
         has_real_y = any(y != 0.0 for y in probe_y_coords)
         if has_real_y:
+            print("[plot_from_pipeline][WARN] probe_utm_x/probe_utm_y not "
+                  "supplied; falling back to probe_x_coords/probe_y_coords "
+                  "for XY plan-view probe markers. This is only correct if "
+                  "those are already absolute UTM values, not the local "
+                  "transect frame -- pass probe_utm_x/probe_utm_y explicitly "
+                  "to avoid mislocated markers.")
             _probe_utm_x = list(probe_x_coords)
             _probe_utm_y = list(probe_y_coords)
 
@@ -868,6 +1018,7 @@ def plot_from_pipeline(
                 output_dir=output_dir, scenario_name=scenario_name,
                 probe_utm_x=_probe_utm_x,   # None in 1-D mode, real coords in 2-D
                 probe_utm_y=_probe_utm_y,
+                render_mode=xy_render_mode,
             )
         else:
             tc = theta_calc[0] if theta_calc.ndim == 3 else theta_calc
@@ -881,6 +1032,7 @@ def plot_from_pipeline(
                 ),
                 probe_utm_x=_probe_utm_x,   # None in 1-D mode, real coords in 2-D
                 probe_utm_y=_probe_utm_y,
+                render_mode=xy_render_mode,
             )
 
 
@@ -903,6 +1055,9 @@ def plot_truth_from_pipeline(
     utm_x: np.ndarray | None = None,
     utm_y: np.ndarray | None = None,
     probe_y_coords: list[float] | None = None,
+    xy_render_mode: str = "scatter",
+    probe_utm_x: list[float] | None = None,
+    probe_utm_y: list[float] | None = None,
 ) -> None:
     """
     Render the ground-truth counterpart of ``plot_from_pipeline``'s XZ (and,
@@ -962,9 +1117,18 @@ def plot_truth_from_pipeline(
 
     _probe_utm_x: list[float] | None = None
     _probe_utm_y: list[float] | None = None
-    if has_utm and probe_y_coords is not None:
+    if has_utm and probe_utm_x is not None and probe_utm_y is not None:
+        _probe_utm_x = list(probe_utm_x)
+        _probe_utm_y = list(probe_utm_y)
+    elif has_utm and probe_y_coords is not None:
         has_real_y = any(y != 0.0 for y in probe_y_coords)
         if has_real_y:
+            print("[plot_truth_from_pipeline][WARN] probe_utm_x/probe_utm_y "
+                  "not supplied; falling back to probe_x_coords/probe_y_coords "
+                  "for XY plan-view probe markers. This is only correct if "
+                  "those are already absolute UTM values, not the local "
+                  "transect frame -- pass probe_utm_x/probe_utm_y explicitly "
+                  "to avoid mislocated markers.")
             _probe_utm_x = list(probe_x_coords)
             _probe_utm_y = list(probe_y_coords)
 
@@ -1009,6 +1173,7 @@ def plot_truth_from_pipeline(
                 output_dir=output_dir, scenario_name=truth_scenario_name,
                 probe_utm_x=_probe_utm_x,
                 probe_utm_y=_probe_utm_y,
+                render_mode=xy_render_mode,
             )
         else:
             tc = theta_true_pct[0] if theta_true_pct.ndim == 3 else theta_true_pct
@@ -1022,6 +1187,7 @@ def plot_truth_from_pipeline(
                 ),
                 probe_utm_x=_probe_utm_x,
                 probe_utm_y=_probe_utm_y,
+                render_mode=xy_render_mode,
             )
 
 
@@ -1281,6 +1447,143 @@ def plot_water_content_pct_diff_timelapse(
 
 
 # ---------------------------------------------------------------------------
+# Public: XY plan-view counterpart of the %-difference plot (2-D mode only)
+# ---------------------------------------------------------------------------
+
+def plot_water_content_pct_diff_xy(
+    theta_calc: np.ndarray,   # (n_points, n_layers) or (n_points,), same units as theta_true
+    theta_true: np.ndarray,   # (n_points, n_layers) or (n_points,)
+    utm_x: np.ndarray,
+    utm_y: np.ndarray,
+    diff_vmax: float | None = None,
+    cmap: str = "RdBu_r",
+    title: str = "Water Content % Difference — Plan View (XY)",
+    output_path: str | None = None,
+    dpi: int = 150,
+    probe_utm_x: Sequence[float] | None = None,
+    probe_utm_y: Sequence[float] | None = None,
+) -> plt.Figure:
+    """
+    Plan-view (XY) counterpart of ``plot_water_content_pct_diff``: signed
+    % difference between calculated and true water content, averaged over
+    layers when 2-D (n_points, n_layers) arrays are given, plotted at each
+    point's UTM location. Only meaningful in 2-D mode where ``utm_x``/
+    ``utm_y`` are available.
+    """
+    pct_diff = _compute_pct_diff(theta_calc, theta_true)
+    diff_map = pct_diff.mean(axis=1) if pct_diff.ndim == 2 else pct_diff
+
+    if diff_vmax is None:
+        finite = diff_map[np.isfinite(diff_map)]
+        diff_vmax = float(np.nanpercentile(np.abs(finite), 98)) if finite.size else 25.0
+        diff_vmax = max(5.0, np.ceil(diff_vmax / 5) * 5)
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    fig.subplots_adjust(right=0.85)
+    cbar_ax = fig.add_axes([0.87, 0.15, 0.025, 0.70])
+
+    _plot_xy_panel(
+        ax=ax, theta_layer_mean=diff_map,
+        utm_x=utm_x, utm_y=utm_y,
+        theta_vmin=-diff_vmax, theta_vmax=diff_vmax,
+        cmap=cmap, title=title,
+        show_colorbar=True, cbar_ax=cbar_ax,
+        cbar_label="Δθ vs. truth (%)",
+        probe_utm_x=probe_utm_x, probe_utm_y=probe_utm_y,
+    )
+
+    if probe_utm_x is not None:
+        ax.legend(fontsize=7, loc="upper right")
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[PLOT] Saved XY %-difference plan view: {output_path}")
+    return fig
+
+
+def plot_water_content_pct_diff_xy_timelapse(
+    theta_calc: np.ndarray,   # (n_time, n_points, n_layers) or (n_time, n_points)
+    theta_true: np.ndarray,   # same shape as theta_calc
+    utm_x: np.ndarray,
+    utm_y: np.ndarray,
+    survey_labels: Sequence[str] | None = None,
+    diff_vmax: float | None = None,
+    cmap: str = "RdBu_r",
+    n_cols: int = 2,
+    output_dir: str = ".",
+    scenario_name: str = "scenario",
+    dpi: int = 150,
+    probe_utm_x: Sequence[float] | None = None,
+    probe_utm_y: Sequence[float] | None = None,
+) -> plt.Figure:
+    """Grid of XY %-difference plan-view panels, one per survey time step."""
+    pct_diff_all = _compute_pct_diff(theta_calc, theta_true)
+    diff_maps = pct_diff_all.mean(axis=2) if pct_diff_all.ndim == 3 else pct_diff_all
+
+    n_time = diff_maps.shape[0]
+    if survey_labels is None:
+        survey_labels = [f"t = {i}" for i in range(n_time)]
+
+    if diff_vmax is None:
+        finite = diff_maps[np.isfinite(diff_maps)]
+        diff_vmax = float(np.nanpercentile(np.abs(finite), 98)) if finite.size else 25.0
+        diff_vmax = max(5.0, np.ceil(diff_vmax / 5) * 5)
+
+    n_rows = int(np.ceil(n_time / n_cols))
+    fig_w  = 5.5 * n_cols + 1.0
+    fig_h  = 5.0 * n_rows
+    fig    = plt.figure(figsize=(fig_w, fig_h))
+
+    gs = fig.add_gridspec(
+        n_rows, n_cols + 1,
+        width_ratios=[1.0] * n_cols + [0.04],
+        hspace=0.40, wspace=0.25,
+        left=0.08, right=0.96, top=0.91, bottom=0.06,
+    )
+    cbar_ax = fig.add_subplot(gs[:, -1])
+    sc_ref  = None
+
+    for t in range(n_time):
+        row, col = divmod(t, n_cols)
+        ax = fig.add_subplot(gs[row, col])
+        show_y = (col == 0)
+        show_x = (row == n_rows - 1) or (t >= n_time - n_cols)
+
+        sc = _plot_xy_panel(
+            ax=ax, theta_layer_mean=diff_maps[t],
+            utm_x=utm_x, utm_y=utm_y,
+            theta_vmin=-diff_vmax, theta_vmax=diff_vmax,
+            cmap=cmap,
+            title=f"{survey_labels[t]}",
+            show_xlabel=show_x, show_ylabel=show_y,
+            probe_utm_x=probe_utm_x if t == 0 else None,
+            probe_utm_y=probe_utm_y if t == 0 else None,
+        )
+        sc_ref = sc
+
+    for t in range(n_time, n_rows * n_cols):
+        row, col = divmod(t, n_cols)
+        fig.add_subplot(gs[row, col]).set_visible(False)
+
+    if sc_ref is not None:
+        cbar = fig.colorbar(sc_ref, cax=cbar_ax)
+        cbar.set_label("Δθ vs. truth (%)", fontsize=9)
+        cbar.ax.tick_params(labelsize=8)
+
+    fig.suptitle(f"Water Content % Difference (XY Plan View) — scenario: {scenario_name}",
+                 fontsize=11, y=0.97)
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"water_content_xy_{scenario_name}_pctdiff.png")
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[PLOT] Saved XY %-difference timelapse: {out_path}")
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Public: % difference between plot_from_pipeline and plot_truth_from_pipeline
 # ---------------------------------------------------------------------------
 
@@ -1296,22 +1599,30 @@ def plot_pct_diff_from_pipeline(
     timelapse: bool = False,
     survey_labels: Sequence[str] | None = None,
     diff_vmax: float | None = None,
+    # 2-D mode extras (optional — same as plot_from_pipeline / plot_truth_from_pipeline)
+    utm_x: np.ndarray | None = None,
+    utm_y: np.ndarray | None = None,
+    probe_y_coords: list[float] | None = None,
+    probe_utm_x: list[float] | None = None,
+    probe_utm_y: list[float] | None = None,
 ) -> str | None:
     """
-    Render the XZ % -difference figure between ``plot_from_pipeline``'s
-    calculated water content and ``plot_truth_from_pipeline``'s ground
-    truth — i.e. the figure requested to sit alongside
-    ``water_content_xz_{scenario_name}.png`` and
+    Render the XZ (and, in 2-D mode, XY) % -difference figure between
+    ``plot_from_pipeline``'s calculated water content and
+    ``plot_truth_from_pipeline``'s ground truth — i.e. the figure requested
+    to sit alongside ``water_content_xz_{scenario_name}.png`` and
     ``water_content_xz_{scenario_name}_truth.png``, saved as
-    ``water_content_xz_{scenario_name}_pctdiff.png``.
+    ``water_content_xz_{scenario_name}_pctdiff.png`` (and
+    ``water_content_xy_{scenario_name}_pctdiff.png`` when ``utm_x``/
+    ``utm_y`` are supplied).
 
     Call this the same way as ``plot_truth_from_pipeline`` (same
-    ``theta_true``, ``x_transect``, etc.) immediately after both of those
-    have run, so all three files share one scenario/epoch layout. Only
-    meaningful in synthetic mode (a ground truth must exist).
+    ``theta_true``, ``x_transect``, ``utm_x``/``utm_y``, etc.) immediately
+    after both of those have run, so all files share one scenario/epoch
+    layout. Only meaningful in synthetic mode (a ground truth must exist).
 
-    Returns the output file path, or ``None`` if rendering was skipped
-    (spatial-point mismatch between ``theta_true`` and ``x_transect``).
+    Returns the output file path (the XZ one), or ``None`` if rendering was
+    skipped (spatial-point mismatch between ``theta_true`` and ``x_transect``).
     """
     theta_calc = _extract_theta_calc(selected_output)  # m^3/m^3
     theta_true = np.asarray(theta_true, dtype=float)   # m^3/m^3
@@ -1336,8 +1647,28 @@ def plot_pct_diff_from_pipeline(
         )
         return None
 
+    has_utm = (utm_x is not None and utm_y is not None)
+    _probe_utm_x: list[float] | None = None
+    _probe_utm_y: list[float] | None = None
+    if has_utm and probe_utm_x is not None and probe_utm_y is not None:
+        _probe_utm_x = list(probe_utm_x)
+        _probe_utm_y = list(probe_utm_y)
+    elif has_utm and probe_y_coords is not None:
+        if any(y != 0.0 for y in probe_y_coords):
+            print("[plot_pct_diff_from_pipeline][WARN] probe_utm_x/probe_utm_y not "
+                  "supplied; falling back to probe_x_coords/probe_y_coords for XY "
+                  "plan-view probe markers. This is only correct if those are "
+                  "already absolute UTM values, not the local transect frame -- "
+                  "pass probe_utm_x/probe_utm_y explicitly to avoid mislocated "
+                  "markers.")
+            _probe_utm_x = list(probe_x_coords) if probe_x_coords else None
+            _probe_utm_y = list(probe_y_coords)
+
+    # -----------------------------------------------------------------------
+    # XZ plot (always)
+    # -----------------------------------------------------------------------
     if timelapse and theta_calc.ndim == 3:
-        fig = plot_water_content_pct_diff_timelapse(
+        plot_water_content_pct_diff_timelapse(
             theta_calc=theta_calc, theta_true=theta_true,
             x_coords=x_transect, depths0=depths0,
             probe_x=probe_x_coords, probe_depths=probe_depths,
@@ -1345,7 +1676,6 @@ def plot_pct_diff_from_pipeline(
             diff_vmax=diff_vmax,
             output_dir=output_dir, scenario_name=scenario_name,
         )
-        return os.path.join(output_dir, f"water_content_xz_{scenario_name}_pctdiff.png")
     else:
         tc = theta_calc[0] if theta_calc.ndim == 3 else theta_calc
         tt = theta_true[0] if theta_true.ndim == 3 else theta_true
@@ -1358,7 +1688,35 @@ def plot_pct_diff_from_pipeline(
             title=f"Water Content % Difference (Calculated vs. Truth) — {scenario_name}",
             output_path=output_path,
         )
-        return output_path
+
+    # -----------------------------------------------------------------------
+    # XY plot (only when UTM coords are available — 2-D mode)
+    # -----------------------------------------------------------------------
+    if has_utm:
+        if timelapse and theta_calc.ndim == 3:
+            plot_water_content_pct_diff_xy_timelapse(
+                theta_calc=theta_calc, theta_true=theta_true,
+                utm_x=utm_x, utm_y=utm_y,
+                survey_labels=survey_labels,
+                diff_vmax=diff_vmax,
+                output_dir=output_dir, scenario_name=scenario_name,
+                probe_utm_x=_probe_utm_x, probe_utm_y=_probe_utm_y,
+            )
+        else:
+            tc = theta_calc[0] if theta_calc.ndim == 3 else theta_calc
+            tt = theta_true[0] if theta_true.ndim == 3 else theta_true
+            plot_water_content_pct_diff_xy(
+                theta_calc=tc, theta_true=tt,
+                utm_x=utm_x, utm_y=utm_y,
+                diff_vmax=diff_vmax,
+                title=f"Water Content % Difference (XY) — {scenario_name}",
+                output_path=os.path.join(
+                    output_dir, f"water_content_xy_{scenario_name}_pctdiff.png"
+                ),
+                probe_utm_x=_probe_utm_x, probe_utm_y=_probe_utm_y,
+            )
+
+    return os.path.join(output_dir, f"water_content_xz_{scenario_name}_pctdiff.png")
 
 
 # ---------------------------------------------------------------------------

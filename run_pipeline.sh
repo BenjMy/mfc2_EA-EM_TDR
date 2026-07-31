@@ -16,6 +16,13 @@
 #   ./run_pipeline.sh --validate                               # validate all scenarios
 #   ./run_pipeline.sh --help                                   # show this message
 #
+# Localization diagnostic (Step 2 kernel-localized WS calibration)
+# ------------------------------------------------------------------
+#   OFF by default for every scenario. Controlled only by the scenario's
+#   own 'ws_localized_bandwidth' field in ensemble_scenarios.json -- no
+#   CLI flag on this wrapper turns it on/off. See `--help` for details,
+#   current per-scenario status, and how to enable/disable it.
+#
 # Data sources
 # -----------
 #   synthetic (default)   Generate synthetic forward models and add noise.
@@ -59,6 +66,11 @@ TDR_DIR=""
 COORD_FILE="./data/SOILNET_MFC2_coordinates_sensors.csv"
 DROP_COILS=()
 HOMOGENEOUS=false
+FULL_RANGE_GRADIENT=false
+XY_Z_BLEND=""
+INVERT_Z_GRADIENT=false
+PROBE_XYZ=""
+XY_RENDER_MODE=""
 NUM_SWC_POSITIONS=""
 SWC_DEPTHS=()
 WINDOW_M=""
@@ -110,6 +122,41 @@ Spatial options:
                           is spatially uniform; temporal trend and noise
                           are still applied. Overrides 'homogeneous' in the
                           scenario JSON when passed.
+      --full-range-gradient
+                          Synthetic mode only (ignored if --homogeneous is
+                          also given). Static XZ (depth) and XY (plan-view)
+                          initial-model gradients each span the FULL
+                          [theta_dry, theta_wet] range independently,
+                          instead of the small fixed-amplitude default
+                          gradient (which only adds ~0.12-0.18 vol.
+                          fraction on top of a 0.05 baseline). Overrides
+                          'full_range_gradient' in the scenario JSON.
+      --xy-z-blend W      Only used with --full-range-gradient. Weight in
+                          [0, 1] between the XY component (1.0 = XY only)
+                          and the Z/depth component (0.0 = Z only) of the
+                          initial model. Default: 0.5 (equal blend).
+                          Overrides 'xy_z_blend' in the scenario JSON.
+      --invert-z-gradient Only used with --full-range-gradient. Flip the
+                          depth gradient so the shallowest layer is wet and
+                          the deepest layer is dry (default: dry at
+                          surface, wet at depth). Overrides
+                          'invert_z_gradient' in the scenario JSON.
+
+Probe placement and XY plot rendering:
+      --probe-xyz PATH    CSV of explicit SWC/TDR probe locations, one row
+                          per probe, e.g. --probe-xyz coord_TDR.csv.
+                          Accepted columns (case-insensitive): x/utm_x/
+                          easting, y/utm_y/northing, z/depth/depth_m, and
+                          an optional label column (id/name/probe/label).
+                          When given, completely replaces the auto-
+                          placement grid derived from --num-swc-positions/
+                          --swc-depths for BOTH 1-D and 2-D mode -- each
+                          row becomes one probe at its literal (x, y, z).
+      --xy-render-mode {scatter,imshow}
+                          Rendering for XY plan-view plots (2-D mode only).
+                          'scatter' (default) draws one square per
+                          measurement point; 'imshow' interpolates onto a
+                          smooth raster (scipy.griddata).
 
 SWC / TDR sensor options (override the scenario JSON's sensor network):
       --num-swc-positions N
@@ -144,6 +191,49 @@ Scenario options (apply in both synthetic and real-data mode):
   -c, --config PATH       Path to a custom JSON scenario file
                           (default: ensemble_scenarios.json next to this script)
 
+Localization diagnostic (Step 2 kernel-localized WS calibration):
+      This runs a DIAGNOSTIC SIBLING to the normal Step 2 petrophysical
+      calibration: instead of one flat Waxman-Smits parameter set per
+      soil horizon, it fits a separate set at every EM point, weighting
+      nearby TDR probes more heavily (Gaspari-Cohn kernel, radius 'c').
+      It never replaces Step 2 and never changes Steps 3-5 -- it only
+      adds 'petro_calibration_localized.png' (and, in 2-D mode, a
+      sigma_s(x, y) map) to the output directory.
+
+      DEFAULT: OFF. There is no --localized-bandwidth flag on this shell
+      wrapper -- localization is controlled entirely by the scenario's
+      own 'ws_localized_bandwidth' field in ensemble_scenarios.json
+      (or your --config file), so the bandwidth stays tied to that
+      scenario's own probe geometry instead of being set blindly from
+      the command line. A scenario that omits the field (the default
+      for every scenario except '2d') runs with localization disabled,
+      exactly like before this feature existed.
+
+      To turn it ON for a scenario: add
+          "ws_localized_bandwidth": <radius in the same units as your
+                                      x/y coordinates, e.g. metres>
+      to that scenario's block in the JSON. Rule of thumb: pick a value
+      at least ~half the spacing between your closest adjacent SWC/TDR
+      probes (kernel support is exactly zero beyond 2×c, so anything
+      smaller and most EM points won't see any probe at all).
+
+      To turn it OFF for a scenario that currently has it on: delete
+      the 'ws_localized_bandwidth' key, or set it to null.
+
+      Current status in ensemble_scenarios.json (re-check after editing):
+          2d                      -> ON  (c = 5.0)
+          2d_dense_tdr            -> off (add the field to enable)
+          2d_real                 -> off
+          moisture_2d_free        -> off
+          moisture_2d_dense_tdr   -> off
+          mfc2_real_synthetic_mirror -> off
+      NOTE: '2d''s c=5.0 is under-provisioned for its own default 2-probe
+      layout (--num-swc-positions 2 on the default 10x5 grid places the
+      two probes ~10.8 m apart, so the rule-of-thumb minimum is ~5.4 m).
+      Either raise c to >= 6 in the JSON, or run with more probes
+      (--num-swc-positions, e.g. 6-10) so a bandwidth of 5.0 has more
+      than two points to localize between.
+
 Environment options:
   -e, --env PATH          Path to a Python virtualenv to activate before running
                           (e.g. /path/to/venv or /path/to/conda/envs/myenv)
@@ -168,11 +258,17 @@ Examples:
   ./run_pipeline.sh --mode 2d --nx 15 --ny 8
   ./run_pipeline.sh --mode 2d -s mixed_middle_free --nx 20 --ny 10 -e ~/venvs/eaem
   ./run_pipeline.sh --mode 2d -s 2d --homogeneous       # spatially uniform ground truth
+  ./run_pipeline.sh --mode 2d -s 2d --full-range-gradient   # full dry-to-wet XZ+XY gradient
+  ./run_pipeline.sh --mode 2d -s 2d --full-range-gradient --xy-z-blend 0.3 --invert-z-gradient
 
   # --- Override SWC/TDR sensor network from the command line ---
   ./run_pipeline.sh --mode 2d -s 2d --num-swc-positions 6
   ./run_pipeline.sh --mode 2d -s 2d --swc-depths 0.15 0.45 0.9
   ./run_pipeline.sh --mode 2d -s 2d --num-swc-positions 6 --swc-depths 0.15 0.45 0.9 --window-m 1.5
+  ./run_pipeline.sh --mode 2d -s 2d --probe-xyz coord_TDR.csv   # explicit probe (x,y,z) from CSV
+
+  # --- Control the XY plan-view plot rendering (2-D mode) ---
+  ./run_pipeline.sh --mode 2d -s 2d --xy-render-mode imshow
 
   # --- Real data 1-D (field observations) ---
   ./run_pipeline.sh --data-source real --em-dir ./data/EMI_MFC2/ --tdr-dir ./data/daily_MFC/
@@ -302,6 +398,17 @@ while [[ $# -gt 0 ]]; do
         --list)     LIST_ONLY=true;     shift ;;
         --validate) VALIDATE_ONLY=true; shift ;;
         --homogeneous) HOMOGENEOUS=true; shift ;;
+        --full-range-gradient) FULL_RANGE_GRADIENT=true; shift ;;
+        --xy-z-blend)
+            XY_Z_BLEND="${2:?'--xy-z-blend requires a number'}"
+            shift 2 ;;
+        --invert-z-gradient) INVERT_Z_GRADIENT=true; shift ;;
+        --probe-xyz)    PROBE_XYZ="${2:?'--probe-xyz requires a path'}";         shift 2 ;;
+        --xy-render-mode)
+            XY_RENDER_MODE="${2:?'--xy-render-mode requires scatter or imshow'}"
+            [[ "${XY_RENDER_MODE}" == "scatter" || "${XY_RENDER_MODE}" == "imshow" ]] \
+                || die "--xy-render-mode must be 'scatter' or 'imshow', got '${XY_RENDER_MODE}'"
+            shift 2 ;;
         -h|--help)  usage; exit 0 ;;
         *) die "Unknown option: $1  (run with --help for usage)" ;;
     esac
@@ -315,6 +422,26 @@ fi
 # Warn when --homogeneous is passed for real-data runs (synthetic-only flag)
 if ${HOMOGENEOUS} && [[ "${DATA_SOURCE}" == "real" ]]; then
     log "WARNING: --homogeneous is ignored in real-data mode (synthetic generation only)."
+fi
+
+# Warn when --full-range-gradient / --xy-z-blend / --invert-z-gradient are
+# passed for real-data runs (synthetic-generation-only flags)
+if ${FULL_RANGE_GRADIENT} && [[ "${DATA_SOURCE}" == "real" ]]; then
+    log "WARNING: --full-range-gradient is ignored in real-data mode (synthetic generation only)."
+fi
+if [[ -n "${XY_Z_BLEND}" && "${DATA_SOURCE}" == "real" ]]; then
+    log "WARNING: --xy-z-blend is ignored in real-data mode (synthetic generation only)."
+fi
+if ${INVERT_Z_GRADIENT} && [[ "${DATA_SOURCE}" == "real" ]]; then
+    log "WARNING: --invert-z-gradient is ignored in real-data mode (synthetic generation only)."
+fi
+
+# Warn when --full-range-gradient's blend/invert flags are passed without it
+if [[ -n "${XY_Z_BLEND}" ]] && ! ${FULL_RANGE_GRADIENT}; then
+    log "WARNING: --xy-z-blend has no effect without --full-range-gradient."
+fi
+if ${INVERT_Z_GRADIENT} && ! ${FULL_RANGE_GRADIENT}; then
+    log "WARNING: --invert-z-gradient has no effect without --full-range-gradient."
 fi
 
 # ---------------------------------------------------------------------------
@@ -456,98 +583,6 @@ log "  Script      : ${PIPELINE_SCRIPT}"
 log "=================================================="
 
 # ---------------------------------------------------------------------------
-# Prepare output dir and report path
-# ---------------------------------------------------------------------------
-# Derive output_dir from scenario config if possible; fall back to mfc2_outputs.
-OUTPUT_DIR="mfc2_outputs"
-if [[ -n "${CONFIG_FILE}" ]]; then
-    _od=$(${PYTHON} -c "
-import json, sys
-try:
-    data = json.load(open('${CONFIG_FILE}'))
-    scenarios = data.get('scenarios', data)
-    s = scenarios.get('${SCENARIO}', {})
-    print(s.get('output_dir', 'mfc2_outputs'))
-except Exception:
-    print('mfc2_outputs')
-" 2>/dev/null)
-    [[ -n "${_od}" ]] && OUTPUT_DIR="${_od}"
-fi
-mkdir -p "${OUTPUT_DIR}"
-
-REPORT_TS="$(date '+%Y%m%d_%H%M%S')"
-REPORT_PATH="${OUTPUT_DIR}/pipeline_report_${REPORT_TS}.md"
-
-# Write shell-level header into the report before Python runs.
-# Python's PipelineReporter will open a file with the same timestamp
-# (generated in the same second) or append via env var.
-export EAEM_REPORT_PATH="${REPORT_PATH}"
-export EAEM_DATA_SOURCE="${EFFECTIVE_DS}"
-
-cat > "${REPORT_PATH}" << MDEOF
-# EA-EM Pipeline Run Report
-
-| Field | Value |
-|-------|-------|
-| Generated | $(date '+%Y-%m-%d %H:%M:%S') |
-| Launched by | \`run_pipeline.sh\` |
-| Data source | \`${EFFECTIVE_DS^^}\` |
-| Scenario | \`${SCENARIO}\` |
-| Mode | \`${MODE^^}\` |
-| Config file | \`${CONFIG_FILE:-${SCENARIO_JSON} (default)}\` |
-| Output dir | \`${OUTPUT_DIR}\` |
-| Python | \`$(${PYTHON} --version 2>&1)\` |
-| Python path | \`$(command -v "${PYTHON}")\` |
-| Script | \`${PIPELINE_SCRIPT}\` |
-| Host | \`$(hostname)\` |
-| User | \`$(whoami)\` |
-| Git commit | \`$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo "n/a")\` |
-| Grid (2D) | \`${NX}×${NY}\` |
-
-MDEOF
-
-if [[ "${EFFECTIVE_DS}" == "real" ]]; then
-    cat >> "${REPORT_PATH}" << MDEOF
-## Real Data Sources
-
-| Path | Value |
-|------|-------|
-| EM directory | \`${EFFECTIVE_EM_DIR}\` |
-| TDR directory | \`${EFFECTIVE_TDR_DIR}\` |
-| Coordinates file | \`${EFFECTIVE_COORD_FILE}\` |
-
-MDEOF
-fi
-
-cat >> "${REPORT_PATH}" << MDEOF
-
-## Shell Launch Arguments
-
-| Argument | Effective Value |
-|----------|----------------|
-| data-source | \`${EFFECTIVE_DS}\` |
-| scenario | \`${SCENARIO}\` |
-| mode | \`${MODE}\` |
-| nx | \`${NX}\` |
-| ny | \`${NY}\` |
-| config | \`${CONFIG_FILE:-default}\` |
-| drop-coils | \`${DROP_COILS[*]:-none}\` |
-| homogeneous | \`${HOMOGENEOUS}\` |
-| num-swc-positions | \`${NUM_SWC_POSITIONS:-scenario default}\` |
-| swc-depths | \`${SWC_DEPTHS[*]:-scenario default}\` |
-| window-m | \`${WINDOW_M:-scenario default}\` |
-| beta | \`${BETA[*]:-scenario default}\` |
-| gamma | \`${GAMMA:-scenario default}\` |
-| env | \`${VENV_PATH:-none}\` |
-| python | \`${PYTHON}\` |
-
----
-
-MDEOF
-
-log "Report initialised → ${REPORT_PATH}"
-
-# ---------------------------------------------------------------------------
 # Build the argument list for run_pipeline.py.
 # --nx / --ny are forwarded so run_pipeline can pass them to
 # generate_time_lapse_dataset(); they are silently ignored by
@@ -575,6 +610,17 @@ if ${HOMOGENEOUS}; then
     HOMOGENEOUS_ARGS=(--homogeneous)
 fi
 
+GRADIENT_ARGS=()
+if ${FULL_RANGE_GRADIENT}; then
+    GRADIENT_ARGS+=(--full-range-gradient)
+fi
+if [[ -n "${XY_Z_BLEND}" ]]; then
+    GRADIENT_ARGS+=(--xy-z-blend "${XY_Z_BLEND}")
+fi
+if ${INVERT_Z_GRADIENT}; then
+    GRADIENT_ARGS+=(--invert-z-gradient)
+fi
+
 SWC_OVERRIDE_ARGS=()
 if [[ -n "${NUM_SWC_POSITIONS}" ]]; then
     SWC_OVERRIDE_ARGS+=(--num-swc-positions "${NUM_SWC_POSITIONS}")
@@ -585,6 +631,14 @@ fi
 if [[ -n "${WINDOW_M}" ]]; then
     SWC_OVERRIDE_ARGS+=(--window-m "${WINDOW_M}")
 fi
+if [[ -n "${PROBE_XYZ}" ]]; then
+    SWC_OVERRIDE_ARGS+=(--probe-xyz "${PROBE_XYZ}")
+fi
+
+PLOT_ARGS=()
+if [[ -n "${XY_RENDER_MODE}" ]]; then
+    PLOT_ARGS+=(--xy-render-mode "${XY_RENDER_MODE}")
+fi
 
 INVERSION_OVERRIDE_ARGS=()
 if [[ ${#BETA[@]} -gt 0 ]]; then
@@ -594,6 +648,90 @@ if [[ -n "${GAMMA}" ]]; then
     INVERSION_OVERRIDE_ARGS+=(--gamma "${GAMMA}")
 fi
 
+# ---------------------------------------------------------------------------
+# Shell-level report header (written to a temp file for now).
+#
+# run_pipeline.py (via scenario_loader) is the sole authority on where this
+# run's output actually lands -- it now numbers each run's own folder as
+# "<seq>_<scenario>" under the scenario's configured output_dir. Rather
+# than re-deriving/guessing that path here (which can silently drift out
+# of sync -- see next_run_output_dir()'s docstring), we let Python run
+# first, capture the "[OUTPUT_DIR] <path>" line it prints, and only then
+# write this header (plus the captured console log) into the real folder.
+# ---------------------------------------------------------------------------
+HEADER_TMP="$(mktemp)"
+trap 'rm -f "${HEADER_TMP}" "${RUN_LOG_TMP:-}"' EXIT
+
+cat > "${HEADER_TMP}" << MDEOF
+# EA-EM Pipeline Run — Shell Launch Summary
+
+_Companion to this run's main \`pipeline_report_*.md\` (written by
+run_pipeline.py itself) -- this file just records how it was launched._
+
+| Field | Value |
+|-------|-------|
+| Generated | $(date '+%Y-%m-%d %H:%M:%S') |
+| Launched by | \`run_pipeline.sh\` |
+| Data source | \`${EFFECTIVE_DS^^}\` |
+| Scenario | \`${SCENARIO}\` |
+| Mode | \`${MODE^^}\` |
+| Config file | \`${CONFIG_FILE:-${SCENARIO_JSON} (default)}\` |
+| Python | \`$(${PYTHON} --version 2>&1)\` |
+| Python path | \`$(command -v "${PYTHON}")\` |
+| Script | \`${PIPELINE_SCRIPT}\` |
+| Host | \`$(hostname)\` |
+| User | \`$(whoami)\` |
+| Git commit | \`$(git -C "${SCRIPT_DIR}" rev-parse --short HEAD 2>/dev/null || echo "n/a")\` |
+| Grid (2D) | \`${NX}×${NY}\` |
+
+MDEOF
+
+if [[ "${EFFECTIVE_DS}" == "real" ]]; then
+    cat >> "${HEADER_TMP}" << MDEOF
+## Real Data Sources
+
+| Path | Value |
+|------|-------|
+| EM directory | \`${EFFECTIVE_EM_DIR}\` |
+| TDR directory | \`${EFFECTIVE_TDR_DIR}\` |
+| Coordinates file | \`${EFFECTIVE_COORD_FILE}\` |
+
+MDEOF
+fi
+
+cat >> "${HEADER_TMP}" << MDEOF
+
+## Shell Launch Arguments
+
+| Argument | Effective Value |
+|----------|----------------|
+| data-source | \`${EFFECTIVE_DS}\` |
+| scenario | \`${SCENARIO}\` |
+| mode | \`${MODE}\` |
+| nx | \`${NX}\` |
+| ny | \`${NY}\` |
+| config | \`${CONFIG_FILE:-default}\` |
+| drop-coils | \`${DROP_COILS[*]:-none}\` |
+| homogeneous | \`${HOMOGENEOUS}\` |
+| num-swc-positions | \`${NUM_SWC_POSITIONS:-scenario default}\` |
+| swc-depths | \`${SWC_DEPTHS[*]:-scenario default}\` |
+| window-m | \`${WINDOW_M:-scenario default}\` |
+| beta | \`${BETA[*]:-scenario default}\` |
+| gamma | \`${GAMMA:-scenario default}\` |
+| env | \`${VENV_PATH:-none}\` |
+| python | \`${PYTHON}\` |
+
+---
+
+MDEOF
+
+# ---------------------------------------------------------------------------
+# Run the pipeline, streaming output live while also capturing it (so we
+# can pull the "[OUTPUT_DIR] <path>" line out afterwards).
+# ---------------------------------------------------------------------------
+RUN_LOG_TMP="$(mktemp)"
+
+set +e
 "${PYTHON}" "${PIPELINE_SCRIPT}" \
     --data-source "${EFFECTIVE_DS}" \
     --scenario "${SCENARIO}" \
@@ -601,14 +739,37 @@ fi
     "${REAL_DATA_ARGS[@]+"${REAL_DATA_ARGS[@]}"}" \
     "${DROP_COILS_ARGS[@]+"${DROP_COILS_ARGS[@]}"}" \
     "${HOMOGENEOUS_ARGS[@]+"${HOMOGENEOUS_ARGS[@]}"}" \
+    "${GRADIENT_ARGS[@]+"${GRADIENT_ARGS[@]}"}" \
     "${SWC_OVERRIDE_ARGS[@]+"${SWC_OVERRIDE_ARGS[@]}"}" \
+    "${PLOT_ARGS[@]+"${PLOT_ARGS[@]}"}" \
     "${INVERSION_OVERRIDE_ARGS[@]+"${INVERSION_OVERRIDE_ARGS[@]}"}" \
-    "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}"
+    "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
+    2>&1 | tee "${RUN_LOG_TMP}"
+EXIT_CODE=${PIPESTATUS[0]}
+set -e
 
-EXIT_CODE=$?
+# ---------------------------------------------------------------------------
+# Figure out where this run's output actually landed, and finalise the
+# shell-level report there.
+# ---------------------------------------------------------------------------
+OUTPUT_DIR="$(grep -m1 '^\[OUTPUT_DIR\] ' "${RUN_LOG_TMP}" | sed -E 's/^\[OUTPUT_DIR\] //')"
+if [[ -z "${OUTPUT_DIR}" || ! -d "${OUTPUT_DIR}" ]]; then
+    err "Could not determine this run's output_dir from the pipeline's console output (crashed before it was announced?). Saving the shell-level report/log under 'mfc2_outputs/' instead."
+    OUTPUT_DIR="mfc2_outputs"
+    mkdir -p "${OUTPUT_DIR}"
+fi
 
-# Append shell-level exit status to the report
+REPORT_TS="$(date '+%Y%m%d_%H%M%S')"
+REPORT_PATH="${OUTPUT_DIR}/pipeline_report_shell_${REPORT_TS}.md"
+mv "${HEADER_TMP}" "${REPORT_PATH}"
+trap - EXIT
+
 {
+    echo "## Full Console Output"
+    echo ""
+    echo '```'
+    cat "${RUN_LOG_TMP}"
+    echo '```'
     echo ""
     echo "## Shell Exit Status"
     echo ""
@@ -619,15 +780,17 @@ EXIT_CODE=$?
     fi
     echo ""
 } >> "${REPORT_PATH}"
+rm -f "${RUN_LOG_TMP}"
 
 log "=================================================="
 if [[ ${EXIT_CODE} -eq 0 ]]; then
     log " Pipeline completed successfully  (data: ${EFFECTIVE_DS}, scenario: ${SCENARIO}, mode: ${MODE^^})"
-    log " Report written → ${REPORT_PATH}"
 else
     err " Pipeline exited with code ${EXIT_CODE}  (data: ${EFFECTIVE_DS}, scenario: ${SCENARIO}, mode: ${MODE^^})"
-    err " Partial report at → ${REPORT_PATH}"
 fi
+log " Output dir → ${OUTPUT_DIR}"
+log " Shell launch summary → ${REPORT_PATH}"
+log " (see ${OUTPUT_DIR}/pipeline_report_*.md for the main pipeline report)"
 log "=================================================="
 
 exit ${EXIT_CODE}

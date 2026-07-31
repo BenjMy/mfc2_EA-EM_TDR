@@ -403,6 +403,286 @@ def plot_ws_parameter_histograms(fits, best_fit, depths0, lab_p0, output_path):
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
 
+
+def plot_localized_sigma_s_profile(
+    localized_fit: "EMmethod.LocalizedPetroFit",
+    probe_x_coords: Sequence[float] | None = None,
+    probe_layer_indices: Sequence[int] | None = None,
+    params: Sequence[str] = ("sigma_s",),
+    output_path: str = "mfc2_outputs/petro_calibration_localized.png",
+) -> None:
+    """
+    Diagnostic for kernel-localized calibration (spatial_calibration_alternatives.md
+    §2): plots one or more WS parameters varying along the transect per
+    horizon, instead of the single flat value ``plot_petrophysical_calibration``
+    shows for the un-localized fit. This is the plot that actually makes the
+    point of localizing visible — a flat line would mean the kernel made no
+    difference; a curve that dips toward each nearby probe's own value and
+    relaxes toward the horizon-wide behaviour far from any probe is the
+    expected, useful result.
+
+    Historically this only ever plotted sigma_s. It now accepts ``params``
+    so sigma_w can be plotted alongside it — important whenever a scenario's
+    ``ws_fixed_params`` leaves BOTH sigma_w and sigma_s free (e.g. the
+    default 2d/2d_dense_tdr scenarios): since they trade off against each
+    other in the WS forward model (theta ~ (sigma_w + sigma_s)), a
+    sigma_s-only plot can't show whether the localization is actually
+    pushing the non-identifiability into sigma_w instead. a/m are also
+    accepted for completeness (e.g. if a scenario frees them), though they
+    don't share sigma_w/sigma_s's [mS/m] units — mixing dimensionless and
+    conductivity params on one axis is visually confusing, so prefer
+    calling this once per unit-compatible group rather than passing all
+    four at once.
+
+    Note: if the fit was produced with 2-D Euclidean (x, y) localization
+    (``point_y_coords`` given), this plot still projects onto x only —
+    two targets at the same x but different y can show different values
+    at the same x position on this plot. Fine for a 1-D transect; for a
+    genuine 2-D grid, treat this as a diagnostic slice, not the full
+    picture, and inspect ``localized_fit.horizon_fits[i].target_y``
+    alongside it if a true 2-D map is needed (see ``plot_localized_sigma_s_map``,
+    which already supports any of a/m/sigma_w/sigma_s via its own
+    ``param`` argument).
+
+    Un-calibrated targets (``is_calibrated=False`` — no observation fell
+    within ``2*bandwidth`` of that point) are drawn as a faint dotted
+    segment, matching how ``plot_petrophysical_calibration`` marks
+    uncalibrated horizons.
+
+    Parameters
+    ----------
+    localized_fit : EMmethod.LocalizedPetroFit
+        Typically the best/selected ensemble member's localized fit.
+    probe_x_coords : sequence of float, optional
+        x-coordinates of the TDR probes, drawn as vertical reference lines
+        so it's visually clear where the real data anchors the curve.
+    probe_layer_indices : sequence of int, optional
+        Horizon index for each probe in ``probe_x_coords`` — used so each
+        probe's marker only appears on its own horizon's panel. If omitted,
+        every probe line is drawn on every panel.
+    params : sequence of str
+        Which fitted parameter(s) to plot, each one of ``"a"``, ``"m"``,
+        ``"sigma_w"``, ``"sigma_s"``. Default ``("sigma_s",)`` — unchanged
+        behaviour from before this argument existed. Pass e.g.
+        ``("sigma_w", "sigma_s")`` to overlay both on the same axes (they
+        share [mS/m] units, so this is the natural pairing).
+    output_path : str
+        Where to save the figure.
+    """
+    _valid_params = ("a", "m", "sigma_w", "sigma_s")
+    params = tuple(params)
+    for p in params:
+        if p not in _valid_params:
+            raise ValueError(f"params entries must be one of {_valid_params}, got {p!r}.")
+    if not params:
+        raise ValueError("params must contain at least one parameter name.")
+
+    _param_labels = {
+        "a": "$a$", "m": "$m$",
+        "sigma_w": "$\\sigma_w$ [mS/m]", "sigma_s": "$\\sigma_s$ [mS/m]",
+    }
+    _param_symbols = {"a": "$a$", "m": "$m$", "sigma_w": "$\\sigma_w$", "sigma_s": "$\\sigma_s$"}
+    # Distinct linestyle/marker per parameter so overlaid curves stay
+    # visually distinguishable even though they share the horizon's color.
+    _param_styles = {
+        "sigma_s": dict(linestyle='-', marker='o'),
+        "sigma_w": dict(linestyle='--', marker='s'),
+        "a": dict(linestyle='-.', marker='^'),
+        "m": dict(linestyle=':', marker='D'),
+    }
+
+    num_horizons = len(localized_fit.horizon_fits)
+    colors = plt.cm.viridis(np.linspace(0.15, 0.85, num_horizons))
+
+    fig, axes = plt.subplots(
+        num_horizons, 1, figsize=(8, 3 * num_horizons), squeeze=False, sharex=True,
+    )
+
+    for h_idx, hz in enumerate(localized_fit.horizon_fits):
+        ax = axes[h_idx][0]
+        x = hz.target_x
+        calibrated = hz.is_calibrated
+        order = np.argsort(x)
+        x_sorted, cal_sorted = x[order], calibrated[order]
+
+        for p_i, param in enumerate(params):
+            y = getattr(hz, param)
+            y_sorted = y[order]
+
+            # Draw calibrated stretches solid, uncalibrated stretches
+            # faint/dotted, by masking rather than filtering, so gaps in
+            # coverage are visible as gaps rather than silently bridged.
+            y_cal = np.where(cal_sorted, y_sorted, np.nan)
+            y_uncal = np.where(~cal_sorted, y_sorted, np.nan)
+
+            style = _param_styles.get(param, dict(linestyle='-', marker='o'))
+            ax.plot(x_sorted, y_cal, color=colors[h_idx], linewidth=2,
+                    markersize=4, label=f'Localized {_param_symbols[param]}(x) — Hz {h_idx}',
+                    **style)
+            ax.plot(x_sorted, y_uncal, color=colors[h_idx], linewidth=1.5,
+                    linestyle=':', alpha=0.45, marker='x', markersize=5,
+                    label=(f'Uncalibrated (no obs within kernel support)'
+                           if p_i == 0 else None))
+
+        if probe_x_coords is not None:
+            for p_i, px in enumerate(probe_x_coords):
+                if (probe_layer_indices is not None
+                        and probe_layer_indices[p_i] != h_idx):
+                    continue
+                ax.axvline(px, color='gray', linestyle='--', alpha=0.5,
+                           linewidth=1)
+
+        if len(params) == 1:
+            ax.set_ylabel(_param_labels[params[0]], fontsize=10)
+        else:
+            ax.set_ylabel(" / ".join(_param_labels[p] for p in params), fontsize=10)
+        ax.set_title(
+            f'Horizon {h_idx} — bandwidth c={hz.bandwidth:g}', fontsize=10,
+        )
+        ax.grid(True, linestyle=':', alpha=0.6)
+        ax.legend(loc='best', fontsize=8)
+
+    axes[-1][0].set_xlabel('Along-transect position x', fontsize=10)
+    _param_join = ", ".join(_param_symbols[p] for p in params)
+    fig.suptitle(
+        f'Step 2 (localized): {_param_join} varying continuously along the '
+        'transect per horizon, instead of one flat value per horizon',
+        fontsize=10, y=1.01,
+    )
+    fig.tight_layout()
+    plt.savefig(output_path, dpi=200, bbox_inches='tight')
+    plt.close()
+    _param_names = "/".join(params)
+    print(f"[PLOT] Localized {_param_names}(x) profile exported to '{output_path}'")
+
+
+def plot_localized_sigma_s_map(
+    localized_fit: "EMmethod.LocalizedPetroFit",
+    probe_x_coords: Sequence[float] | None = None,
+    probe_y_coords: Sequence[float] | None = None,
+    probe_layer_indices: Sequence[int] | None = None,
+    param: str = "sigma_s",
+    output_path: str = "mfc2_outputs/petro_calibration_localized_map.png",
+) -> None:
+    """
+    True 2-D map of a kernel-localized WS parameter (default sigma_s), one
+    panel per horizon, plotting against BOTH ``target_x`` and ``target_y`` --
+    the full-picture companion to ``plot_localized_sigma_s_profile``, which
+    only projects onto x and can't distinguish two targets at the same x but
+    different y.
+
+    Requires the fit to have been produced with ``point_y_coords`` (2-D
+    Euclidean localization) -- i.e. every ``horizon_fits[i].target_y`` is
+    not ``None``. Raises a clear error otherwise rather than silently
+    drawing a meaningless 1-D map.
+
+    Uncalibrated targets (``is_calibrated=False``) are drawn as small gray
+    x-markers instead of being colored by value, so missing coverage reads
+    as a gap rather than a misleadingly-colored point.
+
+    Parameters
+    ----------
+    localized_fit : EMmethod.LocalizedPetroFit
+        Typically the best/selected ensemble member's localized fit, from a
+        call to ``run_petro_localized(..., point_y_coords=...)``.
+    probe_x_coords, probe_y_coords : sequence of float, optional
+        TDR probe coordinates, overlaid as black triangles so it's visually
+        clear where the real observations anchor the map.
+    probe_layer_indices : sequence of int, optional
+        Horizon index for each probe -- restricts each probe marker to its
+        own horizon's panel. If omitted, every probe is shown on every panel.
+    param : str
+        Which fitted parameter to map: one of ``"a"``, ``"m"``,
+        ``"sigma_w"``, ``"sigma_s"``. Default ``"sigma_s"`` (the parameter
+        the rest of this module's diagnostics focus on).
+    output_path : str
+        Where to save the figure.
+    """
+    if param not in ("a", "m", "sigma_w", "sigma_s"):
+        raise ValueError(f"param must be one of a/m/sigma_w/sigma_s, got {param!r}.")
+
+    num_horizons = len(localized_fit.horizon_fits)
+    for hz in localized_fit.horizon_fits:
+        if hz.target_y is None:
+            raise ValueError(
+                "plot_localized_sigma_s_map requires a fit produced with "
+                "point_y_coords (2-D Euclidean localization) -- this fit's "
+                "target_y is None (1-D along-transect localization was "
+                "used). Use plot_localized_sigma_s_profile instead."
+            )
+
+    fig, axes = plt.subplots(
+        1, num_horizons, figsize=(5.5 * num_horizons + 1.2, 5),
+        squeeze=False, sharex=True, sharey=True,
+    )
+
+    # Shared color scale across horizons (only over calibrated targets) so
+    # panels are visually comparable rather than each auto-scaling to its
+    # own range.
+    all_vals = np.concatenate([
+        getattr(hz, param)[hz.is_calibrated] for hz in localized_fit.horizon_fits
+        if np.any(hz.is_calibrated)
+    ]) if any(np.any(hz.is_calibrated) for hz in localized_fit.horizon_fits) else np.array([0.0, 1.0])
+    vmin, vmax = float(np.min(all_vals)), float(np.max(all_vals))
+    if vmin == vmax:
+        vmin, vmax = vmin - 1.0, vmax + 1.0
+
+    _param_labels = {
+        "a": "$a$", "m": "$m$", "sigma_w": "$\\sigma_w$ [mS/m]",
+        "sigma_s": "$\\sigma_s$ [mS/m]",
+    }
+
+    sc = None
+    for h_idx, hz in enumerate(localized_fit.horizon_fits):
+        ax = axes[0][h_idx]
+        vals = getattr(hz, param)
+        cal = hz.is_calibrated
+
+        if np.any(cal):
+            sc = ax.scatter(
+                hz.target_x[cal], hz.target_y[cal], c=vals[cal],
+                cmap="viridis", vmin=vmin, vmax=vmax, s=28,
+                edgecolors="none",
+            )
+        if np.any(~cal):
+            ax.scatter(
+                hz.target_x[~cal], hz.target_y[~cal], marker="x",
+                color="gray", s=18, alpha=0.5, label="Uncalibrated",
+            )
+
+        if probe_x_coords is not None and probe_y_coords is not None:
+            for p_i, (px, py) in enumerate(zip(probe_x_coords, probe_y_coords)):
+                if (probe_layer_indices is not None
+                        and probe_layer_indices[p_i] != h_idx):
+                    continue
+                ax.scatter([px], [py], marker="^", color="black", s=45,
+                           zorder=5, label="TDR probe" if p_i == 0 else None)
+
+        ax.set_title(f"Horizon {h_idx} — bandwidth c={hz.bandwidth:g}", fontsize=10)
+        ax.set_xlabel("x", fontsize=10)
+        ax.set_aspect("equal", adjustable="box")
+        ax.grid(True, linestyle=":", alpha=0.4)
+        if h_idx == 0:
+            ax.set_ylabel("y", fontsize=10)
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            by_label = dict(zip(labels, handles))
+            ax.legend(by_label.values(), by_label.keys(), loc="best", fontsize=7)
+
+    if sc is not None:
+        cbar = fig.colorbar(sc, ax=axes, fraction=0.035, pad=0.02)
+        cbar.set_label(_param_labels[param], fontsize=10)
+
+    fig.suptitle(
+        f"Step 2 (localized, 2-D): {_param_labels[param]} varying over the "
+        "full survey grid per horizon",
+        fontsize=10, y=1.02,
+    )
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"[PLOT] Localized {param}(x, y) map exported to '{output_path}'")
+
+
 # ==========================================================================
 # STANDALONE EXECUTION ENGINE
 # ==========================================================================
@@ -634,3 +914,524 @@ def run_petro(
         )
 
     return fits
+
+
+def plot_petrophysical_calibration_localized_overlay(
+    ec_values: np.ndarray,
+    theta_obs: np.ndarray,
+    petro_fit: "EMmethod.PetroFit",
+    localized_fit: "EMmethod.LocalizedPetroFit",
+    probe_x_coords: Sequence[float],
+    probe_layer_indices: Sequence[int] | None = None,
+    probe_y_coords: Sequence[float] | None = None,
+    output_path: str = "mfc2_outputs/petro_calibration_localized_overlay.png",
+) -> None:
+    """
+    Probe-level companion to ``petro_calibration.png``: draws the single
+    global Waxman-Smits curve per horizon (``petro_fit`` — exactly what
+    ``plot_petrophysical_calibration`` shows) together with, for every
+    probe, the WS curve implied by ITS OWN nearest kernel-localized target
+    (``localized_fit``) — a thin, semi-transparent line in the same
+    horizon color. A tight fan hugging the global curve means localization
+    barely changed anything at that probe; a fan that spreads out means
+    the local fit found meaningfully different parameters nearby.
+
+    This is deliberately different from ``plot_localized_sigma_s_profile``/
+    ``plot_localized_sigma_s_map``, which show a parameter varying in
+    SPACE (x, or x/y). This instead shows the effect in the SAME
+    EC-vs-theta axes as the original calibration cross-plot, anchored at
+    each probe's actual observation — i.e. "how much does localizing
+    change the curve THIS probe's own data point sits on", rather than
+    "how does sigma_s vary along the transect".
+
+    Parameters
+    ----------
+    ec_values, theta_obs : np.ndarray
+        Same convention already used by ``plot_petrophysical_calibration``
+        for its own ``ec_values``/``theta_obs`` (i.e. exactly what you'd
+        pass there — ``ec_extracted`` from ``_extract_ec_for_plots`` and
+        ``best_fit.observed_theta``). ``probe_layer_indices`` must be the
+        SAME array already used to mask ``ec_values``/``theta_obs`` in
+        that function, since this reuses the identical masking convention
+        to route each probe to its horizon and its own local target.
+    petro_fit : EMmethod.PetroFit
+        The global (un-localized) fit — same object passed to
+        ``plot_petrophysical_calibration``.
+    localized_fit : EMmethod.LocalizedPetroFit
+        Typically the same-ranked ensemble member's localized fit (e.g.
+        ``fits_step2_localized[0]`` alongside ``fits_step2[0]``).
+    probe_x_coords : sequence of float
+        Each probe's x-coordinate, in the SAME order/convention as
+        ``probe_layer_indices`` above — e.g. what ``run_petro_localized``
+        already computes internally as
+        ``np.asarray(point_x_coords)[sample_positions]``.
+    probe_layer_indices : sequence of int, optional
+        Horizon index for each probe, same order as ``probe_x_coords``.
+        Required to route probes to the right horizon and find each
+        probe's nearest local target; if omitted, the overlay is skipped
+        and only the global curves are drawn (with a printed warning),
+        same fallback spirit as ``plot_petrophysical_calibration``.
+    probe_y_coords : sequence of float, optional
+        Each probe's y-coordinate, same order, when the localized fit
+        used 2-D Euclidean localization (i.e.
+        ``localized_fit.horizon_fits[i].target_y`` is not None). Ignored
+        for 1-D along-transect localization.
+    output_path : str
+        Where to save the figure.
+
+    Notes
+    -----
+    If ``probe_x_coords``/``probe_layer_indices`` and ``ec_values``/
+    ``theta_obs`` turn out NOT to be mutually aligned in your pipeline's
+    actual sample ordering (this function assumes the same convention
+    ``plot_petrophysical_calibration`` already relies on — it was not
+    possible to fully verify against ``geometry_utils.route_ec_to_horizons``,
+    which wasn't available when this was written), the symptom would be
+    scatter points and local curves that visibly don't correspond to the
+    same probes; check that first if the plot looks wrong.
+    """
+    num_horizons = len(petro_fit.horizon_fits)
+    colors = plt.cm.viridis(np.linspace(0.15, 0.85, num_horizons))
+    fig, ax = plt.subplots(figsize=(7.5, 6))
+
+    ec_values = np.asarray(ec_values, dtype=float)
+    theta_obs = np.asarray(theta_obs, dtype=float)
+    ec_line_full = np.linspace(ec_values.min() * 0.8, ec_values.max() * 1.2, 100)
+
+    if probe_layer_indices is None:
+        print(
+            "[PLOT][WARN] plot_petrophysical_calibration_localized_overlay: "
+            "probe_layer_indices not given -- cannot route probes to "
+            "per-horizon local targets. Drawing global curves only."
+        )
+        probe_layer_indices_arr = None
+    else:
+        probe_layer_indices_arr = np.asarray(probe_layer_indices)
+
+    probe_x_coords = np.asarray(probe_x_coords, dtype=float)
+    use_2d = probe_y_coords is not None
+    if use_2d:
+        probe_y_coords = np.asarray(probe_y_coords, dtype=float)
+
+    local_by_horizon = {hz.horizon: hz for hz in localized_fit.horizon_fits}
+
+    for hz in petro_fit.horizon_fits:
+        h_idx = hz.horizon
+        color = colors[h_idx]
+
+        # Global (un-localized) curve -- bold, exactly as in
+        # plot_petrophysical_calibration.
+        theta_global = EMmethod.waxman_smits_theta(
+            ec_line_full, hz.a, hz.m, hz.sigma_w, hz.sigma_s
+        )
+        is_calibrated = getattr(hz, 'is_calibrated', True)
+        ax.plot(
+            ec_line_full, theta_global, color=color, linewidth=2.5, zorder=3,
+            linestyle=('-' if is_calibrated else ':'),
+            alpha=(1.0 if is_calibrated else 0.45),
+            label=(
+                f'Global fit — Hz {h_idx} (a={hz.a:.2f}, m={hz.m:.2f}, '
+                f'\u03c3_w={hz.sigma_w:.1f}, \u03c3_s={hz.sigma_s:.1f})'
+                if is_calibrated else
+                f'Global fit — Hz {h_idx} (UNCALIBRATED, prior only)'
+            ),
+        )
+
+        if probe_layer_indices_arr is None:
+            continue
+
+        mask = probe_layer_indices_arr == h_idx
+        if not np.any(mask):
+            continue
+
+        # Observed data points for this horizon.
+        ax.scatter(
+            ec_values[mask], theta_obs[mask], color=color, edgecolor='black',
+            s=70, zorder=4, label=f'Observed data — Hz {h_idx}',
+        )
+
+        loc_hz = local_by_horizon.get(h_idx)
+        if loc_hz is None:
+            continue
+
+        first_local_label_used = False
+        for p_i in np.where(mask)[0]:
+            px = probe_x_coords[p_i]
+            if use_2d and loc_hz.target_y is not None:
+                py = probe_y_coords[p_i]
+                dist = np.sqrt((loc_hz.target_x - px) ** 2 + (loc_hz.target_y - py) ** 2)
+            else:
+                dist = np.abs(loc_hz.target_x - px)
+            nearest = int(np.argmin(dist))
+
+            if not loc_hz.is_calibrated[nearest]:
+                continue  # falls back to the prior -- skip to avoid clutter
+
+            theta_local = EMmethod.waxman_smits_theta(
+                ec_line_full, loc_hz.a[nearest], loc_hz.m[nearest],
+                loc_hz.sigma_w[nearest], loc_hz.sigma_s[nearest],
+            )
+            ax.plot(
+                ec_line_full, theta_local, color=color, linewidth=0.8,
+                linestyle='--', alpha=0.5, zorder=2,
+                label=(f'Local per-probe fits — Hz {h_idx}'
+                       if not first_local_label_used else None),
+            )
+            first_local_label_used = True
+
+    ax.set_title(
+        "Step 2 (localized overlay): global fit vs. each probe's own "
+        "kernel-localized fit", fontsize=11, pad=12,
+    )
+    ax.set_xlabel("Inverted Bulk Electrical Conductivity (EC) [mS/m]", fontsize=10)
+    ax.set_ylabel("Volumetric Water Content ($\\theta$) [m$^3$/m$^3$]", fontsize=10)
+    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.legend(loc='upper left', frameon=True, fontsize=7, bbox_to_anchor=(1.02, 1))
+
+    fig.tight_layout()
+    plt.savefig(output_path, dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"[PLOT] Localized overlay calibration graph exported to '{output_path}'")
+
+
+def run_petro_localized(
+    models: np.ndarray,
+    sample_positions: Sequence[int],
+    sample_times: Sequence[int],
+    theta_obs: np.ndarray,
+    point_x_coords: Sequence[float],
+    bandwidth: float,
+    point_y_coords: Sequence[float] | None = None,
+    depths0: list[float] | None = None,
+    output_dir: str = "mfc2_outputs",
+    generate_plots: bool = True,
+    probe_layer_indices: Sequence[int] | None = None,
+    target_indices: Sequence[int] | None = None,
+    fixed_params: dict[str, bool] | None = None,
+    lab_p0: np.ndarray | list | None = None,
+    theta_obs_std: float | Sequence[float] | None = None,
+    global_fit: "EMmethod.PetroFit | None" = None,
+) -> list["EMmethod.LocalizedPetroFit"]:
+    """
+    Step 2, kernel-localized variant (spatial_calibration_alternatives.md
+    §2) — sibling to ``run_petro``, not a replacement. Where ``run_petro``
+    fits one scalar [a, m, sigma_w, sigma_s] per horizon and broadcasts it
+    to every EM point, this fits a SEPARATE parameter set at every target
+    location, weighting every TDR observation in that horizon by a
+    Gaspari-Cohn kernel of its distance to the target instead of a hard
+    per-position bucket. Horizon routing (probe_layer_indices / the
+    strided heuristic) is unchanged — only the spatial pooling WITHIN a
+    horizon differs from ``run_petro``.
+
+    Call this instead of ``run_petro`` when you want sigma_s (etc.) to vary
+    continuously along the transect rather than being flat per horizon —
+    in particular for the sparse-TDR-coverage case where most EM points
+    have no local probe at all and currently just inherit the pure global
+    value with no spatial information from nearby probes.
+
+    Parameters
+    ----------
+    models, sample_positions, sample_times, theta_obs, depths0, output_dir,
+    generate_plots, probe_layer_indices, fixed_params, lab_p0, theta_obs_std
+        Same meaning as in ``run_petro``.
+    point_x_coords : sequence of float, length num_measured_points
+        Along-transect x-coordinate of every EM measured point (the same
+        axis ``sample_positions`` indexes into). Forwarded to
+        ``EMmethod.calibrate_petrophysical_relationship_localized``.
+    point_y_coords : sequence of float, length num_measured_points, optional
+        Cross-transect y-coordinate of every EM measured point. When given,
+        localization uses 2-D Euclidean distance (x, y) instead of the
+        signed 1-D x-difference — use this for genuine 2-D survey grids
+        (``mode == "2d"``) so probes that are close in y but far in x (or
+        vice versa) aren't ignored. ``None`` (default) keeps the original
+        1-D-transect behaviour. Forwarded unchanged to
+        ``EMmethod.calibrate_petrophysical_relationship_localized``.
+    bandwidth : float
+        Localization radius ``c`` (same units as ``point_x_coords``). No
+        default — pick empirically (sweep a few candidates, check
+        validation RMSE), the same way you'd have picked a fixed-shrinkage
+        constant.
+    target_indices : sequence of int, optional
+        Which EM points to produce a localized fit for. Defaults to every
+        point in ``point_x_coords``.
+    global_fit : EMmethod.PetroFit, optional
+        The un-localized fit for the SAME ensemble member (typically
+        ``fits_step2[0]``, i.e. the rank-1 member also used as
+        ``best_fit`` here). When given, additionally generates
+        ``petro_calibration_localized_overlay.png`` via
+        ``plot_petrophysical_calibration_localized_overlay`` — each
+        probe's own local WS curve overlaid on the single global curve, in
+        the same EC-vs-theta axes as ``petro_calibration.png``. ``None``
+        (default) skips this — unchanged behaviour from before this
+        parameter existed.
+
+    Returns
+    -------
+    list of EMmethod.LocalizedPetroFit, length ensemble_size
+
+    Notes
+    -----
+    The existing per-horizon diagnostic plots (``plot_petrophysical_calibration``,
+    ``plot_dual_depth_profile``, ``plot_one_to_one_validation``,
+    ``plot_ws_parameter_histograms``) all assume one scalar parameter set
+    per horizon and are NOT called here — they don't generalize cleanly to
+    a per-target array. Instead this generates
+    ``plot_localized_sigma_s_profile`` (now covering whichever of
+    sigma_w/sigma_s are free per ``fixed_params``, not sigma_s alone), and,
+    when ``global_fit`` is passed, ``plot_petrophysical_calibration_localized_overlay``
+    — the probe-anchored companion to ``petro_calibration.png``. If you also
+    want the flat-value diagnostics for comparison, run ``run_petro``
+    alongside this on the same data and view both sets of plots.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    timelapse = models.ndim == 4
+    if timelapse:
+        n_time = models.shape[1]
+        print(f"[STEP 2 LOCALIZED] Time-lapse mode: {n_time} survey epochs detected.")
+    else:
+        print("[STEP 2 LOCALIZED] Single-time mode.")
+
+    if point_y_coords is not None:
+        print(f"[STEP 2 LOCALIZED] Using bandwidth c={bandwidth:g}, "
+              f"2-D Euclidean (x, y) distance.")
+    else:
+        print(f"[STEP 2 LOCALIZED] Using bandwidth c={bandwidth:g}, "
+              f"1-D along-transect (x) distance.")
+
+    fits = EMmethod.calibrate_petrophysical_relationship_localized(
+        models=models,
+        sample_positions=list(sample_positions),
+        sample_times=list(sample_times),
+        theta_obs=theta_obs,
+        point_x_coords=point_x_coords,
+        point_y_coords=point_y_coords,
+        bandwidth=bandwidth,
+        target_indices=target_indices,
+        depths0=depths0,
+        probe_layer_indices=probe_layer_indices,
+        fixed_params=fixed_params,
+        lab_p0=lab_p0,
+        theta_obs_std=theta_obs_std,
+    )
+    print(f"[STEP 2 LOCALIZED] Completed localized parameter extraction for "
+          f"{len(fits)} ensemble members.")
+
+    best_fit = fits[0]
+    print("[STEP 2 LOCALIZED] Best-fit sigma_s(x) range per horizon "
+          "(over calibrated targets only):")
+    for hz in best_fit.horizon_fits:
+        if np.any(hz.is_calibrated):
+            s_cal = hz.sigma_s[hz.is_calibrated]
+            print(
+                f"  Horizon {hz.horizon}: sigma_s in "
+                f"[{s_cal.min():.2f}, {s_cal.max():.2f}] mS/m "
+                f"across {hz.is_calibrated.sum()}/{len(hz.is_calibrated)} "
+                f"calibrated target(s), mean RMSE="
+                f"{np.nanmean(hz.rmse):.4f}"
+            )
+        else:
+            print(f"  Horizon {hz.horizon}: no target within kernel support "
+                  f"of any observation — every point fell back to the prior.")
+
+    if generate_plots:
+        print("[STEP 2 LOCALIZED] Generating diagnostic plot...")
+
+        probe_x_coords = np.asarray(point_x_coords)[np.asarray(list(sample_positions))]
+        probe_y_coords = (
+            np.asarray(point_y_coords)[np.asarray(list(sample_positions))]
+            if point_y_coords is not None else None
+        )
+
+        # Which conductivity params to show on the sigma_s(x) profile: both
+        # sigma_w and sigma_s when both are free (the case that actually
+        # motivated adding this -- their non-identifiability trade-off is
+        # invisible if only sigma_s is plotted), otherwise whichever single
+        # one is free, falling back to sigma_s alone if both happen to be
+        # fixed (matches the original default so the plot still renders
+        # something rather than nothing).
+        _fixed = fixed_params or {}
+        _free_conductivity_params = tuple(
+            p for p in ("sigma_w", "sigma_s") if not _fixed.get(p, False)
+        )
+        if not _free_conductivity_params:
+            _free_conductivity_params = ("sigma_s",)
+
+        plot_localized_sigma_s_profile(
+            localized_fit=best_fit,
+            probe_x_coords=probe_x_coords,
+            probe_layer_indices=probe_layer_indices,
+            params=_free_conductivity_params,
+            output_path=os.path.join(output_dir, "petro_calibration_localized.png"),
+        )
+
+        if point_y_coords is not None:
+            plot_localized_sigma_s_map(
+                localized_fit=best_fit,
+                probe_x_coords=probe_x_coords,
+                probe_y_coords=probe_y_coords,
+                probe_layer_indices=probe_layer_indices,
+                output_path=os.path.join(output_dir, "petro_calibration_localized_map.png"),
+            )
+
+        if global_fit is not None:
+            ec_extracted, _ = _extract_ec_for_plots(
+                models=models,
+                sample_positions=sample_positions,
+                sample_times=sample_times,
+                probe_layer_indices=probe_layer_indices,
+            )
+            plot_petrophysical_calibration_localized_overlay(
+                ec_values=ec_extracted,
+                theta_obs=global_fit.observed_theta,
+                petro_fit=global_fit,
+                localized_fit=best_fit,
+                probe_x_coords=probe_x_coords,
+                probe_y_coords=probe_y_coords,
+                probe_layer_indices=probe_layer_indices,
+                output_path=os.path.join(output_dir, "petro_calibration_localized_overlay.png"),
+            )
+        else:
+            print(
+                "[STEP 2 LOCALIZED] global_fit not passed -- skipping "
+                "petro_calibration_localized_overlay.png (pass fits_step2[0] "
+                "as global_fit to enable it)."
+            )
+
+    return fits
+
+
+# ==========================================================================
+# BANDWIDTH SELECTION — leave-one-probe-out CV sweep
+# ==========================================================================
+
+def plot_bandwidth_sweep(
+    sweep_results: list["EMmethod.BandwidthSweepResult"],
+    output_path: str = "mfc2_outputs/bandwidth_sweep.png",
+) -> None:
+    """
+    Plots pooled LOO-CV RMSE vs. candidate bandwidth, with the recommended
+    (minimum-RMSE) bandwidth marked. A secondary panel shows the number of
+    folds that fell back to the prior per bandwidth (large at small
+    bandwidths is expected -- see ``EMmethod.sweep_localization_bandwidth``).
+    """
+    bw = np.array([r.bandwidth for r in sweep_results])
+    rmse = np.array([r.loo_rmse for r in sweep_results])
+    n_fallback = np.array([r.n_fallback for r in sweep_results])
+    n_folds = np.array([r.n_folds for r in sweep_results])
+
+    valid = ~np.isnan(rmse)
+    best_idx = int(np.argmin(np.where(valid, rmse, np.inf))) if np.any(valid) else 0
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7, 6.5), sharex=True)
+
+    ax1.plot(bw, rmse, marker='o', color='tab:blue', linewidth=1.8)
+    ax1.axvline(bw[best_idx], color='tab:red', linestyle='--', alpha=0.7,
+                label=f'Recommended c={bw[best_idx]:g} '
+                      f'(LOO-CV RMSE={rmse[best_idx]:.5f})')
+    ax1.set_ylabel('Pooled LOO-CV RMSE [m³/m³]', fontsize=10)
+    ax1.set_title('Localization bandwidth sweep — leave-one-probe-out validation',
+                   fontsize=11)
+    ax1.grid(True, linestyle=':', alpha=0.5)
+    ax1.legend(loc='best', fontsize=9)
+
+    ax2.bar(bw, n_fallback, width=(bw.max() - bw.min()) * 0.04 if len(bw) > 1 else 1.0,
+            color='tab:orange', alpha=0.7, label='Folds falling back to prior')
+    ax2.set_xlabel('Bandwidth c', fontsize=10)
+    ax2.set_ylabel('# LOO folds\nfalling back to prior', fontsize=9)
+    ax2.grid(True, linestyle=':', alpha=0.5)
+    ax2.legend(loc='best', fontsize=8)
+
+    fig.tight_layout()
+    plt.savefig(output_path, dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"[PLOT] Bandwidth sweep exported to '{output_path}'")
+
+
+def run_bandwidth_sweep(
+    sigma_b_reference: np.ndarray,
+    sample_positions: Sequence[int],
+    sample_times: Sequence[int],
+    theta_obs: np.ndarray,
+    point_x_coords: Sequence[float],
+    bandwidths: Sequence[float],
+    point_y_coords: Sequence[float] | None = None,
+    output_dir: str = "mfc2_outputs",
+    generate_plots: bool = True,
+    probe_layer_indices: Sequence[int] | None = None,
+    lab_p0: np.ndarray | list | None = None,
+    fixed_params: dict[str, bool] | None = None,
+    theta_obs_std: float | Sequence[float] | None = None,
+) -> tuple[list["EMmethod.BandwidthSweepResult"], float]:
+    """
+    Driver for ``EMmethod.sweep_localization_bandwidth`` — runs the
+    leave-one-probe-out CV sweep across ``bandwidths``, prints a per-
+    candidate summary, plots the sweep curve, and returns the recommended
+    bandwidth (minimum pooled LOO-CV RMSE).
+
+    Run this ONCE up front (against a single reference model, e.g. Step
+    2's rank-1 ensemble member) to pick ``ws_localized_bandwidth`` for the
+    scenario config — not as part of the per-run pipeline, since it's a
+    one-off tuning decision rather than something that needs to be redone
+    every pipeline run.
+
+    Parameters
+    ----------
+    sigma_b_reference, sample_positions, sample_times, theta_obs,
+    point_x_coords, point_y_coords, probe_layer_indices, lab_p0,
+    fixed_params, theta_obs_std
+        Same meaning as in ``EMmethod.sweep_localization_bandwidth`` /
+        ``run_petro_localized``.
+    bandwidths : sequence of float
+        Candidate values to sweep, e.g. ``np.linspace(1.0, 20.0, 10)``.
+
+    Returns
+    -------
+    sweep_results : list of EMmethod.BandwidthSweepResult
+    recommended_bandwidth : float
+        The bandwidth with the lowest pooled LOO-CV RMSE among candidates
+        that produced at least one valid fold.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"[BANDWIDTH SWEEP] Evaluating {len(list(bandwidths))} candidate "
+          f"bandwidth(s) via leave-one-probe-out CV"
+          f"{' (2-D Euclidean)' if point_y_coords is not None else ' (1-D x)'}.")
+
+    sweep_results = EMmethod.sweep_localization_bandwidth(
+        sigma_b_reference=sigma_b_reference,
+        sample_positions=sample_positions,
+        sample_times=sample_times,
+        theta_obs=theta_obs,
+        point_x_coords=point_x_coords,
+        point_y_coords=point_y_coords,
+        bandwidths=bandwidths,
+        probe_layer_indices=probe_layer_indices,
+        lab_p0=lab_p0,
+        fixed_params=fixed_params,
+        theta_obs_std=theta_obs_std,
+    )
+
+    for r in sweep_results:
+        print(
+            f"  c={r.bandwidth:8.3f}  LOO-CV RMSE={r.loo_rmse:.5f} m³/m³  "
+            f"({r.n_folds} valid folds, {r.n_fallback} fell back to prior)"
+        )
+
+    valid = [r for r in sweep_results if not np.isnan(r.loo_rmse)]
+    if not valid:
+        raise RuntimeError(
+            "[BANDWIDTH SWEEP] Every candidate bandwidth produced zero valid "
+            "LOO folds -- check probe_layer_indices / horizon routing."
+        )
+    best = min(valid, key=lambda r: r.loo_rmse)
+    print(f"[BANDWIDTH SWEEP] Recommended bandwidth: c={best.bandwidth:g} "
+          f"(pooled LOO-CV RMSE={best.loo_rmse:.5f} m³/m³)")
+
+    if generate_plots:
+        plot_bandwidth_sweep(
+            sweep_results,
+            output_path=os.path.join(output_dir, "bandwidth_sweep.png"),
+        )
+
+    return sweep_results, best.bandwidth

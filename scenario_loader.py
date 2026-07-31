@@ -234,6 +234,30 @@ class ScenarioConfig:
     None (default) falls back to em_methodology.DEFAULT_WS_P0 =
     [1.5, 1.8, 50.0, 5.0] for every horizon, unchanged from before."""
 
+    ws_localized_bandwidth: float | None = None
+    """Gaspari-Cohn localization radius 'c' (spatial_calibration_
+    alternatives.md §2), same units as the transect x-coordinates (metres
+    for UTM/real-data grids). When set, run_pipeline.py additionally runs
+    step2.run_petro_localized as a DIAGNOSTIC sibling to the normal Step 2
+    calibration -- it does not replace fits_step2 and does not change
+    Steps 3-5, which still consume the scalar-per-horizon fit. Produces
+    petro_calibration_localized.png (sigma_s(x) per horizon) in output_dir.
+    Kernel support is exactly zero beyond 2*c, so c should be at least
+    roughly half the spacing between adjacent TDR probes, or every target
+    point can fall outside kernel support of any observation. None
+    (default) skips the localized diagnostic entirely, unchanged from
+    before this field existed."""
+
+    ws_localized_bandwidth_sweep: list[float] | None = None
+    """Optional sequence of candidate Gaspari-Cohn bandwidths (same units
+    as ws_localized_bandwidth) to evaluate via leave-one-probe-out CV
+    (step2.run_bandwidth_sweep) before running the localized diagnostic.
+    Evaluated once against the rank-1 (best-RMSE) Step 2 ensemble member.
+    The recommended bandwidth overrides ws_localized_bandwidth for the
+    localized diagnostic call. None (default) disables the sweep and
+    uses ws_localized_bandwidth as-is (or skips the diagnostic if that
+    is also None)."""
+
     # ------------------------------------------------------------------
     # Real-data time-lapse spatial reference grid
     # (pipeline_review.md / real_data_pipeline_fixes.md, issue 2:
@@ -406,6 +430,8 @@ class ScenarioConfig:
             f"  Drop coils      : {self.drop_coils if self.drop_coils else '(none)'}",
             f"  WS fixed params : {self.ws_fixed_params if self.ws_fixed_params else '(none — all 4 free)'}",
             f"  WS lab_p0       : {self.lab_p0 if self.lab_p0 else '(none — using DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0])'}",
+            f"  WS localized c  : {self.ws_localized_bandwidth if self.ws_localized_bandwidth is not None else '(none — localized Step 2 diagnostic disabled)'}",
+            f"  WS localized c sweep : {self.ws_localized_bandwidth_sweep if self.ws_localized_bandwidth_sweep is not None else '(none — fixed bandwidth used as-is)'}",
             f"  ── Quality gates ────────────────────────────────────",
             f"  CV mean warn    : {self.quality_gate_cv_mean_warn}",
             f"  CV high thresh  : {self.quality_gate_cv_high_threshold}",
@@ -711,6 +737,32 @@ def _validate(name: str, raw: dict) -> None:
         else:
             raise ValueError(_lab_p0_err)
 
+    ws_localized_bandwidth = raw.get("ws_localized_bandwidth", None)
+    if ws_localized_bandwidth is not None:
+        if not isinstance(ws_localized_bandwidth, (int, float)) or ws_localized_bandwidth <= 0:
+            raise ValueError(
+                f"Scenario '{name}': ws_localized_bandwidth must be null or a "
+                f"positive number (Gaspari-Cohn radius c, same units as the "
+                f"transect x-coordinates), got {ws_localized_bandwidth!r}."
+            )
+
+    ws_localized_bandwidth_sweep = raw.get("ws_localized_bandwidth_sweep", None)
+    if ws_localized_bandwidth_sweep is not None:
+        if (
+            not isinstance(ws_localized_bandwidth_sweep, list)
+            or len(ws_localized_bandwidth_sweep) < 2
+            or not all(
+                isinstance(v, (int, float)) and v > 0
+                for v in ws_localized_bandwidth_sweep
+            )
+        ):
+            raise ValueError(
+                f"Scenario '{name}': ws_localized_bandwidth_sweep must be null "
+                f"or a list of >= 2 positive numbers (candidate Gaspari-Cohn "
+                f"radii c, same units as the transect x-coordinates), got "
+                f"{ws_localized_bandwidth_sweep!r}."
+            )
+
     # ---- Real-data time-lapse spatial reference grid -------------------
     spatial_tol = raw.get("spatial_match_tolerance_m", None)
     if spatial_tol is not None:
@@ -991,6 +1043,14 @@ def load_scenario(
             [[float(v) for v in row] for row in raw["lab_p0"]]
             if (raw.get("lab_p0") is not None and isinstance(raw["lab_p0"][0], list))
             else ([float(v) for v in raw["lab_p0"]] if raw.get("lab_p0") is not None else None)
+        ),
+        ws_localized_bandwidth = (
+            float(raw["ws_localized_bandwidth"])
+            if raw.get("ws_localized_bandwidth") is not None else None
+        ),
+        ws_localized_bandwidth_sweep = (
+            [float(v) for v in raw["ws_localized_bandwidth_sweep"]]
+            if raw.get("ws_localized_bandwidth_sweep") is not None else None
         ),
     )
 

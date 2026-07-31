@@ -70,6 +70,9 @@ def generate_time_lapse_dataset(
     front_width: float = 0.15,
     theta_dry: float = 0.08,
     theta_wet: float = 0.38,
+    full_range_gradient: bool = False,
+    xy_z_blend: float = 0.5,
+    invert_z_gradient: bool = False,
 ):
     """
     Generate synthetic 4-D subsurface property matrices (EC_bulk, ECa, θ)
@@ -92,8 +95,40 @@ def generate_time_lapse_dataset(
         progressively over the time-lapse sequence. front_width controls how
         sharp the wetting front is (smaller = sharper step). Takes precedence
         over `homogeneous` if both are set.
+    full_range_gradient : bool, default False
+        When True (and `infiltration`/`homogeneous` are both False), the
+        static XZ (depth) and XY (plan-view) gradients each span the FULL
+        [theta_dry, theta_wet] range independently, instead of the small
+        fixed-amplitude offsets used by the plain default gradient (which
+        only adds up to ~0.12-0.18 vol. fraction on top of a 0.05 baseline).
+        The two components are combined with `xy_z_blend`:
+            base_theta = xy_z_blend * theta_xy + (1 - xy_z_blend) * theta_z
+        where theta_z = theta_dry + (theta_wet - theta_dry) * z_frac
+        (z_frac=0 at the shallowest layer, 1 at the deepest -- reverse with
+        `invert_z_gradient`), and theta_xy = theta_dry + (theta_wet -
+        theta_dry) * xy_frac, with xy_frac = 0.5*x_frac + 0.5*y_frac (2-D
+        mode) or x_frac alone (1-D mode). A small temporal trend and noise
+        are still layered on top, same as the default gradient.
+    xy_z_blend : float, default 0.5
+        Only used when `full_range_gradient=True`. Weight in [0, 1] between
+        the XY component (1.0 = XY gradient only) and the Z/depth component
+        (0.0 = Z gradient only) of the initial model.
+    invert_z_gradient : bool, default False
+        Only used when `full_range_gradient=True`. When True, flips the
+        depth gradient so the shallowest layer is wet and the deepest layer
+        is dry (default is dry-at-surface, wet-at-depth).
     """
     os.makedirs(output_dir, exist_ok=True)
+
+    if cond_ranges is not None:
+        print(
+            "[DATA GEN][WARN] cond_ranges was provided but is currently NOT used by "
+            "generate_time_lapse_dataset -- the truth Waxman-Smits parameters (a, m, "
+            "sigma_w, sigma_s) are fixed by the hardcoded _WS_DEFAULTS below, "
+            "identical for every layer/position/time/ensemble member, regardless of "
+            "cond_ranges. Only `theta` varies spatially/temporally. This parameter is "
+            "reserved for a future spatially-heterogeneous petrophysics mode."
+        )
 
     ensemble_size = 4
     n_time = 3
@@ -204,6 +239,21 @@ def generate_time_lapse_dataset(
                     elif homogeneous:
                         # Truly homogeneous: use the pre-computed uniform theta for this timestep
                         theta_val = base_theta_homogeneous
+                    elif full_range_gradient:
+                        # Full [theta_dry, theta_wet] range gradient, independently
+                        # in Z (depth) and XY (plan view), blended via xy_z_blend.
+                        z_frac_eff = (1.0 - z_frac) if invert_z_gradient else z_frac
+                        theta_z = theta_dry + (theta_wet - theta_dry) * z_frac_eff
+
+                        xy_frac = (0.5 * x_frac + 0.5 * y_frac) if mode == "2d" else x_frac
+                        theta_xy = theta_dry + (theta_wet - theta_dry) * xy_frac
+
+                        base_theta = (
+                            xy_z_blend * theta_xy + (1.0 - xy_z_blend) * theta_z + t_trend
+                        )
+
+                        theta_val = base_theta + np.random.normal(0, 0.01)
+                        theta_val = np.clip(theta_val, theta_dry, theta_wet)
                     else:
                         # Absolute minimal soil moisture baseline (Dry boundary)
                         theta_min = 0.05
@@ -289,6 +339,18 @@ def generate_time_lapse_dataset(
     else:
         print("[DATA GEN] Dataset, theta verdadero y ECa completados exitosamente con gradientes continuos XY y XZ.")
 
+    # Describe which theta-generation branch was actually used (mirrors the
+    # if/elif/else precedence in the per-point loop above: infiltration >
+    # homogeneous > full_range_gradient > default gradient).
+    if infiltration:
+        gradient_mode = "infiltration (downward wetting front)"
+    elif homogeneous:
+        gradient_mode = "homogeneous (spatially uniform theta; temporal trend only)"
+    elif full_range_gradient:
+        gradient_mode = "full_range_gradient (XY/XZ each span full [theta_dry, theta_wet])"
+    else:
+        gradient_mode = "default gradient (small fixed-amplitude XY/XZ offset)"
+
     result = {
         "depth_boundaries":   depth_boundaries,
         "layer_bottoms":      layer_bottoms,
@@ -298,11 +360,35 @@ def generate_time_lapse_dataset(
         "coils_list":         coils_list,
         "mode":               mode,
         "homogeneous":        homogeneous,
+        # --- new: truth petrophysics + generation settings, for reporting ---
+        # NOTE: layer_params is currently IDENTICAL across all layers (see
+        # _WS_DEFAULTS above) -- there is no spatial (x/y) or per-horizon
+        # variation of (a, m, sigma_w, sigma_s) in the truth model. Only
+        # `theta` varies, via the gradient/infiltration logic below.
+        "ws_truth_params":    {l: dict(p) for l, p in layer_params.items()},
+        "gradient_mode":      gradient_mode,
+        "theta_dry":          theta_dry,
+        "theta_wet":          theta_wet,
+        "cond_ranges_input":  cond_ranges,   # kept for transparency; currently unused (see warning above)
+        "cond_ranges_used":   False,
+        "ensemble_size":      ensemble_size,
+        "n_time":             n_time,
+        "point_spacing":      point_spacing,
     }
     if mode == "2d":
         result["utm_x"]      = utm_x_grid
         result["utm_y"]      = utm_y_grid
         result["grid_shape"] = grid_shape
+        result["num_x"]      = num_x
+        result["num_y"]      = num_y
+    if infiltration:
+        result["infiltration_params"] = {
+            "front_z0": front_z0, "front_speed": front_speed, "front_width": front_width,
+        }
+    if full_range_gradient:
+        result["full_range_gradient_params"] = {
+            "xy_z_blend": xy_z_blend, "invert_z_gradient": invert_z_gradient,
+        }
     return result
 
 
@@ -477,9 +563,31 @@ if __name__ == "__main__":
     parser.add_argument("--front-width", type=float, default=0.15,
                          help="Transition sharpness [m] of the wetting front (infiltration mode).")
     parser.add_argument("--theta-dry", type=float, default=0.08,
-                         help="Pre-event (dry) volumetric water content (infiltration mode).")
+                         help="Pre-event (dry) volumetric water content "
+                              "(infiltration and full-range-gradient modes).")
     parser.add_argument("--theta-wet", type=float, default=0.38,
-                         help="Post-wetting volumetric water content (infiltration mode).")
+                         help="Post-wetting volumetric water content "
+                              "(infiltration and full-range-gradient modes).")
+    parser.add_argument(
+        "--full-range-gradient", action="store_true",
+        help="Static (non-infiltration, non-homogeneous) initial model: XZ "
+             "(depth) and XY (plan-view) gradients each span the full "
+             "[theta-dry, theta-wet] range independently, combined via "
+             "--xy-z-blend. Overrides the plain default gradient; ignored "
+             "if --infiltration or --homogeneous is also given.",
+    )
+    parser.add_argument(
+        "--xy-z-blend", type=float, default=0.5, metavar="W",
+        help="Weight in [0, 1] between the XY gradient (1.0 = XY only) and "
+             "the Z/depth gradient (0.0 = Z only) when --full-range-gradient "
+             "is set. Default 0.5 (equal blend).",
+    )
+    parser.add_argument(
+        "--invert-z-gradient", action="store_true",
+        help="With --full-range-gradient, flip the depth gradient so the "
+             "shallowest layer is wet and the deepest layer is dry "
+             "(default: dry at surface, wet at depth).",
+    )
     parser.add_argument("--depths0", type=str, default=None,
                          help="Comma-separated layer-bottom depths [m], e.g. '0.4,0.9,1.5' "
                               "(gives layer centers at 0.2, 0.65, 1.2 m). Defaults to [0.3, 0.6, 1.0].")
@@ -504,6 +612,9 @@ if __name__ == "__main__":
         front_width=args.front_width,
         theta_dry=args.theta_dry,
         theta_wet=args.theta_wet,
+        full_range_gradient=args.full_range_gradient,
+        xy_z_blend=args.xy_z_blend,
+        invert_z_gradient=args.invert_z_gradient,
     )
 
     print(f"[DATA GEN] {len(res['layer_bottoms']) + 1} layers derived from depths0={res['layer_bottoms']}")

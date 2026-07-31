@@ -47,6 +47,21 @@
     "                        sigma_s], flat (applied to every horizon) or one",
     "                        4-element list per horizon (len == len(depths0)+1).",
     "                        Omit/null -> DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0].",
+    "ws_localized_bandwidth  float  Gaspari-Cohn localization radius 'c' (same",
+    "                        units as transect x-coords, e.g. metres). When set,",
+    "                        runs step2.run_petro_localized as a DIAGNOSTIC",
+    "                        sibling to Step 2 (does NOT feed Steps 3-5); saves",
+    "                        petro_calibration_localized.png (sigma_s(x) per",
+    "                        horizon). Kernel support is zero beyond 2*c, so c",
+    "                        should be at least ~half the adjacent-probe spacing.",
+    "                        Omit/null -> localized diagnostic disabled (default).",
+    "ws_localized_bandwidth_sweep  list  Candidate bandwidths (c values) to",
+    "                        test via leave-one-probe-out CV before running the",
+    "                        localized diagnostic; the recommended bandwidth",
+    "                        overrides ws_localized_bandwidth. Evaluated once",
+    "                        against the rank-1 ensemble member.",
+    "                        Omit/null -> sweep disabled, fixed",
+    "                        ws_localized_bandwidth (if any) used as-is.",
     "data_source       str   'real' | 'synthetic' (omit for synthetic).",
     "em_data_dir       str   Folder with GEM-2 real EM CSVs (real data_source only).",
     "tdr_data_dir      str   Folder with real TDR XLSX files (real data_source only).",
@@ -152,7 +167,9 @@
       "drop_coils",
       "homogeneous",
       "ws_fixed_params",
-      "lab_p0"
+      "lab_p0",
+      "ws_localized_bandwidth",
+      "ws_localized_bandwidth_sweep"
     ]
   },
   "2d": {
@@ -183,7 +200,7 @@
         0.1,
         0.3
       ],
-      "beta": [0,0.5,1],
+      "beta_comment": [0,0.5,1],
       "method": [
         "ROPE"
       ],
@@ -218,7 +235,9 @@
     "tdr_noise_std": 0.01,
     "eca_noise_level": 0.01,
     "alpha_range_log": null,
-    "cache_tag": "field_survey_2d"
+    "cache_tag": "field_survey_2d",
+    "ws_localized_bandwidth": 5.0,
+    "ws_localized_bandwidth_sweep": [1.0, 2.0, 5.0, 10.0, 15.0, 20.0]
   },
   "2d_dense_tdr": {
     "description": "Dense-TDR counterpart of the '2d' scenario: identical grid geometry, layer depths, WS priors and conductivity range, but with num_swc_positions raised from 2 -> 10 (40 total probes on the default 10x5 grid) for stronger per-horizon petrophysical calibration.",
@@ -283,7 +302,9 @@
     "tdr_noise_std": 0.01,
     "eca_noise_level": 0.01,
     "alpha_range_log": null,
-    "cache_tag": "field_survey_2d_dense_tdr"
+    "cache_tag": "field_survey_2d_dense_tdr",
+    "ws_localized_bandwidth_COMMENT": 2,
+    "ws_localized_bandwidth_sweep": [1.0, 2.0, 5.0, 10.0, 15.0, 20.0]
   },
   "2d_real": {
     "description": "Real-data counterpart of the '2d' scenario: same 2-D UTM survey geometry, layer depths, and conductivity bounds, but driven by real GEM-2 EM surveys and SoilNet TDR data instead of a synthetic ground truth.",

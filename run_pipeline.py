@@ -29,6 +29,7 @@ import os
 import importlib
 import pickle
 import platform
+import re
 import sys
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
@@ -61,6 +62,41 @@ import datetime
 import platform
 
 
+def _collect_npy_into_output_model(output_dir: str, output_model_dir: str) -> list[str]:
+    """
+    Move every ``*.npy`` file sitting directly in ``output_dir`` (not in
+    subfolders) into ``output_model_dir``. Returns the list of moved files.
+
+    This is used right after any step that writes raw numpy arrays (e.g.
+    Step 0's synthetic-data generator) so all ``.npy`` outputs end up
+    consolidated in ``output_model_dir`` instead of scattered alongside
+    plots/CSVs in the top-level output directory.
+    """
+    import shutil
+    os.makedirs(output_model_dir, exist_ok=True)
+    moved = []
+    for fname in os.listdir(output_dir):
+        src = os.path.join(output_dir, fname)
+        if os.path.isfile(src) and fname.endswith(".npy"):
+            dst = os.path.join(output_model_dir, fname)
+            shutil.move(src, dst)
+            moved.append(dst)
+    return moved
+
+
+def _resolve_npy_path(filename: str, output_model_dir: str, output_dir: str) -> str:
+    """
+    Resolve the path to a ``.npy`` array, preferring ``output_model_dir``
+    (where this pipeline now consolidates arrays) and falling back to the
+    legacy top-level ``output_dir`` location for backward compatibility
+    with older runs/caches.
+    """
+    preferred = os.path.join(output_model_dir, filename)
+    if os.path.isfile(preferred):
+        return preferred
+    return os.path.join(output_dir, filename)
+
+
 class PipelineReporter:
     """
     Writes a Markdown run-report alongside normal stdout output.
@@ -74,7 +110,8 @@ class PipelineReporter:
     """
 
     def __init__(self, output_dir: str, scenario_name: str, mode: str, cfg,
-                 data_source: str = "synthetic", em_dir: str = None, tdr_dir: str = None) -> None:
+                 data_source: str = "synthetic", em_dir: str = None, tdr_dir: str = None,
+                 run_id: str | None = None) -> None:
         os.makedirs(output_dir, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.report_path = os.path.join(output_dir, f"pipeline_report_{ts}.md")
@@ -84,12 +121,27 @@ class PipelineReporter:
         self._metrics: list[tuple[str, str]] = []
         self._start = datetime.datetime.now()
 
+        # Unique identifier for this run, shared between the report header,
+        # the run_id.json marker dropped in output_dir, and the run's row
+        # in the shared run-log CSV (see append_run_log / write_run_marker).
+        # Defaults to "<scenario>_<timestamp>" -- reuses the same timestamp
+        # as the report filename so the two are trivially linkable.
+        self.run_id = run_id or f"{scenario_name}_{ts}"
+
+        # Populated by finish()/failure() so callers (main()) can build a
+        # run-log row without re-deriving elapsed time / status themselves.
+        self.exit_ok: bool | None = None
+        self.elapsed_total: float | None = None
+        self.quality_level: str | None = None
+        self.error_message: str | None = None
+
         # Header
         self._write(f"# EA-EM Pipeline Run Report")
         self._write(f"")
         self._write(f"| Field | Value |")
         self._write(f"|-------|-------|")
         self._write(f"| Generated | {self._start.strftime('%Y-%m-%d %H:%M:%S')} |")
+        self._write(f"| Run ID    | `{self.run_id}` |")
         self._write(f"| Data source | `{data_source.upper()}` |")
         if data_source == "real":
             self._write(f"| EM directory | `{em_dir}` |")
@@ -195,6 +247,18 @@ class PipelineReporter:
         """Record a scalar metric for the summary table."""
         self._metrics.append((name, str(value)))
 
+    def get_metric(self, name: str, default=""):
+        """
+        Return the string value most recently recorded for *name* via
+        ``.metric()``, or *default* if it was never recorded. Used to pull
+        a handful of headline numbers (RMSE, CV, ensemble size, ...) into
+        the shared run-log CSV row without re-deriving them from scratch.
+        """
+        for k, v in reversed(self._metrics):
+            if k == name:
+                return v
+        return default
+
 
     def failure(self, exc: "BaseException") -> None:
         """
@@ -211,6 +275,11 @@ class PipelineReporter:
 
         elapsed = (datetime.datetime.now() - self._start).total_seconds()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        self.exit_ok = False
+        self.elapsed_total = elapsed
+        self.quality_level = "FAILED"
+        self.error_message = str(exc)
 
         self._write(f"")
         self._write(f"## ❌ Pipeline Failure")
@@ -287,6 +356,9 @@ class PipelineReporter:
             report when quality_level == "WARN".
         """
         elapsed_total = (datetime.datetime.now() - self._start).total_seconds()
+        self.exit_ok = exit_ok
+        self.elapsed_total = elapsed_total
+        self.quality_level = quality_level if exit_ok else "FAILED"
         self._write(f"")
         self._write(f"## Metrics Summary")
         self._write(f"")
@@ -324,6 +396,134 @@ class PipelineReporter:
         self._write(f"")
         self._f.close()
         print(f"[REPORTER] Report written → {self.report_path}  (status: {status})")
+
+
+# ===========================================================================
+# RUN LOG — one row per pipeline run, shared across all scenarios
+# ===========================================================================
+
+# Default location of the shared run-log CSV. Deliberately a fixed path
+# (not nested under each scenario's own output_dir) so a single table
+# accumulates every run across every scenario. Override with --log-file.
+DEFAULT_RUN_LOG = "mfc2_outputs/run_log.csv"
+
+RUN_LOG_COLUMNS = [
+    "run_id", "timestamp", "scenario", "mode", "data_source", "status",
+    "output_dir", "report_path", "final_rmse", "cv_mean", "cv_max",
+    "ensemble_size", "runtime_s", "quality_level", "error",
+]
+
+
+def append_run_log(log_path: str, row: dict) -> None:
+    """
+    Append one row to the shared run-log CSV, creating it (with a header)
+    on first use. Every ``run_pipeline.py`` invocation -- success,
+    quality-gate warning, or failure -- adds exactly one row here, keyed
+    by ``run_id``. ``compare_scenarios.py --ids <run_id> ...`` reads this
+    file to resolve a run_id straight to its ``report_path`` instead of
+    requiring a hand-typed glob.
+
+    Never raises: a run-log write failure is logged as a warning and the
+    pipeline continues, since it must not block on housekeeping.
+    """
+    import csv
+    try:
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        write_header = (not os.path.isfile(log_path)) or os.path.getsize(log_path) == 0
+        with open(log_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=RUN_LOG_COLUMNS)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({k: row.get(k, "") for k in RUN_LOG_COLUMNS})
+        print(f"[RUN LOG] Appended run '{row.get('run_id')}' ({row.get('status')}) → {log_path}")
+    except OSError as e:
+        print(f"[RUN LOG] WARNING: could not write run log at {log_path!r}: {e}")
+
+
+def _next_run_seq(base_dir: str, width: int = 4) -> int:
+    """
+    Scan *base_dir* for existing per-run subfolders named ``<seq>_...``
+    (zero-padded to *width* digits) and return the next sequence number.
+
+    Purely based on what's actually on disk, so it self-heals if folders
+    are renamed or deleted -- there's no separate counter file to get out
+    of sync.
+    """
+    pattern = re.compile(r"^(\d+)_")
+    best = 0
+    try:
+        for entry in os.listdir(base_dir):
+            if not os.path.isdir(os.path.join(base_dir, entry)):
+                continue
+            m = pattern.match(entry)
+            if m:
+                best = max(best, int(m.group(1)))
+    except FileNotFoundError:
+        pass
+    return best + 1
+
+
+def _sanitize_folder_component(name: str) -> str:
+    """Make *name* safe to use as (part of) a directory name."""
+    safe = re.sub(r"\s+", "_", name.strip())
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", safe)
+    return safe or "scenario"
+
+
+def next_run_output_dir(base_dir: str, scenario_name: str, width: int = 4) -> str:
+    """
+    Build (and create) this run's own numbered output folder:
+    ``<base_dir>/<seq>_<scenario_name>/``.
+
+    Every ``run_pipeline.py`` invocation now gets a fresh, uniquely
+    numbered folder under *base_dir* (e.g. ``0001_field_survey_2d``,
+    then ``0002_field_survey_2d`` on the next run of the same scenario)
+    instead of writing into -- and silently overwriting -- the same
+    directory every time. The shared run-log CSV (see ``append_run_log``)
+    still accumulates one row per run across every scenario for a
+    quick, flat history / ``--list`` view.
+    """
+    os.makedirs(base_dir, exist_ok=True)
+    seq = _next_run_seq(base_dir, width=width)
+    folder = f"{seq:0{width}d}_{_sanitize_folder_component(scenario_name)}"
+    run_dir = os.path.join(base_dir, folder)
+    # Extremely unlikely, but guard against a collision (e.g. two runs
+    # launched in the same instant against a freshly-cleared directory)
+    # by bumping the sequence rather than clobbering an existing folder.
+    while os.path.exists(run_dir):
+        seq += 1
+        folder = f"{seq:0{width}d}_{_sanitize_folder_component(scenario_name)}"
+        run_dir = os.path.join(base_dir, folder)
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
+
+
+def write_run_marker(output_dir: str, run_id: str, report_path: str) -> None:
+    """
+    Drop a small ``run_id.json`` marker into *output_dir* identifying the
+    run that produced it.
+
+    Each run now gets its own numbered folder (see
+    ``next_run_output_dir``), so this marker is mostly a convenience for
+    identifying a folder out of context (e.g. after copying it
+    elsewhere); the folder name itself (``<seq>_<scenario>``) is already
+    unique per run. The full flat history across every scenario still
+    lives in the shared run-log CSV (see ``append_run_log``).
+
+    Never raises: same rationale as ``append_run_log``.
+    """
+    try:
+        marker_path = os.path.join(output_dir, "run_id.json")
+        with open(marker_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "run_id": run_id,
+                "report_path": os.path.abspath(report_path),
+                "written_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }, f, indent=2)
+    except OSError as e:
+        print(f"[RUN LOG] WARNING: could not write run marker in {output_dir!r}: {e}")
 
 
 # ===========================================================================
@@ -1102,6 +1302,80 @@ def plot_truth_tdr(output_dir: str, theta_true_realization, depths0,
 
 
 # ===========================================================================
+# Explicit probe XYZ file loader (--probe-xyz)
+# ===========================================================================
+
+_PROBE_XYZ_COL_ALIASES = {
+    "x": ("x", "utm_x", "easting"),
+    "y": ("y", "utm_y", "northing"),
+    "z": ("z", "depth", "depth_m"),
+    "label": ("id", "name", "probe", "label"),
+}
+
+
+def _resolve_probe_xyz_column(columns_lower: dict, kind: str, path: str) -> str | None:
+    """Return the actual column name matching one of the accepted aliases
+    for X/Y/Z/label (case-insensitive), or None if 'label' isn't present."""
+    for alias in _PROBE_XYZ_COL_ALIASES[kind]:
+        if alias in columns_lower:
+            return columns_lower[alias]
+    if kind == "label":
+        return None
+    raise ValueError(
+        f"[probe_xyz_file] '{path}': could not find a column for '{kind}'. "
+        f"Accepted names: {_PROBE_XYZ_COL_ALIASES[kind]} (case-insensitive)."
+    )
+
+
+def load_probe_xyz_file(path: str):
+    """
+    Load explicit probe locations from a CSV, e.g. ``coord_TDR.csv``.
+
+    One row per probe. Columns are matched case-insensitively against
+    ``_PROBE_XYZ_COL_ALIASES``; an optional label column is carried
+    through for plot legends but is not required.
+
+    Returns
+    -------
+    (probe_x, probe_y, probe_z, probe_labels) : tuple of lists
+        probe_labels is a list of str, falling back to "P0", "P1", ...
+        when no label column is present.
+    """
+    import pandas as pd
+
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"--probe-xyz file not found: {path}")
+
+    df = pd.read_csv(path)
+    if df.empty:
+        raise ValueError(f"--probe-xyz file '{path}' has no rows.")
+
+    columns_lower = {c.lower(): c for c in df.columns}
+    x_col = _resolve_probe_xyz_column(columns_lower, "x", path)
+    y_col = _resolve_probe_xyz_column(columns_lower, "y", path)
+    z_col = _resolve_probe_xyz_column(columns_lower, "z", path)
+    label_col = _resolve_probe_xyz_column(columns_lower, "label", path)
+
+    for col, kind in ((x_col, "x"), (y_col, "y"), (z_col, "z")):
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if df[col].isna().any():
+            raise ValueError(
+                f"--probe-xyz file '{path}': non-numeric or missing value(s) "
+                f"in column '{col}' ({kind})."
+            )
+
+    probe_x = df[x_col].astype(float).tolist()
+    probe_y = df[y_col].astype(float).tolist()
+    probe_z = df[z_col].astype(float).tolist()
+    probe_labels = (
+        df[label_col].astype(str).tolist() if label_col is not None
+        else [f"P{i}" for i in range(len(df))]
+    )
+    return probe_x, probe_y, probe_z, probe_labels
+
+
+# ===========================================================================
 # MAIN PIPELINE
 # ===========================================================================
 
@@ -1114,7 +1388,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          window_m: float | None = None,
          em_unit: str | None = None,
          beta: list[float] | None = None,
-         gamma: float | None = None):
+         gamma: float | None = None,
+         probe_xyz_file: str | None = None,
+         xy_render_mode: str = "scatter",
+         full_range_gradient: bool | None = None,
+         xy_z_blend: float | None = None,
+         invert_z_gradient: bool | None = None,
+         log_file: str | None = None):
     """
     Run the full EA-EM pipeline.
 
@@ -1157,12 +1437,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         Overrides the scenario's ``num_swc_positions`` (number of
         horizontal SWC/TDR sensor positions; total probes =
         ``num_swc_positions × n_layers``). ``None`` (default) uses the
-        scenario value (or 4 if unset / no scenario given).
+        scenario value (or 4 if unset / no scenario given). Ignored when
+        ``probe_xyz_file`` is given.
     swc_depths : list of float or None, optional
         Overrides the scenario's ``swc_depths`` with explicit sensor
         installation depths [m]. ``None`` (default) uses the scenario
         value, or auto-derived layer-centre depths if the scenario also
-        leaves it unset.
+        leaves it unset. Ignored when ``probe_xyz_file`` is given.
     window_m : float or None, optional
         Overrides the scenario's ``window_m`` (half-width of the spatial
         averaging window used to match TDR probes to EM measurement
@@ -1179,6 +1460,39 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         parameter exists purely as an ad-hoc CLI override, not a way to
         avoid setting it in the scenario. Ignored (falls back to
         ``"ppt"``) when no scenario is given at all.
+    probe_xyz_file : str or None, optional
+        Path to a CSV of explicit SWC/TDR probe locations (one row per
+        probe), e.g. ``coord_TDR.csv``. Accepted columns (case-insensitive,
+        first match wins): X -> {'x', 'utm_x', 'easting'}; Y -> {'y',
+        'utm_y', 'northing'}; Z -> {'z', 'depth', 'depth_m'}. When given,
+        this completely replaces the auto-placement logic (the
+        ``num_swc_positions`` × ``swc_depths`` grid) for BOTH 1-D and 2-D
+        mode -- every row becomes one probe at its literal (x, y, z), no
+        cartesian expansion. An optional label column ('id', 'name',
+        'probe', 'label') is read for plot legends if present but is not
+        required. ``None`` (default) keeps the existing auto-placement
+        behaviour.
+    full_range_gradient : bool or None, optional
+        Synthetic generation only (ignored when ``homogeneous`` is True).
+        When True, the static XZ (depth) and XY (plan-view) initial-model
+        gradients each span the full ``[theta_dry, theta_wet]`` range
+        independently (see ``0_generate_synthetic_data.generate_time_lapse_
+        dataset``), instead of the small fixed-amplitude default gradient.
+        ``None`` (default) uses the scenario config's ``full_range_gradient``
+        value (or False if unset).
+    xy_z_blend : float or None, optional
+        Only used when ``full_range_gradient`` is True. Weight in [0, 1]
+        between the XY component (1.0) and the Z/depth component (0.0) of
+        the initial model. ``None`` (default) uses the scenario value (or
+        0.5, equal blend).
+    invert_z_gradient : bool or None, optional
+        Only used when ``full_range_gradient`` is True. When True, flips
+        the depth gradient (wet at the surface, dry at depth). ``None``
+        (default) uses the scenario value (or False, i.e. dry at surface).
+    log_file : str or None, optional
+        Path to the shared run-log CSV that gets one appended row per run
+        (see ``append_run_log``). ``None`` (default) uses
+        ``DEFAULT_RUN_LOG`` (``mfc2_outputs/run_log.csv``).
     """
     mode = mode.lower().strip()
 
@@ -1186,7 +1500,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # 0. PIPELINE CONFIGURATION
     # -----------------------------------------------------------------------
     if cfg is not None:
-        OUTPUT_DIR        = cfg.output_dir
+        _scenario_name    = cfg.name
+        # cfg.output_dir is the configured *base* directory for this
+        # scenario (and where scenario-level artifacts like the ensemble
+        # cache live -- see _cache_path_override below); each run gets its
+        # own fresh, numbered subfolder inside it (see next_run_output_dir)
+        # instead of writing directly into -- and overwriting -- it.
+        OUTPUT_DIR        = next_run_output_dir(cfg.output_dir, _scenario_name)
+        OUTPUT_MODEL_DIR  = os.path.join(OUTPUT_DIR, "output_model")
+        os.makedirs(OUTPUT_MODEL_DIR, exist_ok=True)
         REALIZATION_INDEX = cfg.realization_index
         DEPTHS0           = cfg.depths0
         FIXED_DEPTHS      = cfg.fixed_depths
@@ -1196,7 +1518,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         _cache_path_override = cfg.cache_path
         EM_UNIT           = em_unit if em_unit is not None else getattr(cfg, "em_unit", "ppt")
     else:
-        OUTPUT_DIR        = "mfc2_outputs"
+        _scenario_name    = "default"
+        OUTPUT_DIR        = next_run_output_dir("mfc2_outputs", _scenario_name)
+        OUTPUT_MODEL_DIR  = os.path.join(OUTPUT_DIR, "output_model")
+        os.makedirs(OUTPUT_MODEL_DIR, exist_ok=True)
         REALIZATION_INDEX = 0
         DEPTHS0           = [0.3, 0.6, 1.0]
         FIXED_DEPTHS      = True
@@ -1245,6 +1570,25 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         else (getattr(cfg, "homogeneous", False) if cfg is not None else False)
     )
 
+    # Full-range gradient mode: static XZ/XY initial-model gradients span
+    # the full [theta_dry, theta_wet] range instead of the small default
+    # offset. CLI flags (if given) override scenario config; ignored when
+    # HOMOGENEOUS is True (mutually exclusive, same precedence as
+    # step0.generate_time_lapse_dataset's own homogeneous/full_range_gradient
+    # branching).
+    FULL_RANGE_GRADIENT = (
+        full_range_gradient if full_range_gradient is not None
+        else (getattr(cfg, "full_range_gradient", False) if cfg is not None else False)
+    )
+    XY_Z_BLEND = (
+        xy_z_blend if xy_z_blend is not None
+        else (getattr(cfg, "xy_z_blend", 0.5) if cfg is not None else 0.5)
+    )
+    INVERT_Z_GRADIENT = (
+        invert_z_gradient if invert_z_gradient is not None
+        else (getattr(cfg, "invert_z_gradient", False) if cfg is not None else False)
+    )
+
     # TDR<->EM spatial-matching quality gate thresholds (report item 3.1).
     # largest-group-fraction = (probes sharing the single most-shared EM
     # point) / (total probes). Above MATCHING_WARN_FRACTION the run is
@@ -1268,7 +1612,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     )
 
     # Initialise run reporter
-    _scenario_name = cfg.name if cfg is not None else "default"
+    # (_scenario_name was already set above, alongside OUTPUT_DIR)
+    LOG_FILE = log_file or DEFAULT_RUN_LOG
+    # Announce the resolved output_dir on stdout so a wrapper script (e.g.
+    # run_pipeline.sh) can pick it up and know exactly where this run's
+    # files are landing, instead of re-deriving/guessing it independently
+    # (which can drift out of sync with what scenario_loader actually
+    # resolved -- see next_run_output_dir).
+    print(f"[OUTPUT_DIR] {OUTPUT_DIR}")
     reporter = PipelineReporter(
         output_dir=OUTPUT_DIR,
         scenario_name=_scenario_name,
@@ -1278,6 +1629,11 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         em_dir=em_dir,
         tdr_dir=tdr_dir,
     )
+    # Tag the output folder with this run's id immediately (before any
+    # pipeline step runs) so it's identifiable even if the run crashes
+    # early. See write_run_marker() for why this -- not the run_log CSV --
+    # is what lives in the folder itself.
+    write_run_marker(OUTPUT_DIR, reporter.run_id, reporter.report_path)
     reporter.args_table("Runtime Arguments", {
         "mode":               mode.upper(),
         "scenario":           _scenario_name,
@@ -1434,8 +1790,104 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 depths0=DEPTHS0,
                 cond_ranges=COND_RANGES,
                 homogeneous=HOMOGENEOUS,
+                full_range_gradient=FULL_RANGE_GRADIENT,
+                xy_z_blend=XY_Z_BLEND,
+                invert_z_gradient=INVERT_Z_GRADIENT,
             )
             step0.plot_synthetic_results(output_dir=OUTPUT_DIR)
+
+            # ------------------------------------------------------------
+            # Detailed truth-generation report: how theta was built spatially/
+            # temporally, and which Waxman-Smits parameters were used to turn
+            # theta into EC_bulk (and, via emagpy's forward model, into ECa).
+            # ------------------------------------------------------------
+            _gradient_mode = synthetic_geometry.get("gradient_mode", "unknown")
+            reporter.log(f"[STEP 0] Theta generation mode : {_gradient_mode}")
+            if HOMOGENEOUS:
+                reporter.log(
+                    "[STEP 0]   theta is IDENTICAL across all positions and layers at "
+                    "each timestep -- only a temporal wetting trend varies."
+                )
+            elif not FULL_RANGE_GRADIENT and "infiltration" not in _gradient_mode:
+                reporter.log(
+                    "[STEP 0]   theta varies via small fixed-amplitude XY/XZ gradients "
+                    "(dry at surface/x=0, wetter with depth/x) plus a temporal trend."
+                )
+
+            _ws_truth = synthetic_geometry.get("ws_truth_params", {})
+            if _ws_truth:
+                _same_everywhere = len({tuple(sorted(p.items())) for p in _ws_truth.values()}) == 1
+                _truth_rows: dict[str, str] = {}
+                for _l, _p in _ws_truth.items():
+                    _truth_rows[f"Layer {_l} — a / m / σ_w / σ_s"] = (
+                        f"{_p['a']:.4f} / {_p['m']:.4f} / "
+                        f"{_p['sigma_w']:.2f} mS/m / {_p['sigma_s']:.2f} mS/m"
+                    )
+                reporter.args_table(
+                    "Step 0 — Synthetic ground-truth Waxman-Smits parameters "
+                    "(EC_bulk = theta^m / a * (sigma_w + sigma_s))",
+                    _truth_rows,
+                )
+                reporter.log(
+                    "[STEP 0]   " + (
+                        "Truth (a, m, sigma_w, sigma_s) are IDENTICAL across every layer, "
+                        "spatial position, ensemble member, and time step -- ONLY theta "
+                        "varies spatially/temporally (see theta generation mode above). "
+                        "There is currently no spatial or per-horizon heterogeneity in the "
+                        "truth petrophysics."
+                        if _same_everywhere else
+                        "Truth (a, m, sigma_w, sigma_s) DIFFER across layers -- see table above."
+                    )
+                )
+                # Flag mismatch against the calibration starting point (prior),
+                # since Step 2/4 calibrate against LAB_P0 / DEFAULT_WS_P0, not
+                # against these truth values.
+                _prior = LAB_P0 if LAB_P0 else [1.5, 1.8, 50.0, 5.0]
+                if isinstance(_prior[0], (list, tuple)):
+                    _prior0 = _prior[0]
+                else:
+                    _prior0 = _prior
+                _truth0 = _ws_truth.get(0, next(iter(_ws_truth.values())))
+                reporter.log(
+                    f"[STEP 0]   Calibration prior/start (a, m, sigma_w, sigma_s) = "
+                    f"({_prior0[0]:.2f}, {_prior0[1]:.2f}, {_prior0[2]:.1f} mS/m, "
+                    f"{_prior0[3]:.1f} mS/m) vs. TRUTH ({_truth0['a']:.2f}, "
+                    f"{_truth0['m']:.2f}, {_truth0['sigma_w']:.1f} mS/m, "
+                    f"{_truth0['sigma_s']:.1f} mS/m) "
+                    f"{'-- MISMATCH: prior is far from truth, calibration must recover it via optimization' if tuple(round(x,2) for x in _prior0) != (round(_truth0['a'],2), round(_truth0['m'],2), round(_truth0['sigma_w'],2), round(_truth0['sigma_s'],2)) else '-- prior matches truth'}"
+                )
+
+            if synthetic_geometry.get("cond_ranges_input") is not None and not synthetic_geometry.get("cond_ranges_used", True):
+                reporter.log(
+                    f"[STEP 0][WARN] cond_ranges={synthetic_geometry['cond_ranges_input']} was "
+                    f"passed but is NOT used by the truth generator (dead parameter, reserved "
+                    f"for a future spatially-heterogeneous petrophysics mode)."
+                )
+
+            _gen_meta_rows = {
+                "Ensemble size (truth realizations)": synthetic_geometry.get("ensemble_size"),
+                "Time steps": synthetic_geometry.get("n_time"),
+                "Point spacing [m]": synthetic_geometry.get("point_spacing"),
+                "theta_dry / theta_wet [m³/m³]": (
+                    f"{synthetic_geometry.get('theta_dry')} / {synthetic_geometry.get('theta_wet')}"
+                    if FULL_RANGE_GRADIENT or "infiltration" in _gradient_mode else "(not used by this gradient mode)"
+                ),
+            }
+            if mode == "2d":
+                _gen_meta_rows["Grid size (num_x × num_y)"] = (
+                    f"{synthetic_geometry.get('num_x')} × {synthetic_geometry.get('num_y')} "
+                    f"= {synthetic_geometry.get('num_x', 0) * synthetic_geometry.get('num_y', 0)} points"
+                )
+            if FULL_RANGE_GRADIENT and "full_range_gradient_params" in synthetic_geometry:
+                _frg = synthetic_geometry["full_range_gradient_params"]
+                _gen_meta_rows["xy_z_blend (1=XY only, 0=Z only)"] = _frg["xy_z_blend"]
+                _gen_meta_rows["invert_z_gradient"] = _frg["invert_z_gradient"]
+            if "infiltration_params" in synthetic_geometry:
+                _inf = synthetic_geometry["infiltration_params"]
+                _gen_meta_rows["Wetting front z0 / speed / width [m]"] = (
+                    f"{_inf['front_z0']} / {_inf['front_speed']} per step / {_inf['front_width']}"
+                )
+            reporter.args_table("Step 0 — Synthetic dataset generation settings", _gen_meta_rows)
 
             EM_FNAMES, theta_true_realization, TDR_NOISE_STD = step0.export_eca_surveys_to_csv(
                 output_dir=OUTPUT_DIR,
@@ -1453,6 +1905,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 reporter.log(f"[STEP 0] TDR ground-truth profiles -> {truth_tdr_path}")
             except Exception as e:
                 reporter.log(f"[STEP 0][WARN] plot_truth_tdr failed: {e}")
+
+            _moved_npy = _collect_npy_into_output_model(OUTPUT_DIR, OUTPUT_MODEL_DIR)
+            if _moved_npy:
+                reporter.log(
+                    f"[STEP 0] Moved {len(_moved_npy)} .npy array(s) into "
+                    f"'{OUTPUT_MODEL_DIR}': "
+                    + ", ".join(os.path.basename(p) for p in _moved_npy)
+                )
 
             SURVEY_TIMESTAMPS = list(range(len(EM_FNAMES)))
             if cfg is None:
@@ -1574,13 +2034,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter.step("Step 1a", "Pre-inversion synthetic spatial-matching diagnostics")
             reporter.log(" [PIPELINE] STEP 1a: PRE-INVERSION DIAGNOSTICS (synthetic)")
             try:
-                _synth_utm_x_path = os.path.join(OUTPUT_DIR, "synthetic_utm_x.npy")
-                _synth_utm_y_path = os.path.join(OUTPUT_DIR, "synthetic_utm_y.npy")
-                _synth_utm_x = (np.load(_synth_utm_x_path)
-                                if mode == "2d" and os.path.exists(_synth_utm_x_path) else None)
-                _synth_utm_y = (np.load(_synth_utm_y_path)
-                                if mode == "2d" and os.path.exists(_synth_utm_y_path) else None)
-
+                # FIX: no longer load/pass the absolute-UTM
+                # synthetic_utm_x/y grid here -- probe placement inside
+                # run_pre_inversion_diagnostics_synthetic_from_pipeline now
+                # always uses the survey's own local coordinates, so the
+                # separate (and previously mismatched) absolute-UTM grid is
+                # not needed for this diagnostic.
                 _pre_inv_result_synth = preinvdiag.run_pre_inversion_diagnostics_synthetic_from_pipeline(
                     em_files=EM_FNAMES if timelapse else [EM_FNAMES],
                     output_dir=OUTPUT_DIR,
@@ -1598,8 +2057,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     ),
                     matching_warn_fraction=MATCHING_WARN_FRACTION,
                     mode=mode,
-                    utm_x=_synth_utm_x,
-                    utm_y=_synth_utm_y,
+                    # FIX: without this, the diagnostic always fabricated its
+                    # own auto-placed probes (num_swc_positions x swc_depths)
+                    # even when the real run was configured with an explicit
+                    # --probe-xyz file -- so probe_em_matching_pre_inversion_
+                    # synthetic.png showed the wrong probe COUNT and the
+                    # wrong LOCATIONS relative to what Step 1/6 actually use.
+                    probe_xyz_file=probe_xyz_file,
                 )
                 reporter.log(
                     f"[STEP 1a] {len(_pre_inv_result_synth['figures'])} diagnostic figure(s) written "
@@ -2056,6 +2520,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
             print(f"[CACHE] Saving matrix {models_clean.shape} to '{cache_path}' "
                   f"(config fingerprint: {current_fingerprint})")
+            _cache_dir = os.path.dirname(cache_path)
+            if _cache_dir:
+                os.makedirs(_cache_dir, exist_ok=True)
             with open(cache_path, "wb") as f:
                 pickle.dump({
                     "models_clean": models_clean,
@@ -2140,7 +2607,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 cond_pstd = EMmethod.extract_conductivity_pstd(pstds_clean, num_layers)
                 _finite = cond_pstd[np.isfinite(cond_pstd)]
                 _nonzero = _finite[_finite > 0]
-                pstd_npy_path = os.path.join(OUTPUT_DIR, "mcmc_conductivity_pstd.npy")
+                pstd_npy_path = os.path.join(OUTPUT_MODEL_DIR, "mcmc_conductivity_pstd.npy")
                 np.save(pstd_npy_path, cond_pstd)
                 reporter.log(
                     f"[STEP1] MCMC-family method(s) detected in param_grid "
@@ -2445,8 +2912,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # -----------------------------------------------------------------------
         utm_x = utm_y = None
         if mode == "2d":
-            utm_x_path = os.path.join(OUTPUT_DIR, "synthetic_utm_x.npy")
-            utm_y_path = os.path.join(OUTPUT_DIR, "synthetic_utm_y.npy")
+            utm_x_path = _resolve_npy_path("synthetic_utm_x.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
+            utm_y_path = _resolve_npy_path("synthetic_utm_y.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
             if os.path.exists(utm_x_path) and os.path.exists(utm_y_path):
                 utm_x = np.load(utm_x_path)
                 utm_y = np.load(utm_y_path)
@@ -2510,6 +2977,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 )
             survey_df = pd.DataFrame({"x": ref_x, "y": ref_y})
             x_transect = ref_x
+            y_transect = ref_y
             reporter.log(
                 f"[PIPELINE][INFO] Real-data time-lapse: using the "
                 f"{len(ref_x)}-point spatial reference grid (union of all "
@@ -2547,6 +3015,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
             survey_df  = survey_df.iloc[:num_measured_points].reset_index(drop=True)
             x_transect = survey_df["x"].to_numpy(dtype=float)
+            y_transect = survey_df["y"].to_numpy(dtype=float)
 
         # ------------------------------------------------------------------
         # SWC sensor count and depths — driven by scenario config, with
@@ -2583,28 +3052,156 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
         # ------------------------------------------------------------------
         # Probe placement: XY (horizontal) + Z (depth)
-        #   - 1-D mode: probes along the X transect only (y=0 for all)
-        #   - 2-D mode: probes spread across the UTM XY grid
+        #   - probe_xyz_file given: explicit (x, y, z) per probe, no
+        #     cartesian expansion, overrides num_swc_positions/swc_depths
+        #     entirely (works in both 1-D and 2-D mode).
+        #   - 1-D mode (auto): probes along the X transect only (y=0 for all)
+        #   - 2-D mode (auto): probes spread across the UTM XY grid
         # ------------------------------------------------------------------
-        if mode == "2d" and utm_x is not None and utm_y is not None:
-            # Sample NUM_POSITIONS points spread across the 2-D UTM grid
-            step = max(1, len(utm_x) // NUM_POSITIONS)
-            sample_indices = list(range(0, len(utm_x), step))[:NUM_POSITIONS]
-            UNIQUE_XY_COORDS = [(float(utm_x[i]), float(utm_y[i])) for i in sample_indices]
+        # NOTE on PROBE_X_COORDS_LOCAL vs PROBE_X_COORDS_UTM:
+        #   Two different downstream consumers need probe positions in two
+        #   different, INCOMPATIBLE coordinate frames:
+        #     - EMmethod.extract_sample_positions_from_survey() matches
+        #       probes against survey_df, which is always in the synthetic
+        #       survey's LOCAL grid (x_transect/y_transect, near (0, 0)).
+        #     - plot_from_pipeline()/plot_truth_from_pipeline() (XY plan-view
+        #       figures) pair probe markers against utm_x/utm_y, which are
+        #       absolute UTM.
+        #   Previously both consumers shared one PROBE_X_COORDS/PROBE_Y_COORDS
+        #   variable, which the --probe-xyz branch below re-localized in
+        #   place (correctly fixing the matching use, but silently
+        #   corrupting the plotting use with local-frame values pretending
+        #   to be UTM -- the t=0-panel bug: 50 UTM grid points collapsing to
+        #   what looked like one point plus a probe marker mislocated at
+        #   (0, 0)). Both frames are now tracked explicitly and never mixed.
+        if probe_xyz_file is not None:
+            PROBE_X_COORDS, PROBE_Y_COORDS, PROBE_DEPTHS, PROBE_LABELS = (
+                load_probe_xyz_file(probe_xyz_file)
+            )
+            print(f"[PIPELINE] Loaded {len(PROBE_X_COORDS)} explicit probe "
+                  f"locations from --probe-xyz {probe_xyz_file}")
+            # The file's own values are the true absolute-UTM positions --
+            # correct to use as-is for plotting ONLY when the survey itself
+            # is also in real absolute UTM (data_source == "real"). See the
+            # synthetic branch below for why this default gets overridden
+            # there.
+            PROBE_X_COORDS_UTM = list(PROBE_X_COORDS)
+            PROBE_Y_COORDS_UTM = list(PROBE_Y_COORDS)
+            if data_source == "synthetic":
+                # FIX: --probe-xyz files are written for REAL field
+                # deployments, so their x/y are real-world absolute
+                # coordinates (e.g. actual UTM eastings/northings). The
+                # synthetic EM survey's own x/y (x_transect/y_transect) are
+                # always a LOCAL grid starting near (0, 0), never UTM. Using
+                # the file's absolute coordinates as-is here put probes and
+                # the synthetic survey in two disjoint coordinate frames --
+                # the exact CRS-mismatch signature previously flagged at
+                # Step 1a (span ratio / centroid offset check) and the
+                # cause of probe<->EM matching collapsing onto a single
+                # nearest point. Fix: re-localize the probe grid so it sits
+                # in the SAME local frame as the synthetic survey, by
+                # translating it so its own minimum x/y lands on the
+                # survey's minimum x/y. This preserves the probe file's
+                # internal relative layout (spacing/shape) exactly -- only
+                # the absolute offset is removed. IMPORTANT: this
+                # re-localized copy is for EM-matching ONLY; it is written
+                # to PROBE_X_COORDS_LOCAL, never back onto PROBE_X_COORDS_UTM.
+                _px = np.asarray(PROBE_X_COORDS, dtype=float)
+                _py = np.asarray(PROBE_Y_COORDS, dtype=float)
+                if _px.size and len(x_transect):
+                    _dx = float(x_transect.min()) - float(_px.min())
+                    _dy = float(y_transect.min()) - float(_py.min())
+                    PROBE_X_COORDS = (_px + _dx).tolist()
+                    PROBE_Y_COORDS = (_py + _dy).tolist()
+                    print(f"[PIPELINE][FIX] Synthetic run: --probe-xyz coordinates "
+                          f"were absolute (real-world) and did not share the "
+                          f"synthetic survey's local coordinate frame. "
+                          f"Re-localized by offset (dx={_dx:.2f}, dy={_dy:.2f}) so "
+                          f"probes and survey now occupy the same local grid "
+                          f"for EM-matching.")
+                # FIX (part 2): the file's raw absolute coordinates captured
+                # into PROBE_X_COORDS_UTM/PROBE_Y_COORDS_UTM above are the
+                # probes' TRUE real-world location -- which, in synthetic
+                # mode, has nothing to do with utm_x/utm_y (a synthetic grid
+                # anchored at an arbitrary point, spanning a few metres).
+                # Plotting the real-world probe coordinates against that
+                # synthetic grid is exactly the t=0-panel bug: matplotlib
+                # autoscales to fit both, so the 50 real survey points
+                # collapse to a single dot while the probe marker floats far
+                # outside the grid. Fix: express the SAME re-localized local
+                # probe coordinates (already computed above) in utm_x/utm_y's
+                # own frame, by applying the survey's local->UTM offset --
+                # mirrors exactly what the auto-placement 2-D branch below
+                # does. This preserves the probe file's real relative
+                # layout/spacing, just placed inside the synthetic grid's
+                # frame instead of at its (irrelevant here) true location.
+                if utm_x is not None and utm_y is not None and _px.size and len(x_transect):
+                    _offx = float(utm_x.min()) - float(x_transect.min())
+                    _offy = float(utm_y.min()) - float(y_transect.min())
+                    PROBE_X_COORDS_UTM = [x + _offx for x in PROBE_X_COORDS]
+                    PROBE_Y_COORDS_UTM = [y + _offy for y in PROBE_Y_COORDS]
+                    print(f"[PIPELINE][FIX] Synthetic run: re-expressed probe "
+                          f"coordinates in the synthetic survey's own UTM frame "
+                          f"for plotting (offset ex={_offx:.2f}, ey={_offy:.2f}) "
+                          f"-- the probe file's real-world absolute coordinates "
+                          f"are not meaningful against a synthetic grid.")
+                else:
+                    PROBE_X_COORDS_UTM = None
+                    PROBE_Y_COORDS_UTM = None
+            PROBE_X_COORDS_LOCAL = list(PROBE_X_COORDS)
+            PROBE_Y_COORDS_LOCAL = list(PROBE_Y_COORDS)
+        elif mode == "2d" and len(x_transect) and np.ptp(y_transect) > 0:
+            # Sample NUM_POSITIONS points spread across the survey's own
+            # LOCAL 2-D grid (x_transect/y_transect) -- NOT the absolute-UTM
+            # synthetic_utm_x/y grid (utm_x/utm_y). The UTM grid is offset
+            # by the real-world survey origin and lives in a different
+            # frame than survey_df's local coordinates; mixing the two here
+            # previously caused the same CRS-mismatch bug as the
+            # --probe-xyz case above.
+            step = max(1, len(x_transect) // NUM_POSITIONS)
+            sample_indices = list(range(0, len(x_transect), step))[:NUM_POSITIONS]
+            UNIQUE_XY_COORDS = [(float(x_transect[i]), float(y_transect[i])) for i in sample_indices]
+            # Expand (x, y) × depth to get one probe entry per (position, layer)
+            PROBE_X_COORDS = [xy[0] for xy in UNIQUE_XY_COORDS for _ in TDR_DEPTH]
+            PROBE_Y_COORDS = [xy[1] for xy in UNIQUE_XY_COORDS for _ in TDR_DEPTH]
+            PROBE_DEPTHS   = [d     for _  in UNIQUE_XY_COORDS for d in TDR_DEPTH]
+            PROBE_LABELS   = [f"P{i}" for i in range(len(PROBE_X_COORDS))]
+            PROBE_X_COORDS_LOCAL = list(PROBE_X_COORDS)
+            PROBE_Y_COORDS_LOCAL = list(PROBE_Y_COORDS)
+            if utm_x is not None and utm_y is not None and len(x_transect):
+                # Re-express the same points in absolute UTM by applying the
+                # local->UTM offset of the survey grid itself (mirror image
+                # of the re-localization above), so plotting always has a
+                # matching UTM pair -- never the raw local values.
+                _offx = float(utm_x.min()) - float(x_transect.min())
+                _offy = float(utm_y.min()) - float(y_transect.min())
+                PROBE_X_COORDS_UTM = [x + _offx for x in PROBE_X_COORDS_LOCAL]
+                PROBE_Y_COORDS_UTM = [y + _offy for y in PROBE_Y_COORDS_LOCAL]
+            else:
+                PROBE_X_COORDS_UTM = None
+                PROBE_Y_COORDS_UTM = None
         else:
             # 1-D transect: distribute along X, fix Y=0
             unique_x = list(np.linspace(x_transect.min(), x_transect.max(), NUM_POSITIONS))
             UNIQUE_XY_COORDS = [(x, 0.0) for x in unique_x]
-
-        # Expand (x, y) × depth to get one probe entry per (position, layer)
-        PROBE_X_COORDS = [xy[0] for xy in UNIQUE_XY_COORDS for _ in TDR_DEPTH]
-        PROBE_Y_COORDS = [xy[1] for xy in UNIQUE_XY_COORDS for _ in TDR_DEPTH]
-        PROBE_DEPTHS   = [d     for _  in UNIQUE_XY_COORDS for d in TDR_DEPTH]
+            # Expand (x, y) × depth to get one probe entry per (position, layer)
+            PROBE_X_COORDS = [xy[0] for xy in UNIQUE_XY_COORDS for _ in TDR_DEPTH]
+            PROBE_Y_COORDS = [xy[1] for xy in UNIQUE_XY_COORDS for _ in TDR_DEPTH]
+            PROBE_DEPTHS   = [d     for _  in UNIQUE_XY_COORDS for d in TDR_DEPTH]
+            PROBE_LABELS   = [f"P{i}" for i in range(len(PROBE_X_COORDS))]
+            # 1-D mode has no meaningful Y/UTM position (y is always 0) --
+            # downstream plotting code already suppresses XY markers in
+            # this case via the has_real_y check, so there is no UTM frame
+            # to populate here.
+            PROBE_X_COORDS_LOCAL = list(PROBE_X_COORDS)
+            PROBE_Y_COORDS_LOCAL = list(PROBE_Y_COORDS)
+            PROBE_X_COORDS_UTM = None
+            PROBE_Y_COORDS_UTM = None
 
         position_results = EMmethod.extract_sample_positions_from_survey(
             survey_df=survey_df, models=models_clean,
-            probe_x_coords=PROBE_X_COORDS,
-            probe_y_coords=PROBE_Y_COORDS,   # non-zero in 2D mode → XY distance auto-enabled
+            probe_x_coords=PROBE_X_COORDS_LOCAL,
+            probe_y_coords=PROBE_Y_COORDS_LOCAL,   # non-zero in 2D mode → XY distance auto-enabled
             probe_depths=PROBE_DEPTHS,        # <-- Z axis (unchanged)
             # Horizon routing uses EFFECTIVE_DEPTHS0 (== DEPTHS0 when fixed;
             # the ensemble-median FITTED interface depths otherwise -- see
@@ -2632,18 +3229,29 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     _res.layer_index,
                     _res.representative_index,
                 ])
-            reporter.table(
-                "SWC / TDR Probe Network — resolved x/y/z positions",
-                ["Probe #", "x [m]", "y [m]", "z / depth [m]",
-                 "Horizon (layer idx)", "Matched EM point idx"],
-                _probe_rows,
-                note=(
+            if probe_xyz_file is not None:
+                # Explicit (x, y, z) probes: no horizontal-position × depth
+                # cartesian expansion happened (UNIQUE_XY_COORDS is never
+                # built on this path), so describe the probes as-loaded.
+                _probe_note = (
+                    f"{len(position_results)} probe(s) loaded explicitly from "
+                    f"--probe-xyz '{probe_xyz_file}' (literal x/y/z per row, "
+                    f"no cartesian expansion)."
+                )
+            else:
+                _probe_note = (
                     f"{len(UNIQUE_XY_COORDS)} horizontal position(s) × "
                     f"{len(TDR_DEPTH)} depth(s) = {len(position_results)} probes. "
                     f"Depths resolved from "
                     f"{'scenario swc_depths' if _swc_depths_cfg is not None else 'layer centres (swc_depths was None/auto)'}"
                     f": {list(TDR_DEPTH)}."
-                ),
+                )
+            reporter.table(
+                "SWC / TDR Probe Network — resolved x/y/z positions",
+                ["Probe #", "x [m]", "y [m]", "z / depth [m]",
+                 "Horizon (layer idx)", "Matched EM point idx"],
+                _probe_rows,
+                note=_probe_note,
             )
 
             # ------------------------------------------------------------
@@ -3009,6 +3617,143 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             output_path=os.path.join(OUTPUT_DIR, "ws_parameter_histograms.png"),
         )
 
+        # ------------------------------------------------------------------
+        # Step 2 (diagnostic sibling) — kernel-localized Waxman-Smits
+        # calibration (spatial_calibration_alternatives.md §2). Gated on
+        # the scenario's ws_localized_bandwidth field; does NOT replace
+        # fits_step2 and does NOT change Steps 3-5. In 2-D mode (utm_x/
+        # utm_y both loaded) localization uses true 2-D Euclidean (x, y)
+        # distance instead of 1-D along-transect x, so probes that are
+        # close in y but far in x (or vice versa) aren't ignored.
+        # ------------------------------------------------------------------
+        WS_LOCALIZED_BANDWIDTH = getattr(cfg, "ws_localized_bandwidth", None) if cfg is not None else None
+        WS_LOCALIZED_BANDWIDTH_SWEEP = getattr(cfg, "ws_localized_bandwidth_sweep", None) if cfg is not None else None
+        _localized_y = y_transect if (mode == "2d" and utm_y is not None) else None
+        _bandwidth_from_sweep = False
+
+        # ------------------------------------------------------------------
+        # Step 2 LOCALIZED — bandwidth (c) selection via leave-one-probe-out
+        # CV sweep (EMmethod.sweep_localization_bandwidth /
+        # step2.run_bandwidth_sweep). Opt-in via the scenario's
+        # ws_localized_bandwidth_sweep field (a sequence of candidate c
+        # values, e.g. np.linspace(1.0, 20.0, 10)). This is a one-off
+        # tuning decision (step2.run_bandwidth_sweep's own docstring: run it
+        # against a single reference model, not the full ensemble), so it is
+        # evaluated once against the rank-1 (best-RMSE) Step 2 ensemble
+        # member (fits_step2[0].model_index) rather than per ensemble
+        # member. The recommended bandwidth then becomes
+        # WS_LOCALIZED_BANDWIDTH for the diagnostic sibling call below,
+        # overriding any fixed ws_localized_bandwidth in the scenario.
+        # ------------------------------------------------------------------
+        if WS_LOCALIZED_BANDWIDTH_SWEEP is not None:
+            reporter.step(
+                "Step 2 LOCALIZED SWEEP",
+                "Bandwidth (c) selection via leave-one-probe-out CV",
+            )
+            _sweep_ref_idx = fits_step2[0].model_index
+            reporter.log(
+                f"[STEP 2 LOCALIZED SWEEP] ws_localized_bandwidth_sweep="
+                f"{list(WS_LOCALIZED_BANDWIDTH_SWEEP)} set -- evaluating candidate "
+                f"bandwidth(s) via leave-one-probe-out CV against the rank-1 "
+                f"ensemble member (model_index={_sweep_ref_idx}, "
+                f"RMSE={fits_step2[0].rmse:.5f} m³/m³) "
+                f"({'2-D Euclidean (x, y)' if _localized_y is not None else '1-D along-transect (x)'} distance)."
+            )
+            try:
+                _sigma_b_reference = models_clean[_sweep_ref_idx]
+                sweep_results, _recommended_bandwidth = step2.run_bandwidth_sweep(
+                    sigma_b_reference=_sigma_b_reference,
+                    sample_positions=sample_positions,
+                    sample_times=sample_times,
+                    theta_obs=theta_obs,
+                    point_x_coords=x_transect,
+                    point_y_coords=_localized_y,
+                    bandwidths=WS_LOCALIZED_BANDWIDTH_SWEEP,
+                    output_dir=OUTPUT_DIR,
+                    probe_layer_indices=probe_layer_indices,
+                    lab_p0=LAB_P0,
+                    fixed_params=WS_FIXED_PARAMS,
+                    theta_obs_std=_theta_obs_std_step2,
+                )
+                _sweep_rows = [
+                    [
+                        f"{r.bandwidth:g}",
+                        f"{r.loo_rmse:.5f}" if not np.isnan(r.loo_rmse) else "N/A",
+                        r.n_folds,
+                        r.n_fallback,
+                    ]
+                    for r in sweep_results
+                ]
+                reporter.table(
+                    "Step 2 LOCALIZED — bandwidth sweep (leave-one-probe-out CV)",
+                    ["Bandwidth c", "Pooled LOO-CV RMSE [m³/m³]", "Valid folds", "Folds fell back to prior"],
+                    _sweep_rows,
+                    note=(
+                        f"Recommended bandwidth: c={_recommended_bandwidth:g} (minimum pooled "
+                        f"LOO-CV RMSE). Evaluated once against the rank-1 ensemble member "
+                        f"(model_index={_sweep_ref_idx}) -- a one-off tuning decision, not "
+                        f"repeated per ensemble member."
+                    ),
+                )
+                reporter.log(
+                    f"[STEP 2 LOCALIZED SWEEP] Recommended bandwidth: c={_recommended_bandwidth:g} "
+                    f"-> {OUTPUT_DIR}/bandwidth_sweep.png"
+                )
+                reporter.metric("Step 2 LOCALIZED — bandwidth selection method", "LOO-CV sweep")
+                reporter.metric("Step 2 LOCALIZED — recommended bandwidth (c)", f"{_recommended_bandwidth:g}")
+                reporter.metric("Step 2 LOCALIZED — sweep candidates evaluated", len(sweep_results))
+                WS_LOCALIZED_BANDWIDTH = _recommended_bandwidth
+                _bandwidth_from_sweep = True
+            except Exception as e:
+                # Sweep is a tuning aid only -- never let it fail a run that
+                # would otherwise succeed; fall back to the fixed
+                # ws_localized_bandwidth (if any) below, unchanged.
+                reporter.log(
+                    f"[STEP 2 LOCALIZED SWEEP][WARN] Bandwidth sweep failed: {e}. "
+                    f"Falling back to fixed ws_localized_bandwidth="
+                    f"{WS_LOCALIZED_BANDWIDTH!r} (unswept)."
+                )
+            reporter.end_step("Step 2 LOCALIZED SWEEP")
+
+        if WS_LOCALIZED_BANDWIDTH is not None:
+            reporter.log(
+                f"[STEP 2 LOCALIZED] ws_localized_bandwidth="
+                f"{WS_LOCALIZED_BANDWIDTH:g} "
+                f"({'recommended by LOO-CV sweep above' if _bandwidth_from_sweep else 'fixed scenario value'}) "
+                f"-- running kernel-localized calibration as a diagnostic sibling to Step 2 "
+                f"({'2-D Euclidean (x, y)' if _localized_y is not None else '1-D along-transect (x)'} distance)."
+            )
+            try:
+                fits_step2_localized = step2.run_petro_localized(
+                    models=models_clean,
+                    sample_positions=sample_positions,
+                    sample_times=sample_times,
+                    theta_obs=theta_obs,
+                    point_x_coords=x_transect,
+                    point_y_coords=_localized_y,
+                    bandwidth=WS_LOCALIZED_BANDWIDTH,
+                    depths0=DEPTHS0,
+                    output_dir=OUTPUT_DIR,
+                    probe_layer_indices=probe_layer_indices,
+                    fixed_params=WS_FIXED_PARAMS,
+                    lab_p0=LAB_P0,
+                    theta_obs_std=_theta_obs_std_step2,
+                    global_fit=fits_step2[0],
+                )
+                reporter.log(
+                    f"[STEP 2 LOCALIZED] Diagnostic complete -> "
+                    f"{OUTPUT_DIR}/petro_calibration_localized.png"
+                )
+            except Exception as e:
+                # Diagnostic sibling only -- never let it fail a run that
+                # would otherwise succeed.
+                reporter.log(f"[STEP 2 LOCALIZED][WARN] Localized diagnostic failed: {e}")
+        else:
+            reporter.log(
+                "[STEP 2 LOCALIZED] ws_localized_bandwidth not set -- skipping "
+                "kernel-localized diagnostic (unchanged default behaviour)."
+            )
+
         # -----------------------------------------------------------------------
         # STEP 3 — RMSE-WEIGHTED AVERAGING
         # -----------------------------------------------------------------------
@@ -3185,6 +3930,39 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             )
 
         # -----------------------------------------------------------------------
+        # PERSIST STEP 4/5 RESULT (theta_calc, cv_map, K, rmse, coverage,
+        # is_calibrated) TO OUTPUT_MODEL_DIR
+        #   Previously this array was only ever plotted, then discarded --
+        #   compare_scenarios.py / plot_truth_comparison.py need it on disk
+        #   as 'theta_calc.npy' next to the synthetic_*.npy truth arrays to
+        #   do calc-vs-truth comparisons, which otherwise required manually
+        #   re-running the whole pipeline through the separate
+        #   capture_synthetic_theta.py monkey-patch script. Saving it here
+        #   makes every run self-sufficient for that comparison, synthetic
+        #   or real, with no extra step.
+        # -----------------------------------------------------------------------
+        _step5_capture = {
+            "K": np.array(selected_output.K),
+            "rmse": np.array(selected_output.rmse),
+            "cv_map": np.asarray(selected_output.cv_map),
+        }
+        if _tc is not None:
+            _step5_capture["theta_calc"] = np.asarray(_tc)
+        if getattr(selected_output, "coverage", None) is not None:
+            _step5_capture["coverage"] = np.asarray(selected_output.coverage)
+        if getattr(selected_output, "best_fit", None) is not None:
+            _step5_capture["is_calibrated"] = np.array(
+                [h.is_calibrated for h in selected_output.best_fit.horizon_fits]
+            )
+        for _key, _arr in _step5_capture.items():
+            _path = os.path.join(OUTPUT_MODEL_DIR, f"{_key}.npy")
+            np.save(_path, _arr)
+        reporter.log(
+            f"[STEP 5] Saved Step 4/5 result to '{OUTPUT_MODEL_DIR}': "
+            f"{', '.join(f'{k}.npy' for k in _step5_capture)}"
+        )
+
+        # -----------------------------------------------------------------------
         # POST-STEP-5 QUALITY GATE  (report item 4, quality gates)
         #   Turns the CV map and per-horizon calibration status -- already
         #   computed above but previously only ever printed/plotted -- into
@@ -3246,7 +4024,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             x_transect=x_transect,
             depths0=DEPTHS0,
             probe_x_coords=PROBE_X_COORDS,
-            probe_y_coords=PROBE_Y_COORDS,   # <-- new: needed for XY plan-view probe markers
+            probe_y_coords=PROBE_Y_COORDS,   # local frame -- XZ probe markers only
             probe_depths=PROBE_DEPTHS,        # Z axis (unchanged)
             output_dir=OUTPUT_DIR,
             scenario_name=cfg.name if cfg else "default",
@@ -3254,6 +4032,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             survey_labels=None,
             utm_x=utm_x,
             utm_y=utm_y,
+            # FIX: without these, plot_from_pipeline's own fallback treated
+            # the LOCAL probe_x_coords/probe_y_coords above as if they were
+            # already absolute UTM, mislocating every probe marker on
+            # water_content_xy_{scenario}.png relative to the real UTM
+            # survey grid. PROBE_X_COORDS_UTM/PROBE_Y_COORDS_UTM are the
+            # correct absolute-UTM counterparts computed earlier.
+            probe_utm_x=PROBE_X_COORDS_UTM,
+            probe_utm_y=PROBE_Y_COORDS_UTM,
+            xy_render_mode=xy_render_mode,
         )
 
         # Ground-truth counterpart of the plot above (water_content_xz_<scenario>_truth.png
@@ -3275,6 +4062,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     survey_labels=None,
                     utm_x=utm_x,
                     utm_y=utm_y,
+                    # FIX: same probe_utm_x/y fix as plot_from_pipeline above --
+                    # otherwise water_content_xy_{scenario}_truth.png mislocates
+                    # every probe marker the same way.
+                    probe_utm_x=PROBE_X_COORDS_UTM,
+                    probe_utm_y=PROBE_Y_COORDS_UTM,
+                    xy_render_mode=xy_render_mode,
                 )
                 reporter.log(
                     f"[STEP 6] Ground-truth XZ (and XY, if 2-D) water-content "
@@ -3294,11 +4087,18 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     x_transect=x_transect,
                     depths0=DEPTHS0,
                     probe_x_coords=PROBE_X_COORDS,
+                    probe_y_coords=PROBE_Y_COORDS,
                     probe_depths=PROBE_DEPTHS,
                     output_dir=OUTPUT_DIR,
                     scenario_name=cfg.name if cfg else "default",
                     timelapse=timelapse,
                     survey_labels=None,
+                    utm_x=utm_x,
+                    utm_y=utm_y,
+                    # FIX: same probe_utm_x/y fix as plot_from_pipeline/
+                    # plot_truth_from_pipeline above.
+                    probe_utm_x=PROBE_X_COORDS_UTM,
+                    probe_utm_y=PROBE_Y_COORDS_UTM,
                 )
                 if pctdiff_path is not None:
                     reporter.log(f"[STEP 6] Calculated-vs-truth %% difference -> {pctdiff_path}")
@@ -3312,8 +4112,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # water_content_xz_*.png) and per-coil apparent conductivity (ECa),
             # which isn't depth-resolved so gets its own per-coil panel style.
             try:
-                _ec_true_path = os.path.join(OUTPUT_DIR, "synthetic_time_lapse_ec.npy")
-                _eca_true_path = os.path.join(OUTPUT_DIR, "synthetic_time_lapse_eca.npy")
+                _ec_true_path = _resolve_npy_path("synthetic_time_lapse_ec.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
+                _eca_true_path = _resolve_npy_path("synthetic_time_lapse_eca.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
 
                 if os.path.exists(_ec_true_path):
                     _ec_bulk_true = np.load(_ec_true_path)[REALIZATION_INDEX]
@@ -3490,7 +4290,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         ec_bulk_true_for_plot = None
         if data_source == "synthetic":
             theta_true_for_plot = theta_true_realization
-            _ec_true_path = os.path.join(OUTPUT_DIR, "synthetic_time_lapse_ec.npy")
+            _ec_true_path = _resolve_npy_path("synthetic_time_lapse_ec.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
             if os.path.exists(_ec_true_path):
                 ec_bulk_true_for_plot = np.load(_ec_true_path)[REALIZATION_INDEX]
             else:
@@ -3622,9 +4422,43 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             quality_level=quality_gate_result.level,
             quality_reasons=quality_gate_result.reasons,
         )
+        append_run_log(LOG_FILE, {
+            "run_id":        reporter.run_id,
+            "timestamp":     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "scenario":      _scenario_name,
+            "mode":          mode.upper(),
+            "data_source":   data_source,
+            "status":        "WARN" if quality_gate_result.level == "WARN" else "SUCCESS",
+            "output_dir":    OUTPUT_DIR,
+            "report_path":   reporter.report_path,
+            "final_rmse":    reporter.get_metric("Final RMSE (Step 5)"),
+            "cv_mean":       reporter.get_metric("CV map mean (relative uncertainty)"),
+            "cv_max":        reporter.get_metric("CV map max"),
+            "ensemble_size": reporter.get_metric("Ensemble size (Step 1)"),
+            "runtime_s":     f"{reporter.elapsed_total:.1f}" if reporter.elapsed_total is not None else "",
+            "quality_level": quality_gate_result.level,
+            "error":         "",
+        })
 
     except Exception as exc:
         reporter.failure(exc)
+        append_run_log(LOG_FILE, {
+            "run_id":        reporter.run_id,
+            "timestamp":     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "scenario":      _scenario_name,
+            "mode":          mode.upper(),
+            "data_source":   data_source,
+            "status":        "FAILED",
+            "output_dir":    OUTPUT_DIR,
+            "report_path":   reporter.report_path,
+            "final_rmse":    "",
+            "cv_mean":       "",
+            "cv_max":        "",
+            "ensemble_size": "",
+            "runtime_s":     f"{reporter.elapsed_total:.1f}" if reporter.elapsed_total is not None else "",
+            "quality_level": "FAILED",
+            "error":         str(exc)[:300],
+        })
         raise
 
 
@@ -3673,6 +4507,31 @@ if __name__ == "__main__":
              "the scenario config when passed.",
     )
     parser.add_argument(
+        "--full-range-gradient", action="store_true", default=False,
+        help="Synthetic mode only (ignored if --homogeneous is also given). "
+             "Static XZ (depth) and XY (plan-view) initial-model gradients "
+             "each span the full [theta_dry, theta_wet] range independently, "
+             "instead of the small fixed-amplitude default gradient. "
+             "Combine with --xy-z-blend / --invert-z-gradient. Overrides "
+             "'full_range_gradient' in the scenario config when passed.",
+    )
+    parser.add_argument(
+        "--xy-z-blend", type=float, default=None, metavar="W",
+        help="Only used with --full-range-gradient. Weight in [0, 1] "
+             "between the XY gradient (1.0 = XY only) and the Z/depth "
+             "gradient (0.0 = Z only). Overrides 'xy_z_blend' in the "
+             "scenario config when passed; falls back to the scenario "
+             "value (or 0.5, equal blend) otherwise.",
+    )
+    parser.add_argument(
+        "--invert-z-gradient", action="store_true", default=False,
+        help="Only used with --full-range-gradient. Flip the depth "
+             "gradient so the shallowest layer is wet and the deepest "
+             "layer is dry (default: dry at surface, wet at depth). "
+             "Overrides 'invert_z_gradient' in the scenario config when "
+             "passed.",
+    )
+    parser.add_argument(
         "--num-swc-positions", type=int, default=None, metavar="N",
         help="Number of horizontal SWC/TDR sensor positions. Total probes "
              "= N x n_layers (one per soil horizon at each position). "
@@ -3694,6 +4553,23 @@ if __name__ == "__main__":
              "falls back to the scenario value (or 1.0) otherwise.",
     )
     parser.add_argument(
+        "--probe-xyz", default=None, metavar="PATH",
+        help="CSV of explicit SWC/TDR probe locations, one row per probe, "
+             "e.g. --probe-xyz coord_TDR.csv. Columns (case-insensitive): "
+             "x/utm_x/easting, y/utm_y/northing, z/depth/depth_m, and an "
+             "optional label column (id/name/probe/label). When given, "
+             "completely replaces the auto-placement grid derived from "
+             "--num-swc-positions/--swc-depths for BOTH 1-D and 2-D mode -- "
+             "each row becomes one probe at its literal (x, y, z), no "
+             "position x depth expansion.",
+    )
+    parser.add_argument(
+        "--xy-render-mode", default="scatter", choices=["scatter", "imshow"],
+        help="Rendering for XY plan-view plots (2-D mode only). 'scatter' "
+             "(default) draws one square per measurement point; 'imshow' "
+             "interpolates onto a smooth raster (scipy.griddata).",
+    )
+    parser.add_argument(
         "--em-unit", default=None, choices=["ppm", "ppt"],
         help="Physical unit of the quadrature/in-phase columns in the EM "
              "survey CSV. 'ppm' for GEM-2 / CMD-Explorer real-data "
@@ -3711,6 +4587,14 @@ if __name__ == "__main__":
              "inversion] to sweep, e.g. --beta 0.0 0.1 0.5. Overrides the "
              "'beta' entry in the scenario's param_grid when passed; falls "
              "back to the scenario value (or [0.0]) otherwise.",
+    )
+    parser.add_argument(
+        "--log-file", default=None, metavar="PATH",
+        help="Path to the shared run-log CSV that gets one row appended "
+             "per run (run_id, scenario, mode, status, key metrics, "
+             "path to this run's pipeline_report_*.md, ...). Default: "
+             f"'{DEFAULT_RUN_LOG}'. compare_scenarios.py --ids reads this "
+             "file to resolve a run_id to its report automatically.",
     )
     parser.add_argument(
         "--gamma", type=float, default=None, metavar="G",
@@ -3828,7 +4712,13 @@ if __name__ == "__main__":
              window_m=args.window_m,
              em_unit=args.em_unit,
              beta=args.beta,
-             gamma=args.gamma)
+             gamma=args.gamma,
+             probe_xyz_file=args.probe_xyz,
+             xy_render_mode=args.xy_render_mode,
+             full_range_gradient=(True if args.full_range_gradient else None),
+             xy_z_blend=args.xy_z_blend,
+             invert_z_gradient=(True if args.invert_z_gradient else None),
+             log_file=args.log_file)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

@@ -1778,6 +1778,926 @@ def calibrate_petrophysical_relationship(
 
 
 # ==========================================================================
+# 6b. SPATIAL LOCALIZATION: KERNEL-WEIGHTED PER-TARGET CALIBRATION
+#
+# See spatial_calibration_alternatives.md, §2 ("Kernel-weighted /
+# localization"). Generalizes calibrate_petrophysical_relationship above:
+# instead of one scalar [a, m, sigma_w, sigma_s] per horizon broadcast to
+# every EM point (fine when a horizon has direct TDR coverage everywhere,
+# but silently falls back to the pure-prior/global value at every EM point
+# with no nearby probe), this refits SEPARATELY at every target location,
+# weighting every TDR observation in that horizon by a smooth,
+# compact-support function of its distance to the target instead of a hard
+# "belongs to this position" bucket.
+#
+# bandwidth (``c``) -> inf reproduces calibrate_petrophysical_relationship's
+# single global-per-horizon fit exactly (every observation gets spatial
+# weight 1 regardless of distance). bandwidth -> 0 collapses to
+# nearest-neighbour/IDW (only the closest observation(s) keep nonzero
+# weight). Horizon routing (probe_layer_indices / the strided heuristic) is
+# UNCHANGED and still a hard partition by depth -- localization only mixes
+# observations WITHIN the same horizon, across space, never across depth.
+# ==========================================================================
+
+def gaspari_cohn(dist: np.ndarray | float, c: float) -> np.ndarray:
+    """
+    Gaspari-Cohn compact-support localization kernel (Gaspari & Cohn, 1999).
+
+    Standard taper used for covariance/observation localization in ensemble
+    data assimilation (ensemble Kalman filter): weight is 1 at zero
+    distance, decays smoothly, and is EXACTLY zero for ``|dist| > 2c`` --
+    unlike a Gaussian kernel's infinite tail, this lets callers skip
+    far-away observations entirely rather than summing over many
+    vanishingly small but nonzero weights.
+
+    Parameters
+    ----------
+    dist : np.ndarray or float
+        Signed or unsigned distance(s) from the target location, same
+        units as ``c``. Only ``|dist|`` matters. Any shape. Works
+        unchanged for 2-D (or N-D) Euclidean distances -- e.g.
+        ``np.sqrt(dx**2 + dy**2)`` -- since those are already
+        nonnegative, so ``np.abs`` is a no-op; only the caller's distance
+        computation needs to change to go from 1-D to 2-D localization.
+    c : float
+        Localization radius. Support (nonzero weight) extends to ``2*c``;
+        ``c`` itself is where the taper is roughly half-strength. Chosen
+        empirically -- exactly as ad hoc as fixed-shrinkage's
+        ``shrinkage_k`` was -- e.g. by sweeping a few candidate values and
+        checking validation RMSE.
+
+    Returns
+    -------
+    np.ndarray, same shape as ``dist`` (or 0-d if ``dist`` was a scalar).
+        Weights in ``[0, 1]``.
+
+    Notes
+    -----
+    ``c -> inf`` sends every weight to (approximately) 1 -- recovers a pure
+    global fit. ``c -> 0`` sends every weight except at ``dist == 0`` to 0
+    -- recovers nearest-neighbour.
+    """
+    dist_arr = np.atleast_1d(np.asarray(dist, dtype=float))
+    if c <= 0:
+        raise ValueError(f"gaspari_cohn: bandwidth c must be > 0, got {c!r}.")
+
+    r = np.abs(dist_arr) / c
+    w = np.zeros_like(r)
+
+    m1 = r <= 1.0
+    r1 = r[m1]
+    w[m1] = (-0.25 * r1 ** 5 + 0.5 * r1 ** 4 + 0.625 * r1 ** 3
+              - (5.0 / 3.0) * r1 ** 2 + 1.0)
+
+    m2 = (r > 1.0) & (r <= 2.0)
+    r2 = r[m2]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        w[m2] = (r2 ** 5 / 12.0 - 0.5 * r2 ** 4 + 0.625 * r2 ** 3
+                  + (5.0 / 3.0) * r2 ** 2 - 5.0 * r2 + 4.0 - 2.0 / (3.0 * r2))
+
+    w = np.clip(w, 0.0, None)
+    return w if np.asarray(dist).ndim > 0 else w[0]
+
+
+@dataclass
+class LocalizedHorizonWaxmanSmitsParams:
+    """
+    Kernel-localized Waxman-Smits fit for one soil horizon: one parameter
+    set PER TARGET LOCATION along the transect, instead of
+    ``HorizonWaxmanSmitsParams``'s single scalar broadcast to every EM point.
+
+    Parameters
+    ----------
+    horizon : int
+        0-based layer index (same meaning as ``HorizonWaxmanSmitsParams.horizon``).
+    target_indices : np.ndarray, shape (n_targets,)
+        Indices into the ``num_measured_points`` axis this horizon was
+        localized to (typically every EM point, but can be a subset).
+    target_x : np.ndarray, shape (n_targets,)
+        Along-transect x-coordinate of each target (from ``point_x_coords``).
+    target_y : np.ndarray, shape (n_targets,), or None
+        Cross-transect y-coordinate of each target (from
+        ``point_y_coords``), when 2-D Euclidean localization was used.
+        ``None`` for the default 1-D-transect case.
+    a, m, sigma_w, sigma_s : np.ndarray, shape (n_targets,)
+        Fitted Waxman-Smits parameters AT EACH TARGET. Where a target had no
+        TDR observation within the kernel's support (``2*bandwidth``), the
+        corresponding entry falls back to the prior ``p0`` for this horizon
+        (see ``is_calibrated``).
+    rmse : np.ndarray, shape (n_targets,)
+        Unweighted RMSE of this target's fitted params against ALL of this
+        horizon's observed theta (same convention as
+        ``HorizonWaxmanSmitsParams.rmse`` -- not just the nearby ones), so
+        per-horizon RMSE stays comparable to the un-localized fit. ``NaN``
+        wherever ``is_calibrated`` is ``False`` for that target.
+    is_calibrated : np.ndarray of bool, shape (n_targets,)
+        ``False`` at any target whose kernel support contained zero
+        effective weight (no TDR observation of this horizon was close
+        enough to matter, given ``bandwidth``) -- that target's params are
+        the unfit prior, same spirit as
+        ``HorizonWaxmanSmitsParams.is_calibrated`` but per-target rather
+        than per-horizon.
+    bandwidth : float
+        The ``c`` passed to ``gaspari_cohn`` for this fit.
+    """
+    horizon: int
+    target_indices: np.ndarray
+    target_x: np.ndarray
+    a: np.ndarray
+    m: np.ndarray
+    sigma_w: np.ndarray
+    sigma_s: np.ndarray
+    rmse: np.ndarray
+    is_calibrated: np.ndarray
+    bandwidth: float
+    target_y: np.ndarray | None = None
+
+
+@dataclass
+class LocalizedPetroFit:
+    """
+    Container for kernel-localized Waxman-Smits calibration results for one
+    ensemble member -- the localized analogue of ``PetroFit``.
+    """
+    model_index: int
+    horizon_fits: list[LocalizedHorizonWaxmanSmitsParams]
+
+    @property
+    def rmse(self) -> float:
+        """
+        Mean RMSE across every calibrated (horizon, target) pair. Provided
+        for parity with ``PetroFit.rmse``; how Steps 3/4's ensemble ranking
+        should aggregate a per-target RMSE array into a single per-member
+        score (mean over targets? worst-target? per-cell, per §5) is a
+        separate design decision -- this is just a simple default.
+        """
+        all_rmse = np.concatenate([
+            np.where(h.is_calibrated, h.rmse, np.nan) for h in self.horizon_fits
+        ]) if self.horizon_fits else np.array([])
+        if all_rmse.size == 0 or np.all(np.isnan(all_rmse)):
+            return float("nan")
+        return float(np.nanmean(all_rmse))
+
+
+def _fit_ws_horizon_weighted(
+    theta_layer: np.ndarray,
+    sigma_b_layer: np.ndarray,
+    obs_weights: np.ndarray,
+    p0: np.ndarray,
+    fixed_params: dict[str, bool],
+) -> tuple[float, float, float, float, np.ndarray]:
+    """
+    Single Waxman-Smits horizon fit for an arbitrary observation-weight
+    vector. Extracted from ``calibrate_petrophysical_relationship``'s inner
+    optimizer block (same objective, priors, bounds, and fallback
+    behaviour) so ``calibrate_petrophysical_relationship_localized`` can
+    call it once per target location with a different ``obs_weights`` each
+    time, instead of duplicating the optimizer setup.
+
+    Parameters
+    ----------
+    theta_layer, sigma_b_layer : np.ndarray, shape (n_obs,)
+        This horizon's observed theta and paired bulk EC.
+    obs_weights : np.ndarray, shape (n_obs,)
+        Per-observation weight fed into the data-misfit term. Callers are
+        responsible for any renormalisation convention (e.g. mean 1) --
+        this function uses whatever is passed in as-is.
+    p0 : np.ndarray, shape (4,)
+        Prior/starting guess ``[a, m, sigma_w, sigma_s]``.
+    fixed_params : dict[str, bool]
+        Same meaning as in ``calibrate_petrophysical_relationship``.
+
+    Returns
+    -------
+    a, m, sigma_w, sigma_s : float
+    theta_pred : np.ndarray, shape (n_obs,)
+        Predicted theta at every ``sigma_b_layer`` entry using the fitted
+        params (computed against ALL observations, not just the
+        nonzero-weight ones, so RMSE stays comparable across bandwidths).
+    """
+    from scipy.optimize import minimize
+
+    _PARAM_ORDER = ("a", "m", "sigma_w", "sigma_s")
+    PRIOR_STDS = {"a": 0.5, "m": 0.5, "sigma_w": 150.0, "sigma_s": 30.0}
+    lambda_reg = 0.1
+
+    def _log_ratio_objective(params):
+        a_, m_, sigma_w_, sigma_s_ = params
+        a_ = max(a_, 1e-6)
+        m_ = max(m_, 1e-6)
+        sigma_w_ = max(sigma_w_, 1e-6)
+        sigma_s_ = max(sigma_s_, 0.0)
+
+        theta_clip = np.clip(theta_layer, 1e-6, 1.0)
+        sigma_ws = (theta_clip ** m_ / a_) * (sigma_w_ + sigma_s_)
+        sigma_ert = np.clip(sigma_b_layer, 1e-10, None)
+        log_ert = np.log10(sigma_ert)
+        log_ws = np.log10(np.clip(sigma_ws, 1e-10, None))
+        data_misfit = np.sum(obs_weights * (log_ert - log_ws) ** 2)
+
+        prior_penalty = (
+            ((a_ - p0[0]) / PRIOR_STDS["a"]) ** 2
+            + ((m_ - p0[1]) / PRIOR_STDS["m"]) ** 2
+            + ((sigma_w_ - p0[2]) / PRIOR_STDS["sigma_w"]) ** 2
+            + ((sigma_s_ - p0[3]) / PRIOR_STDS["sigma_s"]) ** 2
+        )
+        return data_misfit + (lambda_reg * prior_penalty)
+
+    _bounds_full = [
+        (WS_BOUNDS[0][0], WS_BOUNDS[1][0]),
+        (WS_BOUNDS[0][1], WS_BOUNDS[1][1]),
+        (WS_BOUNDS[0][2], WS_BOUNDS[1][2]),
+        (WS_BOUNDS[0][3], WS_BOUNDS[1][3]),
+    ]
+    bounds_lbfgsb = [
+        (p0[i], p0[i]) if fixed_params.get(_PARAM_ORDER[i]) else _bounds_full[i]
+        for i in range(4)
+    ]
+
+    x0 = p0.copy()
+    for i in range(4):
+        if fixed_params.get(_PARAM_ORDER[i]):
+            x0[i] = p0[i]
+
+    try:
+        result = minimize(
+            _log_ratio_objective,
+            x0=x0,
+            method="L-BFGS-B",
+            bounds=bounds_lbfgsb,
+            options={"maxiter": 5000, "ftol": 1e-12},
+        )
+        popt = result.x if result.success else p0.copy()
+    except Exception:
+        popt = p0.copy()
+
+    a, m, sigma_w, sigma_s = popt
+    theta_pred = waxman_smits_theta(sigma_b_layer, a, m, sigma_w, sigma_s)
+    return float(a), float(m), float(sigma_w), float(sigma_s), theta_pred
+
+
+def calibrate_petrophysical_relationship_localized(
+    models: np.ndarray,
+    sample_positions: Sequence[int],
+    sample_times: Sequence[int],
+    theta_obs: np.ndarray,
+    point_x_coords: Sequence[float],
+    bandwidth: float,
+    point_y_coords: Sequence[float] | None = None,
+    target_indices: Sequence[int] | None = None,
+    depths0: Sequence[float] | None = None,
+    lab_p0: np.ndarray | None = None,
+    probe_layer_indices: Sequence[int] | None = None,
+    fixed_params: dict[str, bool] | None = None,
+    theta_obs_std: float | Sequence[float] | None = None,
+) -> list[LocalizedPetroFit]:
+    """
+    Kernel-localized (Gaspari-Cohn-weighted) generalization of
+    ``calibrate_petrophysical_relationship`` -- see
+    ``spatial_calibration_alternatives.md`` §2.
+
+    Fits Waxman-Smits parameters separately per soil horizon (exactly as
+    the un-localized function does -- horizon routing is unchanged and
+    still a hard depth partition) AND separately per spatial target
+    location within that horizon. Every TDR observation belonging to the
+    horizon contributes to every target's fit, weighted by
+    ``gaspari_cohn(dist to target, bandwidth)`` multiplied into the
+    existing ``theta_obs_std``-derived weight, instead of a hard
+    "belongs to this position" bucket.
+
+    ``bandwidth -> inf`` reproduces ``calibrate_petrophysical_relationship``'s
+    single global-per-horizon fit exactly. ``bandwidth -> 0`` collapses to
+    nearest-neighbour.
+
+    Parameters
+    ----------
+    models, sample_positions, sample_times, theta_obs, depths0, lab_p0,
+    probe_layer_indices, fixed_params, theta_obs_std
+        Same meaning as in ``calibrate_petrophysical_relationship``. Horizon
+        routing (``probe_layer_indices`` if given, else the strided
+        modulo heuristic) is reused unchanged.
+    point_x_coords : sequence of float, length num_measured_points
+        Along-transect x-coordinate of EVERY EM measured point (the same
+        axis ``sample_positions`` indexes into). When ``point_y_coords`` is
+        NOT given, ``gaspari_cohn`` distances are the signed 1-D difference
+        along this axis. Typically the same coordinate array used to build
+        ``probe_x_coords`` in ``extract_sample_positions_from_survey``.
+    bandwidth : float
+        The localization radius ``c`` passed to ``gaspari_cohn``, same
+        units as ``point_x_coords`` (and ``point_y_coords``, if given). No
+        default -- pick empirically by sweeping a few candidate values and
+        checking validation RMSE, the same way ``shrinkage_k`` would have
+        been tuned.
+    point_y_coords : sequence of float, length num_measured_points, optional
+        Cross-transect y-coordinate of every EM measured point, same axis
+        and ordering as ``point_x_coords``. When given, ``gaspari_cohn``
+        distances become the 2-D Euclidean distance
+        ``sqrt((x_obs - x_target)**2 + (y_obs - y_target)**2)`` instead of
+        the signed 1-D x-difference -- required for genuine 2-D survey
+        grids (``mode == "2d"``, real ``utm_x``/``utm_y`` geometry), where
+        localizing on x alone would ignore probes that are close in y but
+        far in x (or vice versa). ``None`` (default) keeps the original
+        1-D-transect behaviour unchanged (``y`` implicitly 0 for every
+        point, so 1-D distance and 2-D distance coincide).
+    target_indices : sequence of int, optional
+        Which EM points to produce a localized fit for. Defaults to every
+        point in ``point_x_coords`` (``range(len(point_x_coords))``) -- i.e.
+        a full per-EM-point σ_s(x[, y]) field. Pass a coarser subset to save
+        compute if a per-point fit isn't needed everywhere.
+
+    Returns
+    -------
+    list of LocalizedPetroFit, length ensemble_size
+    """
+    fixed_params = fixed_params or {}
+    _PARAM_ORDER = ("a", "m", "sigma_w", "sigma_s")
+
+    point_x_coords = np.asarray(point_x_coords, dtype=float)
+
+    timelapse_4d = models.ndim == 4
+    if timelapse_4d:
+        ensemble_size = models.shape[0]
+        num_layers = models.shape[3]
+        num_positions = models.shape[2]
+    else:
+        ensemble_size, num_positions, num_layers = models.shape
+
+    if len(point_x_coords) != num_positions:
+        raise ValueError(
+            f"point_x_coords has {len(point_x_coords)} entries but models "
+            f"has {num_positions} measured points along that axis; every "
+            "measured point needs an x-coordinate for localization."
+        )
+
+    # Optional Euclidean (x, y) localization -- see point_y_coords docstring
+    # above. use_2d=False keeps the exact original signed-1-D-distance path
+    # (gaspari_cohn(obs_x - target_x, bandwidth)) untouched.
+    if point_y_coords is not None:
+        point_y_coords = np.asarray(point_y_coords, dtype=float)
+        if len(point_y_coords) != num_positions:
+            raise ValueError(
+                f"point_y_coords has {len(point_y_coords)} entries but "
+                f"models has {num_positions} measured points along that "
+                "axis; every measured point needs a y-coordinate when "
+                "point_y_coords is provided."
+            )
+        use_2d = True
+    else:
+        use_2d = False
+
+    sample_positions = list(sample_positions)
+    n_samples = len(sample_positions)
+    sample_x = point_x_coords[np.asarray(sample_positions, dtype=int)]
+    sample_y = (
+        point_y_coords[np.asarray(sample_positions, dtype=int)] if use_2d else None
+    )
+
+    if target_indices is None:
+        target_indices = np.arange(num_positions)
+    else:
+        target_indices = np.asarray(target_indices, dtype=int)
+    target_x_all = point_x_coords[target_indices]
+    target_y_all = point_y_coords[target_indices] if use_2d else None
+    n_targets = len(target_indices)
+
+    if theta_obs_std is not None:
+        theta_obs_std_arr = np.broadcast_to(
+            np.asarray(theta_obs_std, dtype=float), (n_samples,)
+        ).copy()
+        if np.any(theta_obs_std_arr <= 0) or np.any(~np.isfinite(theta_obs_std_arr)):
+            print(
+                "[STEP 2 LOCALIZED][WARN] theta_obs_std contains non-positive "
+                "or non-finite value(s) -- observation weighting disabled for "
+                "this call (falling back to uniform base weights)."
+            )
+            theta_obs_std_arr = None
+    else:
+        theta_obs_std_arr = None
+
+    if probe_layer_indices is not None:
+        probe_layer_indices = list(probe_layer_indices)
+        if len(probe_layer_indices) != n_samples:
+            raise ValueError(
+                f"probe_layer_indices has {len(probe_layer_indices)} entries "
+                f"but sample_positions/theta_obs has {n_samples}."
+            )
+
+    if lab_p0 is None:
+        p0_per_horizon = np.tile(DEFAULT_WS_P0, (num_layers, 1))
+    else:
+        lab_p0 = np.asarray(lab_p0, dtype=float)
+        p0_per_horizon = (
+            np.tile(lab_p0, (num_layers, 1)) if lab_p0.ndim == 1 else lab_p0
+        )
+
+    fits: list[LocalizedPetroFit] = []
+
+    for idx in range(ensemble_size):
+        horizon_fits: list[LocalizedHorizonWaxmanSmitsParams] = []
+
+        for layer in range(num_layers):
+            if timelapse_4d:
+                sigma_b_full = np.array(
+                    [models[idx, sample_times[i], pos, layer]
+                     for i, pos in enumerate(sample_positions)],
+                    dtype=float,
+                )
+            else:
+                sigma_b_full = np.array(
+                    [models[idx, pos, layer] for pos in sample_positions],
+                    dtype=float,
+                )
+
+            # ---- Horizon routing: unchanged hard depth partition ---------
+            if probe_layer_indices is not None:
+                indices = [i for i, li in enumerate(probe_layer_indices) if li == layer]
+            elif n_samples >= num_layers:
+                step = n_samples // num_layers
+                start = layer * step
+                end = start + step if layer < num_layers - 1 else n_samples
+                indices = list(range(start, end))
+            else:
+                indices = [i for i in range(n_samples) if i % num_layers == layer]
+                if not indices:
+                    indices = list(range(n_samples))
+
+            p0 = p0_per_horizon[layer]
+
+            if not indices:
+                print(
+                    f"[STEP 2 LOCALIZED][WARN] No TDR probes mapped to layer "
+                    f"{layer}. Every target in this horizon falls back to "
+                    f"the prior (uncalibrated)."
+                )
+                horizon_fits.append(LocalizedHorizonWaxmanSmitsParams(
+                    horizon=layer,
+                    target_indices=target_indices.copy(),
+                    target_x=target_x_all.copy(),
+                    target_y=target_y_all.copy() if use_2d else None,
+                    a=np.full(n_targets, p0[0]),
+                    m=np.full(n_targets, p0[1]),
+                    sigma_w=np.full(n_targets, p0[2]),
+                    sigma_s=np.full(n_targets, p0[3]),
+                    rmse=np.full(n_targets, np.nan),
+                    is_calibrated=np.zeros(n_targets, dtype=bool),
+                    bandwidth=bandwidth,
+                ))
+                continue
+
+            theta_layer = theta_obs[indices]
+            sigma_b_layer = sigma_b_full[indices]
+            obs_x_layer = sample_x[indices]
+            obs_y_layer = sample_y[indices] if use_2d else None
+            std_layer = (
+                theta_obs_std_arr[indices] if theta_obs_std_arr is not None else None
+            )
+
+            _finite = np.isfinite(sigma_b_layer)
+            if not np.all(_finite):
+                theta_layer = theta_layer[_finite]
+                sigma_b_layer = sigma_b_layer[_finite]
+                obs_x_layer = obs_x_layer[_finite]
+                if obs_y_layer is not None:
+                    obs_y_layer = obs_y_layer[_finite]
+                if std_layer is not None:
+                    std_layer = std_layer[_finite]
+
+            # Base (non-spatial) per-observation weight -- same
+            # inverse-variance-from-theta_obs_std convention as the
+            # un-localized function.
+            if (std_layer is not None and std_layer.size == theta_layer.size
+                    and theta_layer.size > 0 and np.all(np.isfinite(std_layer))
+                    and np.all(std_layer > 0)):
+                _inv_var = 1.0 / (std_layer ** 2)
+                base_weights = _inv_var / np.mean(_inv_var)
+            else:
+                base_weights = np.ones_like(theta_layer)
+
+            a_arr = np.full(n_targets, np.nan)
+            m_arr = np.full(n_targets, np.nan)
+            sigma_w_arr = np.full(n_targets, np.nan)
+            sigma_s_arr = np.full(n_targets, np.nan)
+            rmse_arr = np.full(n_targets, np.nan)
+            calibrated_arr = np.zeros(n_targets, dtype=bool)
+
+            _target_y_iter = target_y_all if use_2d else [None] * n_targets
+            for t_i, (target_x, target_y) in enumerate(zip(target_x_all, _target_y_iter)):
+                if theta_layer.size == 0:
+                    a_arr[t_i], m_arr[t_i], sigma_w_arr[t_i], sigma_s_arr[t_i] = p0
+                    continue
+
+                if use_2d:
+                    # Euclidean (x, y) distance -- see point_y_coords
+                    # docstring. gaspari_cohn only ever uses |dist|, so a
+                    # nonnegative Euclidean distance is a drop-in
+                    # replacement for the signed 1-D difference below.
+                    dist = np.sqrt(
+                        (obs_x_layer - target_x) ** 2 + (obs_y_layer - target_y) ** 2
+                    )
+                else:
+                    dist = obs_x_layer - target_x
+                spatial_w = gaspari_cohn(dist, bandwidth)
+                combined_w_raw = base_weights * spatial_w
+
+                if np.sum(combined_w_raw) < 1e-8:
+                    # No observation of this horizon falls within the
+                    # kernel's support (2*bandwidth) of this target -- same
+                    # spirit as "no TDR probes mapped to this horizon", just
+                    # per-target instead of per-horizon. Fall back to prior.
+                    a_arr[t_i], m_arr[t_i], sigma_w_arr[t_i], sigma_s_arr[t_i] = p0
+                    continue
+
+                # Renormalise to mean 1 (same convention as base_weights)
+                # so lambda_reg's scale doesn't need retuning as bandwidth
+                # changes how many effective observations feed each target.
+                combined_w = combined_w_raw / np.mean(combined_w_raw)
+
+                a, m, sigma_w, sigma_s, theta_pred = _fit_ws_horizon_weighted(
+                    theta_layer, sigma_b_layer, combined_w, p0, fixed_params,
+                )
+                a_arr[t_i], m_arr[t_i], sigma_w_arr[t_i], sigma_s_arr[t_i] = (
+                    a, m, sigma_w, sigma_s,
+                )
+                # RMSE against ALL of this horizon's observations (not just
+                # the nearby ones), so it stays comparable across targets
+                # and bandwidths -- same convention as the un-localized RMSE.
+                rmse_arr[t_i] = float(np.sqrt(np.mean((theta_pred - theta_layer) ** 2)))
+                calibrated_arr[t_i] = True
+
+            horizon_fits.append(LocalizedHorizonWaxmanSmitsParams(
+                horizon=layer,
+                target_indices=target_indices.copy(),
+                target_x=target_x_all.copy(),
+                target_y=target_y_all.copy() if use_2d else None,
+                a=a_arr, m=m_arr, sigma_w=sigma_w_arr, sigma_s=sigma_s_arr,
+                rmse=rmse_arr, is_calibrated=calibrated_arr, bandwidth=bandwidth,
+            ))
+
+        fits.append(LocalizedPetroFit(model_index=idx, horizon_fits=horizon_fits))
+
+    return fits
+
+
+# ==========================================================================
+# BANDWIDTH SELECTION -- leave-one-probe-out cross-validation
+#
+# The in-sample RMSE stored on LocalizedHorizonWaxmanSmitsParams.rmse is NOT
+# a fair way to pick ``bandwidth``: as bandwidth -> 0, a target sitting at
+# (or very near) an observation's own location gets that observation's
+# weight -> 1 and everyone else's -> 0, so the "fit" just memorizes that
+# single point and its RMSE goes to ~0 for the wrong reason (pure
+# overfitting, not genuine skill). Leave-one-probe-out (LOO) CV fixes this
+# the standard way: refit with observation i EXCLUDED, predict AT
+# observation i's own location, and score against its true theta_obs. This
+# is exactly the check the docstrings above already point to ("pick c the
+# same way you'd have picked shrinkage_k -- by sweeping candidates and
+# checking validation RMSE"); this function performs that sweep.
+# ==========================================================================
+
+@dataclass
+class BandwidthSweepResult:
+    """
+    LOO-CV result for one candidate bandwidth.
+
+    Attributes
+    ----------
+    bandwidth : float
+    loo_rmse : float
+        Root-mean-square leave-one-out residual across every TDR
+        observation, ALL horizons pooled (the number that should be
+        compared across candidate bandwidths).
+    loo_rmse_per_horizon : dict[int, float]
+        Same, broken out per horizon (NaN if a horizon had < 2 observations
+        and so has no valid LOO fold).
+    n_folds : int
+        Number of observations that produced a valid LOO prediction (i.e.
+        excluding folds where every OTHER observation fell outside the
+        kernel's support and the fold fell back to the prior).
+    n_fallback : int
+        Number of folds that fell back to the prior p0 (no other
+        observation within ``2*bandwidth`` of the held-out point) -- large
+        values at small bandwidths are expected and are themselves useful
+        signal that the bandwidth is too small for the probe spacing.
+    """
+    bandwidth: float
+    loo_rmse: float
+    loo_rmse_per_horizon: dict
+    n_folds: int
+    n_fallback: int
+
+
+def sweep_localization_bandwidth(
+    sigma_b_reference: np.ndarray,
+    sample_positions: Sequence[int],
+    sample_times: Sequence[int],
+    theta_obs: np.ndarray,
+    point_x_coords: Sequence[float],
+    bandwidths: Sequence[float],
+    point_y_coords: Sequence[float] | None = None,
+    probe_layer_indices: Sequence[int] | None = None,
+    num_layers: int | None = None,
+    lab_p0: np.ndarray | None = None,
+    fixed_params: dict[str, bool] | None = None,
+    theta_obs_std: float | Sequence[float] | None = None,
+) -> list[BandwidthSweepResult]:
+    """
+    Leave-one-probe-out cross-validated RMSE of the kernel-localized
+    Waxman-Smits fit, for each candidate bandwidth in ``bandwidths`` -- the
+    principled way to pick ``bandwidth``, instead of eyeballing the
+    in-sample ``LocalizedHorizonWaxmanSmitsParams.rmse``.
+
+    For each horizon, each candidate bandwidth, and each observation ``i``
+    belonging to that horizon: refit Waxman-Smits using every OTHER
+    observation in the horizon (``i`` excluded), weighted by
+    ``gaspari_cohn(dist to i's own location, bandwidth)``, then predict
+    theta at ``i`` (via the forward model, using ``i``'s own bulk EC) and
+    compare against ``theta_obs[i]``. Pooling these held-out residuals
+    across every observation (all horizons) gives one LOO-CV RMSE per
+    bandwidth, directly comparable across candidates.
+
+    Because this excludes the held-out point itself, it does NOT reward
+    ``bandwidth -> 0`` memorization the way naive in-sample RMSE would --
+    at very small bandwidths, most folds will instead fall back to the
+    prior (see ``n_fallback``) once no other observation is close enough,
+    which typically makes LOO-CV RMSE at small bandwidths worse, not
+    better. Expect a U- or L-shaped curve: too small -> too few effective
+    neighbours per fold (prior fallback, high error); too large ->
+    approaches the global fit's own RMSE; a interior minimum (if one
+    exists) is the recommended ``bandwidth``.
+
+    Parameters
+    ----------
+    sigma_b_reference : np.ndarray
+        ONE ensemble member's inverted bulk-EC model, shape
+        ``(num_positions, num_layers)`` (single-time) or
+        ``(n_time, num_positions, num_layers)`` (time-lapse) -- i.e. what
+        ``models[idx]`` would be inside
+        ``calibrate_petrophysical_relationship_localized``. Bandwidth
+        selection is a one-off tuning step, not part of the per-ensemble-
+        member pipeline, so this takes a single reference slice (e.g. the
+        rank-1 / best-RMSE member from Step 2, or an ensemble mean) rather
+        than the full ensemble -- sweeping many candidate bandwidths times
+        many LOO folds times every ensemble member would be far more
+        compute than this decision needs.
+    sample_positions, sample_times, theta_obs, point_x_coords,
+    point_y_coords, probe_layer_indices, lab_p0, fixed_params,
+    theta_obs_std
+        Same meaning as in ``calibrate_petrophysical_relationship_localized``.
+    bandwidths : sequence of float
+        Candidate values of ``c`` to evaluate, e.g.
+        ``np.linspace(1.0, 20.0, 10)``.
+    num_layers : int, optional
+        Number of soil horizons. Inferred from ``sigma_b_reference``'s last
+        axis if omitted.
+
+    Returns
+    -------
+    list of BandwidthSweepResult, same length and order as ``bandwidths``.
+    """
+    fixed_params = fixed_params or {}
+
+    point_x_coords = np.asarray(point_x_coords, dtype=float)
+    use_2d = point_y_coords is not None
+    if use_2d:
+        point_y_coords = np.asarray(point_y_coords, dtype=float)
+
+    timelapse_4d = sigma_b_reference.ndim == 3
+    if num_layers is None:
+        num_layers = sigma_b_reference.shape[-1]
+
+    sample_positions = list(sample_positions)
+    n_samples = len(sample_positions)
+    sample_x = point_x_coords[np.asarray(sample_positions, dtype=int)]
+    sample_y = point_y_coords[np.asarray(sample_positions, dtype=int)] if use_2d else None
+
+    if theta_obs_std is not None:
+        theta_obs_std_arr = np.broadcast_to(
+            np.asarray(theta_obs_std, dtype=float), (n_samples,)
+        ).copy()
+        if np.any(theta_obs_std_arr <= 0) or np.any(~np.isfinite(theta_obs_std_arr)):
+            theta_obs_std_arr = None
+    else:
+        theta_obs_std_arr = None
+
+    if probe_layer_indices is not None:
+        probe_layer_indices = list(probe_layer_indices)
+
+    if lab_p0 is None:
+        p0_per_horizon = np.tile(DEFAULT_WS_P0, (num_layers, 1))
+    else:
+        lab_p0_arr = np.asarray(lab_p0, dtype=float)
+        p0_per_horizon = (
+            np.tile(lab_p0_arr, (num_layers, 1)) if lab_p0_arr.ndim == 1 else lab_p0_arr
+        )
+
+    results: list[BandwidthSweepResult] = []
+
+    for c in bandwidths:
+        all_resid = []
+        per_horizon_resid: dict = {}
+        n_fallback = 0
+
+        for layer in range(num_layers):
+            if timelapse_4d:
+                sigma_b_full = np.array(
+                    [sigma_b_reference[sample_times[i], pos, layer]
+                     for i, pos in enumerate(sample_positions)],
+                    dtype=float,
+                )
+            else:
+                sigma_b_full = np.array(
+                    [sigma_b_reference[pos, layer] for pos in sample_positions],
+                    dtype=float,
+                )
+
+            if probe_layer_indices is not None:
+                indices = [i for i, li in enumerate(probe_layer_indices) if li == layer]
+            elif n_samples >= num_layers:
+                step = n_samples // num_layers
+                start = layer * step
+                end = start + step if layer < num_layers - 1 else n_samples
+                indices = list(range(start, end))
+            else:
+                indices = [i for i in range(n_samples) if i % num_layers == layer]
+                if not indices:
+                    indices = list(range(n_samples))
+
+            if len(indices) < 2:
+                # Can't leave one out of a horizon with 0 or 1 observation.
+                continue
+
+            p0 = p0_per_horizon[layer]
+            theta_layer = theta_obs[indices]
+            sigma_b_layer = sigma_b_full[indices]
+            obs_x_layer = sample_x[indices]
+            obs_y_layer = sample_y[indices] if use_2d else None
+            std_layer = (
+                theta_obs_std_arr[indices] if theta_obs_std_arr is not None else None
+            )
+
+            _finite = np.isfinite(sigma_b_layer)
+            if not np.all(_finite):
+                theta_layer = theta_layer[_finite]
+                sigma_b_layer = sigma_b_layer[_finite]
+                obs_x_layer = obs_x_layer[_finite]
+                if obs_y_layer is not None:
+                    obs_y_layer = obs_y_layer[_finite]
+                if std_layer is not None:
+                    std_layer = std_layer[_finite]
+            n_h = theta_layer.size
+            if n_h < 2:
+                continue
+
+            if (std_layer is not None and std_layer.size == n_h
+                    and np.all(np.isfinite(std_layer)) and np.all(std_layer > 0)):
+                _inv_var = 1.0 / (std_layer ** 2)
+                base_weights_full = _inv_var / np.mean(_inv_var)
+            else:
+                base_weights_full = np.ones(n_h)
+
+            horizon_resid = []
+
+            for i in range(n_h):
+                mask = np.ones(n_h, dtype=bool)
+                mask[i] = False
+
+                target_x = obs_x_layer[i]
+                target_y = obs_y_layer[i] if use_2d else None
+
+                if use_2d:
+                    dist = np.sqrt(
+                        (obs_x_layer[mask] - target_x) ** 2
+                        + (obs_y_layer[mask] - target_y) ** 2
+                    )
+                else:
+                    dist = obs_x_layer[mask] - target_x
+
+                spatial_w = gaspari_cohn(dist, c)
+                combined_w_raw = base_weights_full[mask] * spatial_w
+
+                if np.sum(combined_w_raw) < 1e-8:
+                    a, m, sigma_w, sigma_s = p0
+                    n_fallback += 1
+                else:
+                    combined_w = combined_w_raw / np.mean(combined_w_raw)
+                    a, m, sigma_w, sigma_s, _ = _fit_ws_horizon_weighted(
+                        theta_layer[mask], sigma_b_layer[mask], combined_w,
+                        p0, fixed_params,
+                    )
+
+                theta_pred_i = waxman_smits_theta(
+                    np.array([sigma_b_layer[i]]), a, m, sigma_w, sigma_s
+                )[0]
+                resid = float(theta_pred_i - theta_layer[i])
+                horizon_resid.append(resid)
+                all_resid.append(resid)
+
+            per_horizon_resid[layer] = (
+                float(np.sqrt(np.mean(np.square(horizon_resid))))
+                if horizon_resid else float("nan")
+            )
+
+        pooled_rmse = (
+            float(np.sqrt(np.mean(np.square(all_resid)))) if all_resid else float("nan")
+        )
+        results.append(BandwidthSweepResult(
+            bandwidth=float(c),
+            loo_rmse=pooled_rmse,
+            loo_rmse_per_horizon=per_horizon_resid,
+            n_folds=len(all_resid),
+            n_fallback=n_fallback,
+        ))
+
+    return results
+
+
+def ec_to_water_content_localized(
+    ec_values: np.ndarray,
+    fit: "LocalizedPetroFit",
+    point_indices: Sequence[int],
+    probe_layer_indices: Sequence[int] | None = None,
+) -> np.ndarray:
+    """
+    Localized analogue of ``ec_to_water_content``: converts EC to θ using
+    each point's OWN target-specific Waxman-Smits parameters instead of one
+    scalar broadcast across the whole horizon.
+
+    Parameters
+    ----------
+    ec_values : np.ndarray, shape (n_samples,)
+        Bulk EC values to convert.
+    fit : LocalizedPetroFit
+        Output of ``calibrate_petrophysical_relationship_localized`` for
+        one ensemble member (or an averaged model).
+    point_indices : sequence of int, shape (n_samples,)
+        For each entry in ``ec_values``, the EM measured-point index (into
+        the same axis as ``point_x_coords``/``target_indices`` used when
+        fitting) whose localized parameters should be used. This is the
+        piece that's new relative to ``ec_to_water_content`` -- every point
+        can now draw a DIFFERENT σ_s (etc.), not just a different horizon.
+    probe_layer_indices : sequence of int, optional
+        0-based horizon index per entry, same meaning as in
+        ``ec_to_water_content``. ``None`` uses horizon 0 for every point
+        (safe fallback for single-horizon surveys).
+
+    Returns
+    -------
+    theta_pred : np.ndarray, shape (n_samples,)
+    """
+    ec_values = np.asarray(ec_values, dtype=float)
+    n_samples = len(ec_values)
+    point_indices = np.asarray(point_indices, dtype=int)
+    if len(point_indices) != n_samples:
+        raise ValueError(
+            f"point_indices has {len(point_indices)} entries but ec_values "
+            f"has {n_samples}; lengths must match."
+        )
+
+    if probe_layer_indices is None:
+        probe_layer_indices = [0] * n_samples
+    else:
+        probe_layer_indices = list(probe_layer_indices)
+        if len(probe_layer_indices) != n_samples:
+            raise ValueError(
+                f"probe_layer_indices has {len(probe_layer_indices)} entries "
+                f"but ec_values has {n_samples}; lengths must match."
+            )
+
+    theta_pred = np.empty(n_samples, dtype=float)
+    num_horizons = len(fit.horizon_fits)
+
+    # Per-horizon lookup: EM point index -> position within that horizon's
+    # target_indices array, built once per horizon rather than per sample.
+    _lookup_cache: dict[int, dict[int, int]] = {}
+
+    for i, (ec_val, layer_idx) in enumerate(zip(ec_values, probe_layer_indices)):
+        layer_idx = min(max(int(layer_idx), 0), num_horizons - 1)
+        hz = fit.horizon_fits[layer_idx]
+
+        if layer_idx not in _lookup_cache:
+            _lookup_cache[layer_idx] = {
+                int(pt): pos for pos, pt in enumerate(hz.target_indices)
+            }
+        lookup = _lookup_cache[layer_idx]
+
+        pt = int(point_indices[i])
+        if pt not in lookup:
+            raise ValueError(
+                f"EM point index {pt} was not among the target_indices this "
+                f"horizon ({layer_idx}) was localized to -- pass it in "
+                "target_indices when calling "
+                "calibrate_petrophysical_relationship_localized, or restrict "
+                "point_indices to points that were."
+            )
+        pos = lookup[pt]
+        theta_pred[i] = waxman_smits_theta(
+            np.array([ec_val]), hz.a[pos], hz.m[pos], hz.sigma_w[pos], hz.sigma_s[pos],
+        )[0]
+
+    return theta_pred
+
+
+# ==========================================================================
 # 7. CUMULATIVE MODEL AVERAGING ENGINE
 # ==========================================================================
 
