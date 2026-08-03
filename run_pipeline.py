@@ -37,6 +37,7 @@ from tqdm import tqdm
 
 import em_methodology as EMmethod
 import geometry_utils
+import train_val_split as tvs
 from scenario_loader import load_scenario, ScenarioConfig
 import plot_water_content as pwc
 import plot_emagpy_diagnostics as pediag
@@ -45,7 +46,9 @@ import plot_tdr_diagnostics as ptdrdiag
 import plot_solution_diagnostics as psol
 import plot_ini_model as pim
 import plot_probe_matching as ppm
+import plot_calibration_density as pcd
 import plot_pre_inversion_diagnostics as preinvdiag
+import plot_train_val_diagnostics as ptv
 
 step0   = importlib.import_module("0_generate_synthetic_data")
 step2   = importlib.import_module("2_run_petro")
@@ -111,7 +114,7 @@ class PipelineReporter:
 
     def __init__(self, output_dir: str, scenario_name: str, mode: str, cfg,
                  data_source: str = "synthetic", em_dir: str = None, tdr_dir: str = None,
-                 run_id: str | None = None) -> None:
+                 run_id: str | None = None, train_val_split: str = "off") -> None:
         os.makedirs(output_dir, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.report_path = os.path.join(output_dir, f"pipeline_report_{ts}.md")
@@ -148,6 +151,7 @@ class PipelineReporter:
             self._write(f"| TDR directory | `{tdr_dir}` |")
         self._write(f"| Scenario  | `{scenario_name}` |")
         self._write(f"| Mode      | `{mode.upper()}` |")
+        self._write(f"| Train/val split | `{train_val_split}` |")
         self._write(f"| Output dir| `{output_dir}` |")
         self._write(f"| Python    | {sys.version.split()[0]} on {platform.system()} {platform.machine()} |")
         self._write(f"| Host      | {platform.node()} |")
@@ -1394,7 +1398,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          full_range_gradient: bool | None = None,
          xy_z_blend: float | None = None,
          invert_z_gradient: bool | None = None,
-         log_file: str | None = None):
+         log_file: str | None = None,
+         train_val_split_method: str | None = None,
+         ws_localized_bandwidth: float | None = None,
+         ws_localized_bandwidth_sweep: list[float] | None = None):
     """
     Run the full EA-EM pipeline.
 
@@ -1493,6 +1500,28 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         Path to the shared run-log CSV that gets one appended row per run
         (see ``append_run_log``). ``None`` (default) uses
         ``DEFAULT_RUN_LOG`` (``mfc2_outputs/run_log.csv``).
+    train_val_split_method : str or None, optional
+        Split TDR/SWC observations into train (drives Step 2/4 fitting and
+        Step 3/5 K-selection) and validation (held out, reported once in
+        Step 5b) subsets — see ``train_val_split.py`` and Loiseau et al.
+        (2026) Secs. 2.3/2.6. One of ``"alternate_sorted"``, ``"by_probe"``,
+        ``"by_time_block"``, ``"random"``, or ``"off"``. ``None`` (default)
+        falls back to the scenario config value, or ``"off"`` (legacy
+        behaviour, no split) if the scenario doesn't set one either.
+    ws_localized_bandwidth : float or None, optional
+        Gaspari-Cohn localization radius 'c' for the Step 2 kernel-localized
+        Waxman-Smits diagnostic (see the ``WS_LOCALIZED_BANDWIDTH`` block in
+        Step 2). ``None`` (default) falls back to the scenario config's
+        ``ws_localized_bandwidth`` field, or disables the diagnostic if that
+        isn't set either. When ``ws_localized_bandwidth_sweep`` is also
+        given (CLI or scenario), the sweep's recommended bandwidth takes
+        precedence over this fixed value, same as scenario-only behaviour.
+    ws_localized_bandwidth_sweep : list of float or None, optional
+        Candidate bandwidths (c values) for the Step 2 LOCALIZED SWEEP
+        leave-one-probe-out CV diagnostic. ``None`` (default) falls back to
+        the scenario config's ``ws_localized_bandwidth_sweep`` field, or
+        skips the sweep if that isn't set either. Overrides the scenario
+        value when passed (CLI > scenario, same precedence as beta/gamma).
     """
     mode = mode.lower().strip()
 
@@ -1611,6 +1640,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         getattr(cfg, "spatial_match_tolerance_m", 2.0) if cfg is not None else 2.0
     )
 
+    # Train/validation split (see train_val_split.py and Loiseau et al.,
+    # 2026 Secs. 2.3/2.6). "off" preserves the legacy behaviour of fitting
+    # and selecting K on the full observation set. Resolved here (CLI >
+    # scenario > "off") so it's available both to the reporter header and
+    # to the split logic right before Step 2.
+    TRAIN_VAL_SPLIT = (
+        train_val_split_method if train_val_split_method is not None
+        else (getattr(cfg, "train_val_split", "off") if cfg is not None else "off")
+    )
+
     # Initialise run reporter
     # (_scenario_name was already set above, alongside OUTPUT_DIR)
     LOG_FILE = log_file or DEFAULT_RUN_LOG
@@ -1628,6 +1667,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         data_source=data_source,
         em_dir=em_dir,
         tdr_dir=tdr_dir,
+        train_val_split=TRAIN_VAL_SPLIT,
     )
     # Tag the output folder with this run's id immediately (before any
     # pipeline step runs) so it's identifiable even if the run crashes
@@ -3311,6 +3351,26 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     f"(pipeline continues): {type(_match_plot_exc).__name__}: {_match_plot_exc}"
                 )
 
+            try:
+                pcd.plot_calibration_density_hard(
+                    survey_df=survey_df,
+                    position_results=position_results,
+                    output_dir=OUTPUT_DIR,
+                    title="Calibration density — hard window (SWC/TDR probes)",
+                )
+            except Exception as _calib_hard_exc:
+                reporter.log(
+                    f"[PIPELINE][WARN] Hard-window calibration-density plot failed "
+                    f"(pipeline continues): {type(_calib_hard_exc).__name__}: {_calib_hard_exc}"
+                )
+
+            # Branch-neutral alias so the kernel-localized diagnostics further
+            # below (Step 2 LOCALIZED, gated on WS_LOCALIZED_BANDWIDTH) don't
+            # need to know whether this run used synthetic `position_results`
+            # or real-data `station_position_results` — mirrors `survey_df`,
+            # which both branches already share under one name.
+            CALIB_POSITION_RESULTS = position_results
+
         if timelapse:
             # Pool ALL n_time synthetic survey epochs per probe, instead of
             # the old round-robin `i % n_time` assignment. Round-robin gave
@@ -3446,6 +3506,23 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     f"(pipeline continues): {type(_match_plot_exc).__name__}: {_match_plot_exc}"
                 )
 
+            try:
+                pcd.plot_calibration_density_hard(
+                    survey_df=survey_df,
+                    position_results=station_position_results,
+                    output_dir=OUTPUT_DIR,
+                    title="Calibration density — hard window (real TDR stations)",
+                    filename="calibration_density_hard_real_stations.png",
+                )
+            except Exception as _calib_hard_exc:
+                reporter.log(
+                    f"[PIPELINE][WARN] Hard-window calibration-density plot failed "
+                    f"(pipeline continues): {type(_calib_hard_exc).__name__}: {_calib_hard_exc}"
+                )
+
+            # Branch-neutral alias — see synthetic-branch comment above.
+            CALIB_POSITION_RESULTS = station_position_results
+
             # For real data mode, extract sample metadata from observations,
             # routing each observation's station-ordinal probe_index through
             # the station -> EM-spatial-index map computed above.
@@ -3505,6 +3582,80 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 theta_true_realization[t_idx, pos, layer] + np.random.normal(0, TDR_NOISE_STD)
                 for t_idx, pos, layer in zip(sample_times, sample_positions, probe_layer_indices)
             ])
+
+        # -----------------------------------------------------------------------
+        # TRAIN / VALIDATION SPLIT (Loiseau et al., 2026 Secs. 2.3/2.6)
+        # -----------------------------------------------------------------------
+        # Split once, right here, over the flattened (position, time)
+        # observation pairs -- before anything downstream (Step 2 fitting,
+        # Step 3 ranking, Step 4 recalibration, Step 5 K-selection) ever
+        # touches theta_obs. Training data drives fitting/selection;
+        # validation data is held out untouched until the one-shot Step 5b
+        # check after K is picked. "off" (default) preserves the legacy
+        # behaviour: everything below sees the full observation set, same
+        # as before this split existed.
+        _probe_id_for_split = None
+        if data_source == "real":
+            # obs['probe_index'] is the real TDR station's ordinal index,
+            # built in the exact same loop order as theta_obs_list above --
+            # this is the only case where a genuine per-observation probe
+            # identifier exists today, so it's the only case 'by_probe' can
+            # actually run fully independent (see tvs.split_train_val's
+            # fallback-to-alternate_sorted otherwise).
+            _probe_id_for_split = np.array([obs['probe_index'] for obs in observations_list])
+
+        sample_positions_val = sample_times_val = theta_obs_val = probe_layer_val = None
+        split = None
+        if TRAIN_VAL_SPLIT != "off":
+            split = tvs.split_train_val(
+                theta_obs=np.asarray(theta_obs),
+                sample_positions=np.asarray(sample_positions),
+                sample_times=np.asarray(sample_times),
+                probe_layer_indices=(np.asarray(probe_layer_indices)
+                                      if probe_layer_indices is not None else None),
+                probe_id=_probe_id_for_split,
+                method=TRAIN_VAL_SPLIT,
+            )
+            reporter.log(
+                f"[SPLIT] Train/val split method='{split.method}' "
+                f"(independent={split.independent}): "
+                f"{len(split.train)} train / {len(split.val)} val observations "
+                f"(of {len(theta_obs)} total)."
+            )
+            if not split.independent:
+                reporter.log(
+                    "[SPLIT][WARN] This split is NOT fully independent -- "
+                    "train and validation subsets may share the same probe "
+                    "and/or time step (Loiseau et al.'s Larzac caveat: "
+                    "network too sparse for a fully independent split). "
+                    "Treat Step 5b's validation RMSE as indicative, not a "
+                    "strict generalisation test, until switching to "
+                    "'by_probe' or 'by_time_block' once TDR coverage is "
+                    "denser."
+                )
+            reporter.metric("Train/val split method", split.method)
+            reporter.metric("Train observations", len(split.train))
+            reporter.metric("Validation observations", len(split.val))
+            reporter.metric("Split independent", str(split.independent))
+
+            # Hold out the validation subset untouched, for the one-shot
+            # Step 5b check after K is selected.
+            sample_positions_val = tvs.subset(np.asarray(sample_positions), split.val)
+            sample_times_val     = tvs.subset(np.asarray(sample_times), split.val)
+            theta_obs_val        = tvs.subset(np.asarray(theta_obs), split.val)
+            probe_layer_val      = (tvs.subset(np.asarray(probe_layer_indices), split.val)
+                                     if probe_layer_indices is not None else None)
+
+            # Route ONLY the training subset into every downstream step
+            # that currently drives fitting/selection (Step 2/3/4/5). This
+            # reassigns the exact same variable names step2/step3/step4/
+            # step4_5 already consume below, so nothing past this point
+            # needs to change to become train-only.
+            sample_positions    = tvs.subset(np.asarray(sample_positions), split.train)
+            sample_times        = tvs.subset(np.asarray(sample_times), split.train)
+            theta_obs           = tvs.subset(np.asarray(theta_obs), split.train)
+            probe_layer_indices = (tvs.subset(np.asarray(probe_layer_indices), split.train)
+                                    if probe_layer_indices is not None else None)
 
         # -----------------------------------------------------------------------
         # STEP 2 — WAXMAN-SMITS PETROPHYSICAL CALIBRATION
@@ -3628,6 +3779,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # ------------------------------------------------------------------
         WS_LOCALIZED_BANDWIDTH = getattr(cfg, "ws_localized_bandwidth", None) if cfg is not None else None
         WS_LOCALIZED_BANDWIDTH_SWEEP = getattr(cfg, "ws_localized_bandwidth_sweep", None) if cfg is not None else None
+        # --ws-localized-bandwidth / --ws-localized-bandwidth-sweep CLI
+        # overrides (mirror the --beta / --gamma pattern: CLI value wins
+        # over whatever the scenario config set, including turning the
+        # diagnostic ON for a scenario that doesn't set either field, or
+        # OFF is not directly expressible here -- pass neither flag and
+        # the scenario value (if any) is used as before).
+        if ws_localized_bandwidth is not None:
+            WS_LOCALIZED_BANDWIDTH = ws_localized_bandwidth
+        if ws_localized_bandwidth_sweep is not None:
+            WS_LOCALIZED_BANDWIDTH_SWEEP = list(ws_localized_bandwidth_sweep)
         _localized_y = y_transect if (mode == "2d" and utm_y is not None) else None
         _bandwidth_from_sweep = False
 
@@ -3744,6 +3905,25 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     f"[STEP 2 LOCALIZED] Diagnostic complete -> "
                     f"{OUTPUT_DIR}/petro_calibration_localized.png"
                 )
+
+                # Spatial diagnostics for this same localized fit: how many
+                # (effective, kernel-weighted) TDR probes back each EM point,
+                # and what the fit actually produced spatially, per horizon.
+                pcd.plot_calibration_density_kernel(
+                    survey_df=survey_df,
+                    position_results=CALIB_POSITION_RESULTS,
+                    bandwidth=WS_LOCALIZED_BANDWIDTH,
+                    output_dir=OUTPUT_DIR,
+                )
+                _calib_probe_x = np.array([r.probe_x for r in CALIB_POSITION_RESULTS])
+                _calib_probe_y = np.array([r.probe_y for r in CALIB_POSITION_RESULTS])
+                for _hz_fit in fits_step2_localized.horizon_fits:
+                    pcd.plot_ws_params_localized_spatial(
+                        fit=_hz_fit,
+                        probe_x=_calib_probe_x,
+                        probe_y=_calib_probe_y,
+                        output_dir=OUTPUT_DIR,
+                    )
             except Exception as e:
                 # Diagnostic sibling only -- never let it fail a run that
                 # would otherwise succeed.
@@ -4007,11 +4187,154 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 "extra caution before relying on it."
             )
 
+        reporter.end_step("Step 5")
+
+        # -----------------------------------------------------------------------
+        # STEP 5b — HELD-OUT VALIDATION (Loiseau et al., 2026 Sec. 2.6)
+        # -----------------------------------------------------------------------
+        # Forward-only evaluation of the TRAIN-fitted Waxman-Smits parameters
+        # against the VALIDATION subset, at the selected K. No re-fitting
+        # happens here -- everything above (Step 2/3/4/5) only ever saw
+        # `split.train`, so this is the first and only time the validation
+        # observations are touched.
+        if split is not None and theta_obs_val is not None and len(theta_obs_val):
+            reporter.step("Step 5b", "Held-out validation (Sec. 2.6)")
+            reporter.log("\n" + "=" * 80)
+            reporter.log(" [PIPELINE] STEP 5b: HELD-OUT VALIDATION")
+            reporter.log("=" * 80)
+
+            # -----------------------------------------------------------
+            # Validation RMSE at EVERY candidate stack depth K, not just
+            # the selected one -- needed for the train-vs-val RMSE-vs-K
+            # overfitting curve (train_val/rmse_vs_K.png). Same "pin every
+            # WS param to its train-fitted value" trick as before, just
+            # looped across all K instead of stopping at selected_output.K.
+            # Cheap: fixed_params turns each L-BFGS-B call into a no-op
+            # forward pass, so this is len(fits_step4) forward evaluations,
+            # not len(fits_step4) real optimizations.
+            # -----------------------------------------------------------
+            val_rmse_by_k = []
+            val_fit = None
+            for _k in range(len(fits_step4)):
+                _train_params_k = fits_step4[_k].params  # (num_layers, 4)
+                _val_fit_k = step2.run_petro(
+                    # averaged_models[_k] already has the ensemble axis
+                    # collapsed (Step 3); wrap it back into a length-1
+                    # ensemble since run_petro/calibrate_petrophysical_
+                    # relationship call `.ndim` on `models` directly.
+                    models=np.stack([averaged_models[_k]]),
+                    sample_positions=sample_positions_val, sample_times=sample_times_val,
+                    theta_obs=theta_obs_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
+                    generate_plots=False,   # diagnostic-only pass, skip Step 2's plot set
+                    probe_layer_indices=probe_layer_val,
+                    depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
+                    fixed_params={"a": True, "m": True, "sigma_w": True, "sigma_s": True},
+                    probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
+                    lab_p0=_train_params_k,   # pin to TRAIN-fitted values at this K, not LAB_P0
+                    theta_obs_std=_theta_obs_std_step2,
+                )[0]
+                val_rmse_by_k.append(_val_fit_k.rmse)
+                if _k == selected_output.K - 1:
+                    # Keep the fit at the SELECTED K -- this is what the
+                    # scalar metrics/parity plot below use, identical to
+                    # the single-K evaluation this loop replaces.
+                    val_fit = _val_fit_k
+            val_rmse_by_k = np.array(val_rmse_by_k)
+
+            if val_fit is None:
+                # Defensive fallback -- should be unreachable since
+                # selected_output.K is always in range(1, len(fits_step4)+1),
+                # but avoids a confusing AttributeError below if that ever
+                # changes upstream.
+                reporter.log(
+                    "[STEP 5b][WARN] selected_output.K was not covered by "
+                    "the per-K validation loop -- re-evaluating it directly."
+                )
+                val_fit = step2.run_petro(
+                    models=np.stack([averaged_models[selected_output.K - 1]]),
+                    sample_positions=sample_positions_val, sample_times=sample_times_val,
+                    theta_obs=theta_obs_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
+                    generate_plots=False,
+                    probe_layer_indices=probe_layer_val,
+                    depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
+                    fixed_params={"a": True, "m": True, "sigma_w": True, "sigma_s": True},
+                    probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
+                    lab_p0=fits_step4[selected_output.K - 1].params,
+                    theta_obs_std=_theta_obs_std_step2,
+                )[0]
+
+            # Train RMSE per K was already computed above at Step 4
+            # (`_rmse4_all = [f.rmse for f in fits_step4]`) -- reuse it
+            # rather than recomputing, so both curves are guaranteed to
+            # come from the exact same fits_step4 list, index for index.
+            train_rmse_by_k = np.array(_rmse4_all)
+
+            # `fits_step4` (Step 4's recalibration of the K-averaged models)
+            # is what selected_output.K was actually picked on -- these are
+            # the TRAIN-fitted parameters frozen for reporting below.
+            train_fitted_params = fits_step4[selected_output.K - 1].params  # (num_layers, 4)
+
+            train_rmse = selected_output.rmse
+            val_rmse = val_fit.rmse
+            reporter.log(
+                f"[STEP 5b] Train RMSE (K={selected_output.K}, n={len(split.train)}): "
+                f"{train_rmse:.5f} m³/m³"
+            )
+            reporter.log(
+                f"[STEP 5b] Val   RMSE (K={selected_output.K}, n={len(split.val)}): "
+                f"{val_rmse:.5f} m³/m³"
+            )
+            _gap = val_rmse - train_rmse
+            reporter.metric("Train RMSE", f"{train_rmse:.5f} m³/m³")
+            reporter.metric("Validation RMSE", f"{val_rmse:.5f} m³/m³")
+            reporter.metric("Train↔Val RMSE gap", f"{_gap:+.5f} m³/m³")
+            if not split.independent:
+                reporter.log(
+                    f"[STEP 5b][NOTE] split method='{split.method}' is not "
+                    f"fully independent (see [SPLIT][WARN] above) -- a "
+                    f"small train/val gap here is expected and does not by "
+                    f"itself rule out overfitting the way it would for an "
+                    f"independent split."
+                )
+            if abs(_gap) > 0.3 * train_rmse:
+                reporter.log(
+                    "[STEP 5b][WARN] Val RMSE diverges >30% from train RMSE "
+                    "-- possible overfitting in K selection, or val subset "
+                    "too small to be representative. Treat the selected K "
+                    "with caution."
+                )
+
+            # -----------------------------------------------------------
+            # Train/val diagnostic plots -> <OUTPUT_DIR>/train_val/
+            # -----------------------------------------------------------
+            _train_val_dir = os.path.join(OUTPUT_DIR, "train_val")
+            try:
+                os.makedirs(_train_val_dir, exist_ok=True)
+                ptv.plot_rmse_vs_k(
+                    train_rmse_by_k=train_rmse_by_k,
+                    val_rmse_by_k=val_rmse_by_k,
+                    selected_K=selected_output.K,
+                    output_dir=_train_val_dir,
+                )
+                ptv.plot_parity_train_val(
+                    train_obs=fits_step4[selected_output.K - 1].observed_theta,
+                    train_pred=fits_step4[selected_output.K - 1].predicted_theta,
+                    val_obs=val_fit.observed_theta,
+                    val_pred=val_fit.predicted_theta,
+                    output_dir=_train_val_dir,
+                )
+                reporter.log(f"[STEP 5b] Train/val diagnostic plots -> {_train_val_dir}")
+            except Exception as _tv_plot_exc:
+                reporter.log(
+                    f"[STEP 5b][WARN] Train/val diagnostic plots failed "
+                    f"(pipeline continues): {type(_tv_plot_exc).__name__}: {_tv_plot_exc}"
+                )
+
+            reporter.end_step("Step 5b")
+
         # -----------------------------------------------------------------------
         # STEP 6 — WATER CONTENT VISUALISATIONS  (XZ always; XY in 2-D mode)
         # -----------------------------------------------------------------------
-        reporter.end_step("Step 5")
-
         reporter.step("Step 6", "Rendering water content visualizations")
         reporter.log("\n" + "=" * 80)
         reporter.log(" [PIPELINE] STEP 6: RENDERING WATER CONTENT VISUALIZATIONS")
@@ -4603,7 +4926,52 @@ if __name__ == "__main__":
              "the scenario config when passed; falls back to the scenario "
              "value (or 0.0) otherwise.",
     )
-    args = parser.parse_args() 
+    parser.add_argument(
+        "--ws-localized-bandwidth", type=float, default=None, metavar="C",
+        help="Gaspari-Cohn localization radius 'c' (same units as your x/y "
+             "coordinates, e.g. metres) for the Step 2 kernel-localized "
+             "Waxman-Smits diagnostic -- a sibling to the normal Step 2 "
+             "calibration that fits a separate WS parameter set at every "
+             "EM point, weighting nearby TDR probes more heavily. Never "
+             "replaces Step 2 and never changes Steps 3-5; only adds "
+             "'petro_calibration_localized.png' (and, in 2-D mode, a "
+             "sigma_s(x, y) map) to the output directory. Overrides "
+             "'ws_localized_bandwidth' in the scenario config when passed; "
+             "falls back to the scenario value (or disabled) otherwise. "
+             "Rule of thumb: pick a value at least ~half the spacing "
+             "between your closest adjacent SWC/TDR probes. Ignored if "
+             "--ws-localized-bandwidth-sweep is also given (the sweep's "
+             "recommended bandwidth takes precedence).",
+    )
+    parser.add_argument(
+        "--ws-localized-bandwidth-sweep", nargs="+", type=float, default=None,
+        metavar="C",
+        help="Candidate bandwidths (c values) for the Step 2 LOCALIZED "
+             "SWEEP diagnostic: leave-one-probe-out CV over these "
+             "candidates against the rank-1 Step 2 ensemble member, e.g. "
+             "--ws-localized-bandwidth-sweep 1.0 2.0 5.0 10.0 15.0 20.0. "
+             "The recommended (minimum pooled LOO-CV RMSE) bandwidth then "
+             "becomes the localized diagnostic's bandwidth, overriding any "
+             "fixed --ws-localized-bandwidth / scenario value. Overrides "
+             "'ws_localized_bandwidth_sweep' in the scenario config when "
+             "passed; falls back to the scenario value (or disabled, i.e. "
+             "no sweep) otherwise.",
+    )
+    parser.add_argument(
+        "--train-val-split", default=None,
+        choices=["alternate_sorted", "by_probe", "by_time_block", "random", "off"],
+        help="Split TDR/SWC observations into train (fits the Waxman-Smits "
+             "relationship in Step 2/4 and selects the stack depth K in "
+             "Step 3/5) and validation (held out, reported once at the end "
+             "in Step 5b) subsets, mirroring Loiseau et al. (2026) Secs. "
+             "2.3/2.6. 'alternate_sorted' (paper's Larzac fallback, NOT "
+             "fully independent), 'by_probe' / 'by_time_block' (fully "
+             "independent splits), 'random' (comparison only). Overrides "
+             "'train_val_split' in the scenario config when passed; falls "
+             "back to the scenario value (or 'off', i.e. no split — legacy "
+             "behaviour) otherwise.",
+    )
+    args = parser.parse_args()
     
     # Validate real data requirements
     if args.data_source == "real":
@@ -4718,7 +5086,10 @@ if __name__ == "__main__":
              full_range_gradient=(True if args.full_range_gradient else None),
              xy_z_blend=args.xy_z_blend,
              invert_z_gradient=(True if args.invert_z_gradient else None),
-             log_file=args.log_file)
+             log_file=args.log_file,
+             train_val_split_method=args.train_val_split,
+             ws_localized_bandwidth=args.ws_localized_bandwidth,
+             ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

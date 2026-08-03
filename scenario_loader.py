@@ -337,6 +337,22 @@ class ScenarioConfig:
     (is_calibrated == False), the run's final status is downgraded to a
     warning state. Does not abort the run."""
 
+    # ------------------------------------------------------------------
+    # Train / validation split (Loiseau et al., 2026 Secs. 2.3/2.6)
+    # ------------------------------------------------------------------
+    train_val_split: str = "off"
+    """Split TDR/SWC observations into a training subset (drives Step 2/4
+    Waxman-Smits fitting and Step 3/5 ensemble-K selection) and a
+    validation subset (held out untouched, reported once in Step 5b) --
+    see train_val_split.py. One of 'alternate_sorted' (paper's Larzac
+    fallback -- NOT fully independent, both subsets can share a probe or
+    time step), 'by_probe' (fully independent, needs a per-observation
+    probe id; real-data mode only), 'by_time_block' (fully independent
+    w.r.t. time; paper's Avignon approach), 'random' (comparison only), or
+    'off' (default -- legacy behaviour, fit and select K on the full
+    observation set). A CLI --train-val-split flag, if given, overrides
+    this field."""
+
     depths_are_fixed: bool             = field(init=False)
 
     def __post_init__(self):
@@ -437,6 +453,9 @@ class ScenarioConfig:
             f"  CV high thresh  : {self.quality_gate_cv_high_threshold}",
             f"  CV high frac warn: {self.quality_gate_cv_high_fraction_warn}",
             f"  Require all horizons calibrated: {self.quality_gate_require_all_horizons_calibrated}",
+            f"  ── Train/val split ──────────────────────────────────",
+            f"  Method          : {self.train_val_split}"
+            + ("  (legacy: fit + select K on the full observation set)" if self.train_val_split == "off" else ""),
         ]
         return "\n".join(lines)
 
@@ -630,6 +649,26 @@ def _validate(name: str, raw: dict) -> None:
         raise ValueError(
             f"Scenario '{name}': data_source must be 'synthetic' or 'real', "
             f"got {data_source!r}."
+        )
+
+    # ---- Train/validation split (Loiseau et al., 2026 Secs. 2.3/2.6) --
+    tvs_method = raw.get("train_val_split", "off")
+    _valid_tvs_methods = ("alternate_sorted", "by_probe", "by_time_block", "random", "off")
+    if tvs_method not in _valid_tvs_methods:
+        raise ValueError(
+            f"Scenario '{name}': train_val_split must be one of "
+            f"{_valid_tvs_methods}, got {tvs_method!r}."
+        )
+    if tvs_method == "by_probe" and data_source != "real":
+        # split_train_val() would just fall back to alternate_sorted with a
+        # warning at runtime (synthetic mode has no genuine per-observation
+        # probe id), but failing loudly at scenario-load time is clearer
+        # than a run silently not doing what the config says it's doing.
+        raise ValueError(
+            f"Scenario '{name}': train_val_split='by_probe' needs a real "
+            f"per-observation probe id, which only exists for "
+            f"data_source='real'. Use 'alternate_sorted', 'by_time_block', "
+            f"or 'random' for synthetic scenarios."
         )
     if data_source == "real":
         for field_name in ("em_data_dir", "tdr_data_dir", "coord_file"):
@@ -1052,6 +1091,7 @@ def load_scenario(
             [float(v) for v in raw["ws_localized_bandwidth_sweep"]]
             if raw.get("ws_localized_bandwidth_sweep") is not None else None
         ),
+        train_val_split   = str(raw.get("train_val_split", "off")),
     )
 
 

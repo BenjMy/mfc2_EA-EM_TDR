@@ -12,16 +12,27 @@
 #   ./run_pipeline.sh -s fine_layers_fixed -c my.json          # synthetic, custom config file
 #   ./run_pipeline.sh -s free_all -e /path/to/venv             # synthetic, custom virtualenv
 #   ./run_pipeline.sh --mode 2d --nx 15 --ny 8                 # synthetic, 2-D grid 15×8 points
+#   ./run_pipeline.sh --train-val-split by_probe               # held-out-probe validation (see below)
 #   ./run_pipeline.sh --list                                    # list scenarios
 #   ./run_pipeline.sh --validate                               # validate all scenarios
 #   ./run_pipeline.sh --help                                   # show this message
 #
 # Localization diagnostic (Step 2 kernel-localized WS calibration)
 # ------------------------------------------------------------------
-#   OFF by default for every scenario. Controlled only by the scenario's
-#   own 'ws_localized_bandwidth' field in ensemble_scenarios.json -- no
-#   CLI flag on this wrapper turns it on/off. See `--help` for details,
-#   current per-scenario status, and how to enable/disable it.
+#   OFF by default for every scenario. Controlled by the scenario's own
+#   'ws_localized_bandwidth' / 'ws_localized_bandwidth_sweep' fields in
+#   ensemble_scenarios.json, OR by --ws-localized-bandwidth /
+#   --ws-localized-bandwidth-sweep on this wrapper (CLI wins when both
+#   are set). See `--help` for details, current per-scenario status, and
+#   how to enable/disable it either way.
+#
+# Train/validation split (Loiseau et al. 2026, Secs. 2.3 & 2.6)
+# ---------------------------------------------------------------
+#   OFF by default (legacy behaviour: all TDR/SWC observations both fit
+#   and select K, so reported RMSE is not out-of-sample). Turn on with
+#   --train-val-split {alternate_sorted, by_probe, by_time_block, random}
+#   or by setting 'train_val_split' in the scenario JSON. See `--help`
+#   for what each method does and which ones are fully independent.
 #
 # Data sources
 # -----------
@@ -76,6 +87,9 @@ SWC_DEPTHS=()
 WINDOW_M=""
 BETA=()
 GAMMA=""
+WS_LOCALIZED_BANDWIDTH=""
+WS_LOCALIZED_BANDWIDTH_SWEEP=()
+TRAIN_VAL_SPLIT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
 SCENARIO_LOADER="${SCRIPT_DIR}/scenario_loader.py"
@@ -183,6 +197,62 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           (>= 0), only used for time-lapse (multi-epoch)
                           inversions. Overrides 'gamma' in the scenario
                           config.
+      --ws-localized-bandwidth C
+                          Gaspari-Cohn localization radius 'c' (same
+                          units as your x/y coordinates, e.g. metres)
+                          for the Step 2 kernel-localized Waxman-Smits
+                          diagnostic. Overrides 'ws_localized_bandwidth'
+                          in the scenario config; see the "Localization
+                          diagnostic" section below for what this does
+                          and how to pick a value. Ignored if
+                          --ws-localized-bandwidth-sweep is also given.
+      --ws-localized-bandwidth-sweep C [C ...]
+                          Candidate bandwidths (c values) for the Step 2
+                          LOCALIZED SWEEP leave-one-probe-out CV
+                          diagnostic, e.g.
+                          --ws-localized-bandwidth-sweep 1 2 5 10 15 20.
+                          The recommended bandwidth (min pooled LOO-CV
+                          RMSE) then overrides any fixed
+                          --ws-localized-bandwidth / scenario value.
+                          Overrides 'ws_localized_bandwidth_sweep' in
+                          the scenario config.
+      --train-val-split METHOD
+                          Split TDR/SWC observations into a train subset
+                          (drives Step 2/4 Waxman-Smits fitting AND Step
+                          3/5 ensemble-K selection) and a validation
+                          subset (held out untouched, reported once at
+                          the end in Step 5b). OFF by default -- the
+                          legacy behaviour, where every observation both
+                          fits the model and picks K, so the reported
+                          RMSE is in-sample, not a fair generalisation
+                          estimate. Overrides 'train_val_split' in the
+                          scenario config when passed. METHOD is one of:
+                            off              No split (default).
+                            alternate_sorted Sort by theta_obs, take
+                                             every other value. Matches
+                                             the paper's Larzac fallback.
+                                             NOT fully independent -- the
+                                             same probe/time step can
+                                             appear in both subsets.
+                            by_probe         Hold out whole probes/pits
+                                             for validation. Fully
+                                             independent. Falls back to
+                                             alternate_sorted (with a
+                                             loud warning) if the run
+                                             can't identify per-
+                                             observation probe IDs.
+                            by_time_block    Hold out whole time steps
+                                             for validation (paper's
+                                             Avignon setup: "every other
+                                             time step"). Independent
+                                             w.r.t. time, not probes.
+                            random           Uniform random 50/50 split.
+                                             Comparison baseline only --
+                                             not recommended as your
+                                             primary split since it does
+                                             NOT guard against pseudo-
+                                             replication the way the
+                                             other methods do.
 
 Scenario options (apply in both synthetic and real-data mode):
   -s, --scenario NAME     Scenario name from ensemble_scenarios.json
@@ -200,16 +270,16 @@ Localization diagnostic (Step 2 kernel-localized WS calibration):
       adds 'petro_calibration_localized.png' (and, in 2-D mode, a
       sigma_s(x, y) map) to the output directory.
 
-      DEFAULT: OFF. There is no --localized-bandwidth flag on this shell
-      wrapper -- localization is controlled entirely by the scenario's
-      own 'ws_localized_bandwidth' field in ensemble_scenarios.json
-      (or your --config file), so the bandwidth stays tied to that
-      scenario's own probe geometry instead of being set blindly from
-      the command line. A scenario that omits the field (the default
-      for every scenario except '2d') runs with localization disabled,
-      exactly like before this feature existed.
+      DEFAULT: OFF. Set it either in the scenario JSON (bandwidth stays
+      tied to that scenario's own probe geometry, reproducible across
+      runs without remembering a flag) or from the command line with
+      --ws-localized-bandwidth / --ws-localized-bandwidth-sweep (see
+      "Inversion options" above) -- CLI wins if both are set for a given
+      run. A scenario/run that sets neither (the default for every
+      scenario except '2d') runs with localization disabled, exactly
+      like before this feature existed.
 
-      To turn it ON for a scenario: add
+      To turn it ON for a scenario (persistent, JSON): add
           "ws_localized_bandwidth": <radius in the same units as your
                                       x/y coordinates, e.g. metres>
       to that scenario's block in the JSON. Rule of thumb: pick a value
@@ -217,12 +287,21 @@ Localization diagnostic (Step 2 kernel-localized WS calibration):
       probes (kernel support is exactly zero beyond 2×c, so anything
       smaller and most EM points won't see any probe at all).
 
+      To turn it ON for a single run (ad hoc, no JSON edit): add
+          --ws-localized-bandwidth <c>
+      to your ./run_pipeline.sh call, e.g. --ws-localized-bandwidth 6.
+      Use --ws-localized-bandwidth-sweep <c1> <c2> ... instead to pick
+      c automatically via leave-one-probe-out CV over those candidates.
+
       To turn it OFF for a scenario that currently has it on: delete
-      the 'ws_localized_bandwidth' key, or set it to null.
+      the 'ws_localized_bandwidth' key (and/or 'ws_localized_bandwidth_
+      sweep'), or set it to null -- and don't pass the CLI flag, which
+      would re-enable it for that run regardless of the JSON.
 
       Current status in ensemble_scenarios.json (re-check after editing):
-          2d                      -> ON  (c = 5.0)
-          2d_dense_tdr            -> off (add the field to enable)
+          2d                      -> ON  (c = 5.0, sweep [1,2,5,10,15,20])
+          2d_intermediate         -> ON  (c = 5.0, sweep [1,2,5,10,15,20])
+          2d_dense_tdr            -> ON  (sweep only [1,2,5,10,15,20], no fixed c)
           2d_real                 -> off
           moisture_2d_free        -> off
           moisture_2d_dense_tdr   -> off
@@ -286,6 +365,15 @@ Examples:
       --em-dir ./data/EMI_MFC2/ \
       --tdr-dir ./data/daily_MFC/ \
       --nx 15 --ny 8
+
+  # --- Train/validation split (held-out RMSE, Loiseau et al. 2026) ---
+  ./run_pipeline.sh --train-val-split alternate_sorted
+  ./run_pipeline.sh --train-val-split by_probe             # fully independent
+  ./run_pipeline.sh --train-val-split by_time_block         # fully independent (time)
+  ./run_pipeline.sh --data-source real -s mfc2_real \
+      --em-dir ./data/EMI_MFC2/ \
+      --tdr-dir ./data/daily_MFC/ \
+      --train-val-split by_probe
 
   # --- Drop a noisy coil/frequency channel before inversion ---
   ./run_pipeline.sh --data-source real -s mfc2_real \
@@ -394,6 +482,28 @@ while [[ $# -gt 0 ]]; do
             ;;
         --gamma)
             GAMMA="${2:?'--gamma requires a number'}"
+            shift 2 ;;
+        --ws-localized-bandwidth)
+            WS_LOCALIZED_BANDWIDTH="${2:?'--ws-localized-bandwidth requires a number'}"
+            shift 2 ;;
+        --ws-localized-bandwidth-sweep)
+            [[ $# -ge 2 ]] || die "--ws-localized-bandwidth-sweep requires at least one value"
+            shift # consume the flag itself
+            WS_LOCALIZED_BANDWIDTH_SWEEP=()
+            # Greedily consume one-or-more following tokens, stopping at the
+            # next recognised flag (mirrors Python argparse's nargs='+').
+            while [[ $# -gt 0 && "$1" != -* ]]; do
+                WS_LOCALIZED_BANDWIDTH_SWEEP+=("$1")
+                shift
+            done
+            [[ ${#WS_LOCALIZED_BANDWIDTH_SWEEP[@]} -ge 1 ]] || die "--ws-localized-bandwidth-sweep requires at least one value"
+            ;;
+        --train-val-split)
+            TRAIN_VAL_SPLIT="${2:?'--train-val-split requires a method'}"
+            case "${TRAIN_VAL_SPLIT}" in
+                off|alternate_sorted|by_probe|by_time_block|random) ;;
+                *) die "--train-val-split must be one of: off, alternate_sorted, by_probe, by_time_block, random (got '${TRAIN_VAL_SPLIT}')" ;;
+            esac
             shift 2 ;;
         --list)     LIST_ONLY=true;     shift ;;
         --validate) VALIDATE_ONLY=true; shift ;;
@@ -578,6 +688,7 @@ log "  Mode        : ${MODE^^}  —  ${XY_NOTE}"
 log "  Config      : ${CONFIG_FILE:-${SCENARIO_JSON} (default)}"
 log "  Drop coils  : ${DROP_COILS[*]:-(none)}"
 log "  Homogeneous : ${HOMOGENEOUS}"
+log "  Train/val   : ${TRAIN_VAL_SPLIT:-scenario default (or off)}"
 log "  Python      : $(command -v "${PYTHON}") ($(${PYTHON} --version 2>&1))"
 log "  Script      : ${PIPELINE_SCRIPT}"
 log "=================================================="
@@ -646,6 +757,17 @@ if [[ ${#BETA[@]} -gt 0 ]]; then
 fi
 if [[ -n "${GAMMA}" ]]; then
     INVERSION_OVERRIDE_ARGS+=(--gamma "${GAMMA}")
+fi
+if [[ -n "${WS_LOCALIZED_BANDWIDTH}" ]]; then
+    INVERSION_OVERRIDE_ARGS+=(--ws-localized-bandwidth "${WS_LOCALIZED_BANDWIDTH}")
+fi
+if [[ ${#WS_LOCALIZED_BANDWIDTH_SWEEP[@]} -gt 0 ]]; then
+    INVERSION_OVERRIDE_ARGS+=(--ws-localized-bandwidth-sweep "${WS_LOCALIZED_BANDWIDTH_SWEEP[@]}")
+fi
+
+TRAIN_VAL_ARGS=()
+if [[ -n "${TRAIN_VAL_SPLIT}" ]]; then
+    TRAIN_VAL_ARGS+=(--train-val-split "${TRAIN_VAL_SPLIT}")
 fi
 
 # ---------------------------------------------------------------------------
@@ -718,6 +840,9 @@ cat >> "${HEADER_TMP}" << MDEOF
 | window-m | \`${WINDOW_M:-scenario default}\` |
 | beta | \`${BETA[*]:-scenario default}\` |
 | gamma | \`${GAMMA:-scenario default}\` |
+| ws-localized-bandwidth | \`${WS_LOCALIZED_BANDWIDTH:-scenario default (or disabled)}\` |
+| ws-localized-bandwidth-sweep | \`${WS_LOCALIZED_BANDWIDTH_SWEEP[*]:-scenario default (or disabled)}\` |
+| train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |
 | env | \`${VENV_PATH:-none}\` |
 | python | \`${PYTHON}\` |
 
@@ -743,6 +868,7 @@ set +e
     "${SWC_OVERRIDE_ARGS[@]+"${SWC_OVERRIDE_ARGS[@]}"}" \
     "${PLOT_ARGS[@]+"${PLOT_ARGS[@]}"}" \
     "${INVERSION_OVERRIDE_ARGS[@]+"${INVERSION_OVERRIDE_ARGS[@]}"}" \
+    "${TRAIN_VAL_ARGS[@]+"${TRAIN_VAL_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
     2>&1 | tee "${RUN_LOG_TMP}"
 EXIT_CODE=${PIPESTATUS[0]}

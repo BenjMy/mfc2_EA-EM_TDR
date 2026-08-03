@@ -184,7 +184,7 @@
     "ws_fixed_params": {
       "a": true,
       "m": true,
-      "sigma_w": true,
+      "sigma_w": false,
       "sigma_s": false
     },
     "lab_p0": [
@@ -234,10 +234,71 @@
     "window_m": 1.0,
     "tdr_noise_std": 0.01,
     "eca_noise_level": 0.01,
-    "alpha_range_log": null,
-    "cache_tag": "field_survey_2d",
-    "ws_localized_bandwidth": 5.0,
-    "ws_localized_bandwidth_sweep": [1.0, 2.0, 5.0, 10.0, 15.0, 20.0]
+    "alpha_range_log": null
+  },
+  "2d_intermediate": {
+    "description": "2-D UTM grid run with realistic observation noise, 2 TDR positions per layer, all interfaces free, and a narrow ECa conductivity range (1-60 mS/m) representative of resistive field soils.",
+    "output_dir": "mfc2_outputs/field_survey_2d_intermediate",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "beta_comment": [0,0.5,1],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 4,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null
   },
   "2d_dense_tdr": {
     "description": "Dense-TDR counterpart of the '2d' scenario: identical grid geometry, layer depths, WS priors and conductivity range, but with num_swc_positions raised from 2 -> 10 (40 total probes on the default 10x5 grid) for stronger per-horizon petrophysical calibration.",
@@ -301,10 +362,7 @@
     "window_m": 1.0,
     "tdr_noise_std": 0.01,
     "eca_noise_level": 0.01,
-    "alpha_range_log": null,
-    "cache_tag": "field_survey_2d_dense_tdr",
-    "ws_localized_bandwidth_COMMENT": 2,
-    "ws_localized_bandwidth_sweep": [1.0, 2.0, 5.0, 10.0, 15.0, 20.0]
+    "alpha_range_log": null
   },
   "2d_real": {
     "description": "Real-data counterpart of the '2d' scenario: same 2-D UTM survey geometry, layer depths, and conductivity bounds, but driven by real GEM-2 EM surveys and SoilNet TDR data instead of a synthetic ground truth.",
