@@ -112,9 +112,7 @@ def plot_petrophysical_calibration(
                 color=colors[hz.horizon], linestyle='--', linewidth=2, zorder=2,
                 label=(
                     f'WS Fit Hz {hz.horizon} '
-                    f'(a={hz.a:.2f}, m={hz.m:.2f}, '
-                    f'σ_w={hz.sigma_w:.1f}, σ_s={hz.sigma_s:.1f}, '
-                    f'RMSE={hz.rmse:.4f}, R²={r2_str}, p={p_str})'
+                    f'(RMSE={hz.rmse:.4f}, R²={r2_str}, p={p_str})'
                 )
             )
         else:
@@ -125,9 +123,7 @@ def plot_petrophysical_calibration(
                 color=colors[hz.horizon], linestyle=':', linewidth=1.5,
                 alpha=0.45, zorder=1,
                 label=(
-                    f'Hz {hz.horizon} — UNCALIBRATED (prior only, no TDR probe): '
-                    f'a={hz.a:.2f}, m={hz.m:.2f}, '
-                    f'σ_w={hz.sigma_w:.1f}, σ_s={hz.sigma_s:.1f}'
+                    f'Hz {hz.horizon} — UNCALIBRATED (prior only, no TDR probe)'
                 )
             )
 
@@ -1266,13 +1262,28 @@ def run_petro_localized(
         )
 
         if point_y_coords is not None:
-            plot_localized_sigma_s_map(
-                localized_fit=best_fit,
-                probe_x_coords=probe_x_coords,
-                probe_y_coords=probe_y_coords,
-                probe_layer_indices=probe_layer_indices,
-                output_path=os.path.join(output_dir, "petro_calibration_localized_map.png"),
-            )
+            # Mirror the profile plot's parameter selection above: render one
+            # map per free conductivity parameter, so sigma_w isn't silently
+            # dropped when both sigma_w and sigma_s are free (see comment on
+            # _free_conductivity_params above -- same non-identifiability
+            # rationale applies here). plot_localized_sigma_s_map only takes
+            # a single `param` per call (unlike the profile function's
+            # `params` list), so loop and suffix the filename per parameter.
+            # When exactly one param is free, keep the original unsuffixed
+            # filename so existing downstream references don't break.
+            for _p in _free_conductivity_params:
+                if len(_free_conductivity_params) == 1:
+                    _map_filename = "petro_calibration_localized_map.png"
+                else:
+                    _map_filename = f"petro_calibration_localized_map_{_p}.png"
+                plot_localized_sigma_s_map(
+                    localized_fit=best_fit,
+                    probe_x_coords=probe_x_coords,
+                    probe_y_coords=probe_y_coords,
+                    probe_layer_indices=probe_layer_indices,
+                    param=_p,
+                    output_path=os.path.join(output_dir, _map_filename),
+                )
 
         if global_fit is not None:
             ec_extracted, _ = _extract_ec_for_plots(

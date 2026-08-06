@@ -22,6 +22,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from emagpy import Problem
 
+import geometry_utils
+
 
 # ==========================================================================
 # 1. CORE DATA STRUCTURES & CONTAINERS
@@ -815,6 +817,7 @@ def generate_ensemble_em_survey(
     em_unit: str = "ppt",
     drop_coils=None,
     inversion_mode: str = "independent",
+    spatial_match_tolerance_m: float = 1e-6,
 ) -> tuple[np.ndarray, list[dict]]:
     """
     Step 1 Core Engine: Runs sequential inversions for one ensemble member set.
@@ -829,12 +832,18 @@ def generate_ensemble_em_survey(
 
       ``inversion_mode='independent'`` (default)
           Each survey file is inverted separately with ``createSurvey``.
-          No ``trimSurveys``, no temporal coupling.  Results are stacked
-          per time step after the fact.  A row-count clip to the minimum
-          point count across files aligns the arrays into a uniform block.
-          This is what ``run_pipeline.py``'s parallel worker replicates.
-          Prefer this for real field data where survey paths differ across
-          epochs, or whenever you do not want temporal regularisation.
+          No ``trimSurveys``, no temporal coupling.  Results from every
+          epoch are matched onto a shared UNION reference grid by actual
+          (x, y) coordinate via
+          ``geometry_utils.match_epochs_to_reference_grid`` -- the same
+          matcher ``run_pipeline.py``'s parallel worker uses -- rather than
+          a row-count/row-position clip. An epoch that doesn't cover a
+          given reference point gets NaN there; no epoch's own points are
+          ever reordered, subsetted, or silently paired with an unrelated
+          location under a shared index. See
+          ``spatial_match_tolerance_m`` below. Prefer this mode for real
+          field data where survey paths differ across epochs, or whenever
+          you do not want temporal regularisation.
 
       ``inversion_mode='timelapse'``
           Uses ``createTimeLapseSurvey`` → ``trimSurveys`` → ``invert``
@@ -897,6 +906,15 @@ def generate_ensemble_em_survey(
         frequency in Hz, or a unique substring like ``'f425'``). Applied
         identically to every ensemble member. Default ``None`` (no coils
         dropped).
+    spatial_match_tolerance_m : float, optional
+        Only used when ``inversion_mode='independent'`` and ``fnames`` is a
+        list. Distance tolerance (metres) for matching one epoch's point to
+        another's as "the same location" when building the shared reference
+        grid. Default ``1e-6`` m is appropriate for synthetic data, whose
+        coordinates are bit-identical across epochs by construction (only
+        float round-trip noise needs covering). For real field data, pass a
+        value matching your GPS positional uncertainty (e.g. ``2.0`` m),
+        the same way ``run_pipeline.py`` uses ``SPATIAL_MATCH_TOLERANCE_M``.
 
     Returns
     -------
@@ -1003,7 +1021,20 @@ def generate_ensemble_em_survey(
         elif timelapse and inversion_mode == "independent":
             # ── Independent: one createSurvey per epoch, no trimSurveys ────
             # This mirrors exactly what run_pipeline.py's parallel worker does.
+            #
+            # FIX ("spatial reference-grid matching, not row trimming"):
+            # this used to do `arr[:min_pts]` -- clipping every epoch to the
+            # shortest epoch's row COUNT and pairing "row i of epoch A" with
+            # "row i of epoch B" purely by array position. That silently
+            # mispairs physically different locations whenever epochs differ
+            # in point count or walk order, and throws away every point
+            # beyond the shortest epoch's count even though those points
+            # were successfully inverted. Now matched by actual (x, y)
+            # coordinate onto a shared union reference grid, exactly like
+            # run_pipeline.py's Step 1 -- see that module's "SPATIAL
+            # ASSEMBLY OF THE ENSEMBLE ACROSS EPOCHS" section.
             per_epoch: list[np.ndarray] = []
+            epoch_xy: list[tuple[np.ndarray, np.ndarray]] = []
             for fname in fnames:
                 k = Problem()
                 k.createSurvey(fname, targetProjection=targetProjection, unit=em_unit)
@@ -1015,11 +1046,42 @@ def generate_ensemble_em_survey(
                     fixedDepths=fixed_depths_list,
                 )
                 k.invert(**invert_kwargs)
-                per_epoch.append(np.asarray(k.models[0]))  # (n_pts_t, n_layers)
-            # Align to minimum row count so stack() works on inhomogeneous paths
-            min_pts = min(a.shape[0] for a in per_epoch)
-            member_array = np.stack([a[:min_pts] for a in per_epoch], axis=0)
-            # shape: (n_time, min_pts, num_layers)
+                model_arr = np.asarray(k.models[0])  # (n_pts_t, n_layers)
+
+                _pos_df = load_survey_positions(
+                    fname, targetProjection=targetProjection, em_unit=em_unit,
+                )
+                _x_epoch = _pos_df["x"].to_numpy(dtype=float)
+                _y_epoch = (
+                    _pos_df["y"].to_numpy(dtype=float)
+                    if "y" in _pos_df.columns else np.zeros_like(_x_epoch)
+                )
+                if len(_x_epoch) != model_arr.shape[0]:
+                    # Position table and inverted model disagree on row
+                    # count for this epoch -- guard defensively (truncate
+                    # the shorter of the two) rather than mis-pairing
+                    # coordinates with EC values.
+                    _n_use = min(len(_x_epoch), model_arr.shape[0])
+                    _x_epoch, _y_epoch = _x_epoch[:_n_use], _y_epoch[:_n_use]
+                    model_arr = model_arr[:_n_use]
+
+                per_epoch.append(model_arr)
+                epoch_xy.append((_x_epoch, _y_epoch))
+
+            ref_x, ref_y, matched_indices = geometry_utils.match_epochs_to_reference_grid(
+                epoch_xy, tolerance_m=spatial_match_tolerance_m,
+            )
+            n_ref = len(ref_x)
+            n_layers_out = per_epoch[0].shape[-1]
+            member_array = np.full((len(per_epoch), n_ref, n_layers_out), np.nan)
+            for t_idx, arr in enumerate(per_epoch):
+                idx_map = matched_indices[t_idx]
+                valid = idx_map >= 0
+                if np.any(valid):
+                    member_array[t_idx, valid] = arr[idx_map[valid]]
+            # shape: (n_time, n_ref, num_layers) -- union reference grid;
+            # NaN where a given epoch didn't cover that reference point.
+            # NaN-safe downstream (same convention as run_pipeline.py).
 
         else:
             # ── Single file ─────────────────────────────────────────────────
@@ -1945,6 +2007,7 @@ def _fit_ws_horizon_weighted(
     obs_weights: np.ndarray,
     p0: np.ndarray,
     fixed_params: dict[str, bool],
+    x0_start: np.ndarray | None = None,
 ) -> tuple[float, float, float, float, np.ndarray]:
     """
     Single Waxman-Smits horizon fit for an arbitrary observation-weight
@@ -1963,9 +2026,19 @@ def _fit_ws_horizon_weighted(
         responsible for any renormalisation convention (e.g. mean 1) --
         this function uses whatever is passed in as-is.
     p0 : np.ndarray, shape (4,)
-        Prior/starting guess ``[a, m, sigma_w, sigma_s]``.
+        Prior/starting guess ``[a, m, sigma_w, sigma_s]``. Always used as
+        the *prior center* for the regularization term, regardless of
+        ``x0_start``.
     fixed_params : dict[str, bool]
         Same meaning as in ``calibrate_petrophysical_relationship``.
+    x0_start : np.ndarray, shape (4,), optional
+        Optimizer starting point. Defaults to ``p0`` (the old cold-start
+        behaviour) when not given. Callers doing localized fits over
+        spatially ordered targets can pass the previous target's
+        converged solution here to warm-start the optimizer -- this does
+        not change the prior (``p0`` still anchors the regularization
+        term) or any other outward behaviour, it only changes where
+        L-BFGS-B begins searching.
 
     Returns
     -------
@@ -1980,28 +2053,72 @@ def _fit_ws_horizon_weighted(
     _PARAM_ORDER = ("a", "m", "sigma_w", "sigma_s")
     PRIOR_STDS = {"a": 0.5, "m": 0.5, "sigma_w": 150.0, "sigma_s": 30.0}
     lambda_reg = 0.1
+    _LN10 = np.log(10.0)
 
-    def _log_ratio_objective(params):
+    theta_clip = np.clip(theta_layer, 1e-6, 1.0)
+    ln_theta_clip = np.log(theta_clip)
+    sigma_ert = np.clip(sigma_b_layer, 1e-10, None)
+    log_ert = np.log10(sigma_ert)
+
+    def _log_ratio_objective_and_grad(params):
         a_, m_, sigma_w_, sigma_s_ = params
-        a_ = max(a_, 1e-6)
-        m_ = max(m_, 1e-6)
-        sigma_w_ = max(sigma_w_, 1e-6)
-        sigma_s_ = max(sigma_s_, 0.0)
+        a = max(a_, 1e-6)
+        m = max(m_, 1e-6)
+        sigma_w = max(sigma_w_, 1e-6)
+        sigma_s = max(sigma_s_, 0.0)
 
-        theta_clip = np.clip(theta_layer, 1e-6, 1.0)
-        sigma_ws = (theta_clip ** m_ / a_) * (sigma_w_ + sigma_s_)
-        sigma_ert = np.clip(sigma_b_layer, 1e-10, None)
-        log_ert = np.log10(sigma_ert)
-        log_ws = np.log10(np.clip(sigma_ws, 1e-10, None))
-        data_misfit = np.sum(obs_weights * (log_ert - log_ws) ** 2)
+        # Subgradient of the max()/clip() reparameterization: 1 where the
+        # raw optimizer parameter is inside its clamp, 0 where it's been
+        # clamped (matches the value the un-clamped objective used).
+        mask_a = 1.0 if a_ > 1e-6 else 0.0
+        mask_m = 1.0 if m_ > 1e-6 else 0.0
+        mask_sw = 1.0 if sigma_w_ > 1e-6 else 0.0
+        mask_ss = 1.0 if sigma_s_ > 0.0 else 0.0
+
+        S = sigma_w + sigma_s
+        T = theta_clip ** m
+        sigma_ws = T * S / a
+        sigma_ws_clipped = np.clip(sigma_ws, 1e-10, None)
+        log_ws = np.log10(sigma_ws_clipped)
+
+        resid = log_ert - log_ws
+        data_misfit = np.sum(obs_weights * resid ** 2)
 
         prior_penalty = (
-            ((a_ - p0[0]) / PRIOR_STDS["a"]) ** 2
-            + ((m_ - p0[1]) / PRIOR_STDS["m"]) ** 2
-            + ((sigma_w_ - p0[2]) / PRIOR_STDS["sigma_w"]) ** 2
-            + ((sigma_s_ - p0[3]) / PRIOR_STDS["sigma_s"]) ** 2
+            ((a - p0[0]) / PRIOR_STDS["a"]) ** 2
+            + ((m - p0[1]) / PRIOR_STDS["m"]) ** 2
+            + ((sigma_w - p0[2]) / PRIOR_STDS["sigma_w"]) ** 2
+            + ((sigma_s - p0[3]) / PRIOR_STDS["sigma_s"]) ** 2
         )
-        return data_misfit + (lambda_reg * prior_penalty)
+        obj = data_misfit + (lambda_reg * prior_penalty)
+
+        # --- analytic gradient ---
+        active = sigma_ws > 1e-10
+        dlogws_dsigmaws = np.where(active, 1.0 / (sigma_ws_clipped * _LN10), 0.0)
+        dmisfit_dsigmaws = -2.0 * obs_weights * resid * dlogws_dsigmaws
+
+        dsigmaws_da = -sigma_ws / a
+        dsigmaws_dm = sigma_ws * ln_theta_clip
+        dsigmaws_dsw = T / a
+        dsigmaws_dss = T / a
+
+        dmisfit_da = np.sum(dmisfit_dsigmaws * dsigmaws_da)
+        dmisfit_dm = np.sum(dmisfit_dsigmaws * dsigmaws_dm)
+        dmisfit_dsw = np.sum(dmisfit_dsigmaws * dsigmaws_dsw)
+        dmisfit_dss = np.sum(dmisfit_dsigmaws * dsigmaws_dss)
+
+        dprior_da = 2.0 * (a - p0[0]) / PRIOR_STDS["a"] ** 2
+        dprior_dm = 2.0 * (m - p0[1]) / PRIOR_STDS["m"] ** 2
+        dprior_dsw = 2.0 * (sigma_w - p0[2]) / PRIOR_STDS["sigma_w"] ** 2
+        dprior_dss = 2.0 * (sigma_s - p0[3]) / PRIOR_STDS["sigma_s"] ** 2
+
+        grad = np.array([
+            (dmisfit_da + lambda_reg * dprior_da) * mask_a,
+            (dmisfit_dm + lambda_reg * dprior_dm) * mask_m,
+            (dmisfit_dsw + lambda_reg * dprior_dsw) * mask_sw,
+            (dmisfit_dss + lambda_reg * dprior_dss) * mask_ss,
+        ])
+        return obj, grad
 
     _bounds_full = [
         (WS_BOUNDS[0][0], WS_BOUNDS[1][0]),
@@ -2014,18 +2131,25 @@ def _fit_ws_horizon_weighted(
         for i in range(4)
     ]
 
-    x0 = p0.copy()
+    x0 = (x0_start.copy() if x0_start is not None else p0.copy())
     for i in range(4):
         if fixed_params.get(_PARAM_ORDER[i]):
             x0[i] = p0[i]
+        else:
+            # Warm-start values must still respect this fit's own bounds
+            # (a previous target's converged solution could in principle
+            # sit outside them in edge cases).
+            lo, hi = bounds_lbfgsb[i]
+            x0[i] = min(max(x0[i], lo), hi)
 
     try:
         result = minimize(
-            _log_ratio_objective,
+            _log_ratio_objective_and_grad,
             x0=x0,
+            jac=True,
             method="L-BFGS-B",
             bounds=bounds_lbfgsb,
-            options={"maxiter": 5000, "ftol": 1e-12},
+            options={"maxiter": 500, "ftol": 1e-9},
         )
         popt = result.x if result.success else p0.copy()
     except Exception:
@@ -2280,6 +2404,18 @@ def calibrate_petrophysical_relationship_localized(
             rmse_arr = np.full(n_targets, np.nan)
             calibrated_arr = np.zeros(n_targets, dtype=bool)
 
+            # Warm-start tracker for this horizon: target_x_all is spatially
+            # ordered, so neighbouring targets under the same
+            # Gaspari-Cohn-weighted fit tend to have very similar optima.
+            # Seeding x0 with the previous target's converged solution
+            # (instead of restarting from the prior every time) cuts
+            # iteration counts substantially once the loop "warms up".
+            # This never changes the prior itself -- only where L-BFGS-B
+            # starts searching -- and resets to p0 whenever a target has
+            # no in-range observations, so a bad neighbourhood can't poison
+            # later targets.
+            _prev_popt = None
+
             _target_y_iter = target_y_all if use_2d else [None] * n_targets
             for t_i, (target_x, target_y) in enumerate(zip(target_x_all, _target_y_iter)):
                 if theta_layer.size == 0:
@@ -2305,6 +2441,7 @@ def calibrate_petrophysical_relationship_localized(
                     # spirit as "no TDR probes mapped to this horizon", just
                     # per-target instead of per-horizon. Fall back to prior.
                     a_arr[t_i], m_arr[t_i], sigma_w_arr[t_i], sigma_s_arr[t_i] = p0
+                    _prev_popt = None
                     continue
 
                 # Renormalise to mean 1 (same convention as base_weights)
@@ -2314,10 +2451,12 @@ def calibrate_petrophysical_relationship_localized(
 
                 a, m, sigma_w, sigma_s, theta_pred = _fit_ws_horizon_weighted(
                     theta_layer, sigma_b_layer, combined_w, p0, fixed_params,
+                    x0_start=_prev_popt,
                 )
                 a_arr[t_i], m_arr[t_i], sigma_w_arr[t_i], sigma_s_arr[t_i] = (
                     a, m, sigma_w, sigma_s,
                 )
+                _prev_popt = np.array([a, m, sigma_w, sigma_s])
                 # RMSE against ALL of this horizon's observations (not just
                 # the nearby ones), so it stays comparable across targets
                 # and bandwidths -- same convention as the un-localized RMSE.
@@ -3286,7 +3425,7 @@ def plot_step1_ensemble_single_file(
         else:
             plot_depths_i = [0.0] + list(depths0) + [max_depth_view]
 
-        ax.step(ec_padded, plot_depths_i, where='post', alpha=0.15, color='teal')
+        ax.step(ec_padded, plot_depths_i, where='pre', alpha=0.15, color='teal')
 
     ensemble_median = np.nanmedian(models, axis=(0, 1))
     median_padded = np.append(ensemble_median, ensemble_median[-1])
@@ -3298,7 +3437,33 @@ def plot_step1_ensemble_single_file(
     else:
         median_plot_depths = [0.0] + list(depths0) + [max_depth_view]
 
-    ax.step(median_padded, median_plot_depths, where='post', color='black', linewidth=2.2,
+    # ADDED: mean + min/max envelope across the WHOLE ensemble (all members
+    # x all spatial points collapsed together, same axes as the median
+    # above). The envelope makes it visually explicit how tight/loose the
+    # ensemble agreement is at each depth, rather than relying on the eye
+    # to judge overlap density from 288 semi-transparent spaghetti lines.
+    # NOTE: this collapses across spatial position just like the member
+    # lines/median above -- if individual points behave very differently
+    # from one another (e.g. one point ~homogeneous with depth, another
+    # strongly layered), that will NOT be visible here; it will show up as
+    # a wide min/max band instead. Use plot_step1_ensemble_by_point()
+    # (same output_dir, 'step1_ensemble_spread_by_point.png') to see
+    # whether a shared feature like the 0.3-0.6 m conductive layer is
+    # real and shared, or a spatial-averaging artifact.
+    ensemble_mean = np.nanmean(models, axis=(0, 1))
+    ensemble_min  = np.nanmin(models, axis=(0, 1))
+    ensemble_max  = np.nanmax(models, axis=(0, 1))
+    mean_padded = np.append(ensemble_mean, ensemble_mean[-1])
+    min_padded  = np.append(ensemble_min, ensemble_min[-1])
+    max_padded  = np.append(ensemble_max, ensemble_max[-1])
+
+    ax.fill_betweenx(median_plot_depths, min_padded, max_padded, step='post',
+                      alpha=0.18, color='teal', linewidth=0,
+                      label='Ensemble min–max')
+    ax.step(mean_padded, median_plot_depths, where='pre', color='navy',
+            linewidth=1.6, linestyle='-', label='Ensemble Mean')
+
+    ax.step(median_padded, median_plot_depths, where='pre', color='black', linewidth=2.2,
             linestyle='--', label='Ensemble Median')
 
     if depths_are_fixed:
@@ -3327,6 +3492,104 @@ def plot_step1_ensemble_single_file(
 
     os.makedirs(output_dir, exist_ok=True)
     plot_path = os.path.join(output_dir, "step1_ensemble_spread.png")
+    plt.savefig(plot_path, dpi=200, bbox_inches="tight")
+    plt.close()
+
+
+def plot_step1_ensemble_by_point(
+    models: np.ndarray,
+    depths0: Sequence[float],
+    output_dir: str = "mfc2_outputs",
+    max_points: int = 12,
+    point_labels: Sequence[str] | None = None,
+) -> None:
+    """
+    Small-multiples companion to ``plot_step1_ensemble_single_file``: one
+    subplot PER SPATIAL POINT, each showing that point's own median EC
+    profile ± min/max across ensemble members, instead of the single-file
+    plot's average over ALL points.
+
+    Why this exists
+    ----------------
+    ``plot_step1_ensemble_single_file`` computes every member's profile as
+    ``nanmean(models[i], axis=0)`` -- averaged across spatial points before
+    it's ever plotted. That can manufacture the appearance of a shared
+    feature (e.g. "every model agrees on a more-conductive layer between
+    0.3 and 0.6 m") even when it's really an artifact of blending together
+    points with genuinely different depth behaviour -- e.g. one point close
+    to homogeneous with depth, another strongly layered. This function
+    keeps points separate so you can tell the two cases apart.
+
+    NaN-safety: matches ``plot_step1_ensemble_single_file`` -- uses
+    ``nanmedian``/``nanmin``/``nanmax`` throughout, so points left as NaN
+    for some ensemble members (e.g. real-data time-lapse spatial-reference-
+    grid gaps, see ``geometry_utils.match_epochs_to_reference_grid``) don't
+    corrupt the points that do have data.
+
+    Parameters
+    ----------
+    models : np.ndarray
+        Shape ``(ensemble_size, num_measured_points, num_layers)`` -- same
+        array passed to ``plot_step1_ensemble_single_file``.
+    max_points : int, optional
+        If ``num_measured_points`` exceeds this, an evenly-spaced subsample
+        of ``max_points`` is plotted instead of all of them, to keep the
+        figure readable. Default 12.
+    point_labels : sequence of str, optional
+        Custom label per selected point (e.g. ``"x=2.0, y=4.0"``). When
+        ``None`` (default), points are labeled by their index into
+        ``models``'s spatial axis.
+    """
+    num_members, num_positions, num_layers = models.shape
+    max_depth_view = depths0[-1] + 0.5
+    plot_depths = [0.0] + list(depths0) + [max_depth_view]
+
+    if num_positions > max_points:
+        point_idx = np.linspace(0, num_positions - 1, max_points).round().astype(int)
+        point_idx = np.unique(point_idx)
+    else:
+        point_idx = np.arange(num_positions)
+    n_show = len(point_idx)
+
+    ncols = min(4, n_show)
+    nrows = int(np.ceil(n_show / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 3.6 * nrows),
+                              sharex=True, sharey=True, squeeze=False)
+
+    for ax_i, p in enumerate(point_idx):
+        ax = axes.flat[ax_i]
+        point_profiles = models[:, p, :]  # (ensemble_size, num_layers)
+
+        med = np.nanmedian(point_profiles, axis=0)
+        mn  = np.nanmin(point_profiles, axis=0)
+        mx  = np.nanmax(point_profiles, axis=0)
+        med_p = np.append(med, med[-1])
+        mn_p  = np.append(mn, mn[-1])
+        mx_p  = np.append(mx, mx[-1])
+
+        ax.fill_betweenx(plot_depths, mn_p, mx_p, step='post', alpha=0.25,
+                          color='teal', linewidth=0)
+        ax.step(med_p, plot_depths, where='pre', color='black', linewidth=1.6)
+
+        label = point_labels[ax_i] if point_labels is not None else f"point {p}"
+        ax.set_title(label, fontsize=9)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    for ax_i in range(n_show, nrows * ncols):
+        axes.flat[ax_i].axis("off")
+
+    axes[0, 0].invert_yaxis()  # shared y-axis, so this flips all subplots
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Layer Depth [m]", fontsize=9)
+    for ax in axes[-1, :]:
+        ax.set_xlabel("EC [mS/m]", fontsize=9)
+
+    fig.suptitle("Step 1 Ensemble Spread by Spatial Point (median ± min/max)",
+                 fontsize=12, y=1.02)
+    fig.tight_layout()
+
+    os.makedirs(output_dir, exist_ok=True)
+    plot_path = os.path.join(output_dir, "step1_ensemble_spread_by_point.png")
     plt.savefig(plot_path, dpi=200, bbox_inches="tight")
     plt.close()
 

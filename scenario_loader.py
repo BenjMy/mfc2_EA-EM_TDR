@@ -150,6 +150,52 @@ class ScenarioConfig:
     temporal-only inversion behaviour without confounding spatial signal.
     Ignored when data_source == 'real'."""
 
+    full_range_gradient: bool          = False
+    """Synthetic generation only (ignored when homogeneous is True). When
+    True, the static XZ (depth) and XY (plan-view) initial-model gradients
+    each span the full [theta_dry, theta_wet] range independently, instead
+    of the small fixed-amplitude default gradient -- see
+    0_generate_synthetic_data.generate_time_lapse_dataset. Combined via
+    xy_z_blend below. Default False (small default gradient, unchanged)."""
+
+    xy_z_blend: float                  = 0.5
+    """Only used when full_range_gradient is True. Weight in [0, 1] between
+    the XY component (1.0 = XY gradient only) and the Z/depth component
+    (0.0 = Z gradient only) of the initial model. Default 0.5 (equal
+    blend)."""
+
+    invert_z_gradient: bool            = False
+    """Only used when full_range_gradient is True. When True, flips the
+    depth gradient so the shallowest layer is wet and the deepest is dry
+    (i.e. soil dries out uniformly with depth) -- default is dry at the
+    surface, wet at depth."""
+
+    random_xy_field: bool              = False
+    """Only used when full_range_gradient is True. When True, replaces the
+    deterministic linear XY ramp with a smooth, spatially-correlated RANDOM
+    field (scattered wet/dry patches, generated as a sum of random Gaussian
+    blobs) instead of a single monotonic gradient direction -- see
+    0_generate_synthetic_data._generate_random_xy_field. One field is drawn
+    per ensemble member and held fixed across all timesteps/layers within
+    that member; only the (still spatially-uniform) depth trend and small
+    temporal/noise terms continue to vary. Default False (linear ramp,
+    unchanged)."""
+
+    random_xy_n_blobs: int             = 8
+    """Only used when random_xy_field is True. Number of random Gaussian
+    patches summed into the field. More blobs -> busier, more fragmented
+    pattern; fewer -> a handful of broad wet/dry zones. Default 8."""
+
+    random_xy_correlation_m: float | None = None
+    """Only used when random_xy_field is True. Patch radius [m] (1-sigma).
+    None (default) auto-picks ~1/4 of the survey's shorter horizontal
+    extent."""
+
+    random_xy_seed: int | None         = None
+    """Only used when random_xy_field is True. Seeds the random XY field
+    independently of the per-sample noise stream, so the pattern is
+    reproducible run-to-run. None (default) derives a seed from 42."""
+
     # ------------------------------------------------------------------
     # Ensemble spread control
     # ------------------------------------------------------------------
@@ -430,6 +476,20 @@ class ScenarioConfig:
             f"  ECa noise       : {self.eca_noise_level * 100:.1f} %",
             f"  Homogeneous     : {self.homogeneous}"
             + ("  (spatial gradients disabled, temporal trend + noise kept)" if self.homogeneous else ""),
+            f"  Full-range grad.: {self.full_range_gradient}"
+            + (
+                f"  (xy_z_blend={self.xy_z_blend}, "
+                f"invert_z={self.invert_z_gradient}, "
+                f"random_xy={self.random_xy_field}"
+                + (
+                    f" [n_blobs={self.random_xy_n_blobs}, "
+                    f"corr_m={self.random_xy_correlation_m}, "
+                    f"seed={self.random_xy_seed}]"
+                    if self.random_xy_field else ""
+                )
+                + ")"
+                if self.full_range_gradient else ""
+            ),
         ]
         if self.data_source == "real":
             lines += [
@@ -919,6 +979,42 @@ def _validate(name: str, raw: dict) -> None:
             f"Scenario '{name}': homogeneous must be a bool, got {homogeneous!r}."
         )
 
+    full_range_gradient = raw.get("full_range_gradient", False)
+    if not isinstance(full_range_gradient, bool):
+        raise ValueError(
+            f"Scenario '{name}': full_range_gradient must be a bool, got "
+            f"{full_range_gradient!r}."
+        )
+
+    xy_z_blend = raw.get("xy_z_blend", 0.5)
+    if not isinstance(xy_z_blend, (int, float)) or not (0.0 <= xy_z_blend <= 1.0):
+        raise ValueError(
+            f"Scenario '{name}': xy_z_blend must be in [0, 1], got {xy_z_blend!r}."
+        )
+
+    for _bkey in ("invert_z_gradient", "random_xy_field"):
+        _bval = raw.get(_bkey, False)
+        if not isinstance(_bval, bool):
+            raise ValueError(
+                f"Scenario '{name}': {_bkey} must be a bool, got {_bval!r}."
+            )
+
+    random_xy_n_blobs = raw.get("random_xy_n_blobs", 8)
+    if not isinstance(random_xy_n_blobs, int) or random_xy_n_blobs < 1:
+        raise ValueError(
+            f"Scenario '{name}': random_xy_n_blobs must be a positive int, "
+            f"got {random_xy_n_blobs!r}."
+        )
+
+    random_xy_correlation_m = raw.get("random_xy_correlation_m", None)
+    if random_xy_correlation_m is not None and (
+        not isinstance(random_xy_correlation_m, (int, float)) or random_xy_correlation_m <= 0
+    ):
+        raise ValueError(
+            f"Scenario '{name}': random_xy_correlation_m must be > 0 or null, "
+            f"got {random_xy_correlation_m!r}."
+        )
+
     # ---- Ensemble spread: alpha log-sweep -----------------------------
     alpha_range = raw.get("alpha_range_log", None)
     if alpha_range is not None:
@@ -1051,6 +1147,18 @@ def load_scenario(
         tdr_noise_std     = float(raw.get("tdr_noise_std", 0.01)),
         eca_noise_level   = float(raw.get("eca_noise_level", 0.0)),
         homogeneous       = bool(raw.get("homogeneous", False)),
+        full_range_gradient = bool(raw.get("full_range_gradient", False)),
+        xy_z_blend        = float(raw.get("xy_z_blend", 0.5)),
+        invert_z_gradient = bool(raw.get("invert_z_gradient", False)),
+        random_xy_field   = bool(raw.get("random_xy_field", False)),
+        random_xy_n_blobs = int(raw.get("random_xy_n_blobs", 8)),
+        random_xy_correlation_m = (
+            float(raw["random_xy_correlation_m"])
+            if raw.get("random_xy_correlation_m") is not None else None
+        ),
+        random_xy_seed    = (
+            int(raw["random_xy_seed"]) if raw.get("random_xy_seed") is not None else None
+        ),
         # Ensemble spread
         alpha_range_log   = alpha_range_log,
         # 2-D grid

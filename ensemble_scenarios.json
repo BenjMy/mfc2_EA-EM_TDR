@@ -8,9 +8,11 @@
     "════════════════════════════════════════════════════════════════════",
     "  2d       Synthetic 2-D UTM grid run (data_source omitted -> synthetic).",
     "  2d_dense_tdr  Same as '2d' but 10 SWC positions (40 probes) for denser TDR coverage.",
+    "  2d_random_xy_drying  Same '2d' family, but a RANDOM (patchy) plan-view",
+    "           moisture pattern instead of a linear ramp, blended with a",
+    "           spatially-uniform depth trend that dries out with depth.",
+    "           See full_range_gradient / random_xy_* fields below.",
     "  2d_real  Same 2-D UTM survey geometry and inversion settings, but",
-    "  moisture_2d_free   Synthetic 2-D grid, 5 layers, ALL interfaces free, 6 SWC positions.",
-    "  moisture_2d_dense_tdr  Same as moisture_2d_free but 12 SWC positions (60 probes) for denser TDR coverage.",
     "           driven by real GEM-2 EM data + SoilNet TDR data.",
     "════════════════════════════════════════════════════════════════════",
     "FIELD REFERENCE",
@@ -96,6 +98,40 @@
     "                        wetting over timesteps) and per-sample noise are",
     "                        still applied. Ignored for data_source='real'.",
     "                        Default: false.",
+    "full_range_gradient bool  True → static XZ (depth) and XY (plan-view)",
+    "                        initial-model gradients each span the FULL",
+    "                        [theta_dry, theta_wet] range independently,",
+    "                        instead of the small default-gradient offset.",
+    "                        Combined via xy_z_blend. Ignored when",
+    "                        homogeneous=true. Default: false.",
+    "xy_z_blend        float Only used when full_range_gradient=true. Weight",
+    "                        in [0, 1] between the XY component (1.0 = XY",
+    "                        only) and the Z/depth component (0.0 = Z only).",
+    "                        Default: 0.5 (equal blend).",
+    "invert_z_gradient bool  Only used when full_range_gradient=true. True →",
+    "                        flips the depth gradient so the shallowest layer",
+    "                        is wet and the deepest is dry, i.e. the soil",
+    "                        dries out uniformly with depth (same rate at",
+    "                        every XY location). Default: false (dry at",
+    "                        surface, wet at depth).",
+    "random_xy_field   bool  Only used when full_range_gradient=true. True →",
+    "                        replaces the linear XY ramp with a smooth,",
+    "                        spatially-correlated RANDOM field (scattered",
+    "                        wet/dry patches) instead of one monotonic",
+    "                        direction. One field per ensemble member, fixed",
+    "                        across all timesteps/layers within that member.",
+    "                        Default: false.",
+    "random_xy_n_blobs int   Only used when random_xy_field=true. Number of",
+    "                        random Gaussian patches summed into the field.",
+    "                        More → busier/fragmented; fewer → broad zones.",
+    "                        Default: 8.",
+    "random_xy_correlation_m float or null  Only used when random_xy_field=",
+    "                        true. Patch radius [m] (1-sigma). null (default)",
+    "                        auto-picks ~1/4 of the survey's shorter extent.",
+    "random_xy_seed    int or null  Only used when random_xy_field=true.",
+    "                        Seeds the random field independently of the",
+    "                        per-sample noise stream, for reproducibility.",
+    "                        null (default) derives a seed from 42.",
     "cache_tag         str   Optional suffix appended to the cache filename.",
     "                        Change this whenever you alter depths0 or cond_ranges",
     "                        to avoid loading a stale cached ensemble.",
@@ -200,7 +236,6 @@
         0.1,
         0.3
       ],
-      "beta_comment": [0,0.5,1],
       "method": [
         "ROPE"
       ],
@@ -236,6 +271,70 @@
     "eca_noise_level": 0.01,
     "alpha_range_log": null
   },
+  "2d_horizon_ws": {
+    "description": "Same '2d' family (2-D UTM grid, realistic noise, 2 TDR positions/layer, 1-60 mS/m conductivity range), but with per-horizon Waxman-Smits parameters instead of a single flat lab_p0. Encodes a plausible depth trend: cementation exponent m increases with depth (compaction/reduced porosity) while surface conductivity sigma_s decreases with depth (organic matter/clay content falls off below the topsoil). a and sigma_w held roughly constant across horizons. a and m are pinned (ws_fixed_params), so the per-horizon values directly control calibration; sigma_w/sigma_s are just per-horizon starting guesses since they float freely.",
+    "output_dir": "mfc2_outputs/field_survey_2d_horizon_ws",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      [0.5, 2.2, 500.0, 150.0],
+      [0.5, 2.6, 500.0, 100.0],
+      [0.5, 3.0, 500.0, 60.0],
+      [0.5, 3.4, 500.0, 30.0]
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 2,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "cache_tag": "horizon_ws"
+  },
   "2d_intermediate": {
     "description": "2-D UTM grid run with realistic observation noise, 2 TDR positions per layer, all interfaces free, and a narrow ECa conductivity range (1-60 mS/m) representative of resistive field soils.",
     "output_dir": "mfc2_outputs/field_survey_2d_intermediate",
@@ -264,7 +363,6 @@
         0.1,
         0.3
       ],
-      "beta_comment": [0,0.5,1],
       "method": [
         "ROPE"
       ],
@@ -328,7 +426,6 @@
         0.1,
         0.3
       ],
-      "beta": [0,0.5,1],
       "method": [
         "ROPE"
       ],
@@ -364,12 +461,84 @@
     "eca_noise_level": 0.01,
     "alpha_range_log": null
   },
+  "2d_random_xy_drying": {
+    "description": "2-D UTM grid run with a MORE RANDOM (patchy, non-linear) plan-view soil-moisture pattern instead of the simple diagonal ramp used by '2d': theta_xy is a smooth spatially-correlated random field (sum of random Gaussian wet/dry patches, see random_xy_* below), blended with a spatially-UNIFORM depth trend that dries out with depth (invert_z_gradient=true -> wet at the surface, progressively drier at depth, same rate everywhere in plan view). Same grid/inversion settings family as '2d', with a denser SWC network (8 positions) since a heterogeneous XY field needs more spatial sampling to calibrate well than a monotonic gradient does.",
+    "output_dir": "mfc2_outputs/field_survey_2d_random_xy_drying",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 8,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "grid_num_x": 12,
+    "grid_num_y": 6,
+    "full_range_gradient": true,
+    "xy_z_blend": 0.6,
+    "invert_z_gradient": true,
+    "random_xy_field": true,
+    "random_xy_n_blobs": 10,
+    "random_xy_correlation_m": 5.0,
+    "random_xy_seed": 7
+  },
   "2d_real": {
     "description": "Real-data counterpart of the '2d' scenario: same 2-D UTM survey geometry, layer depths, and conductivity bounds, but driven by real GEM-2 EM surveys and SoilNet TDR data instead of a synthetic ground truth.",
     "output_dir": "mfc2_outputs/field_survey_2d_real",
     "data_source": "real",
     "em_data_dir": "./data/EMI_MFC2/",
-    "em_unit": "ppm", 
+    "em_unit": "ppm",
     "tdr_data_dir": "./data/daily_MFC/",
     "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
     "time_tolerance_days": 1.0,
@@ -394,9 +563,10 @@
     "fixed_depths": true,
     "param_grid": {
       "method": [
-        "MCMC"
+        "ROPE"
       ],
       "forwardModel": [
+        "FSlin",
         "CS"
       ]
     },
@@ -431,123 +601,7 @@
     "eca_noise_level": 0.03,
     "cache_tag": "field_survey_2d_real"
   },
-  "moisture_2d_free": {
-    "description": "Synthetic 2-D UTM grid soil moisture scenario, 5 layers to ~1.65 m, ALL layer interfaces free. 6 SWC positions (auto layer-centre depths, guaranteeing full horizon coverage) and moderate ECa/TDR noise for a realistic-but-tractable free-depth inversion test.",
-    "output_dir": "mfc2_outputs/moisture_2d_free",
-    "realization_index": 0,
-    "depths0": [
-      0.2,
-      0.4,
-      0.7,
-      1.1
-    ],
-    "fixed_depths": false,
-    "param_grid": {
-      "alpha": [
-        0.03,
-        0.1,
-        0.3
-      ],
-      "method": [
-        "L-BFGS-B"
-      ],
-      "forwardModel": [
-        "FSlin",
-        "CS"
-      ]
-    },
-    "cond_ranges": [
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ]
-    ],
-    "forward_model": "CS",
-    "gamma": 0.0,
-    "num_swc_positions": 6,
-    "swc_depths": null,
-    "window_m": 1.0,
-    "tdr_noise_std": 0.01,
-    "eca_noise_level": 0.03,
-    "grid_num_x": 12,
-    "grid_num_y": 6,
-    "cache_tag": "moisture_2d_free"
-  },
-  "moisture_2d_dense_tdr": {
-    "description": "Synthetic 2-D UTM grid soil moisture scenario, 5 layers to ~1.65 m, ALL layer interfaces free -- same geometry as 'moisture_2d_free' but with DENSE TDR coverage: 12 SWC positions (auto layer-centre depths) = 60 total probes, for stronger per-horizon calibration and a tighter RMSE-vs-K curve.",
-    "output_dir": "mfc2_outputs/moisture_2d_dense_tdr",
-    "realization_index": 0,
-    "depths0": [
-      0.2,
-      0.4,
-      0.7,
-      1.1
-    ],
-    "fixed_depths": false,
-    "param_grid": {
-      "alpha": [
-        0.03,
-        0.1,
-        0.3
-      ],
-      "method": [
-        "L-BFGS-B"
-      ],
-      "forwardModel": [
-        "FSlin",
-        "CS"
-      ]
-    },
-    "cond_ranges": [
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ],
-      [
-        1.0,
-        60.0
-      ]
-    ],
-    "forward_model": "CS",
-    "gamma": 0.0,
-    "num_swc_positions": 12,
-    "swc_depths": null,
-    "window_m": 1.0,
-    "tdr_noise_std": 0.01,
-    "eca_noise_level": 0.03,
-    "grid_num_x": 12,
-    "grid_num_y": 6,
-    "cache_tag": "moisture_2d_dense_tdr"
-  },
-"mfc2_real_synthetic_mirror": {
+  "mfc2_real_synthetic_mirror": {
     "description": "Synthetic twin of the real MFC2 deployment: real EM survey dates/point-count asymmetry (incl. the degraded 15/12/2020 epoch) and real 24-station TDR coordinates at 15/30 cm, with known ground truth for scoring.",
     "output_dir": "mfc2_outputs/mfc2_real_synthetic_mirror",
     "data_source": "real",

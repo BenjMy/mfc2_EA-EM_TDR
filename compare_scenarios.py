@@ -84,9 +84,17 @@ printed.
 
 Output (written to --out-dir)
 ------------------------------
+If --out-dir is omitted, it defaults to an auto-named subfolder of
+./comparison_output built from the compared runs -- e.g. --ids 7 12
+writes to ./comparison_output/7_12/ -- so comparisons of different runs
+don't overwrite each other. Pass --out-dir explicitly to use a fixed path
+instead.
+
 * comparison_table.csv       -- metrics (rows) x scenarios (cols), wide format
 * comparison_table.md        -- same, as a Markdown table for pasting into notes/papers
 * fig_rmse_and_cv.png        -- Final RMSE and CV map mean/max per scenario
+* fig_water_content_error.png-- Calculated-vs-truth water content MAE/RMSE
+                                 per scenario (XZ always, XY in 2-D mode)
 * fig_ensemble_and_probes.png-- ensemble size, SWC probes/positions, matching fraction
 * fig_eca_rmse_by_epoch.png  -- forward ECa RMSE per epoch, grouped by scenario
 * fig_step_timing.png        -- stacked step-timing breakdown per scenario
@@ -196,6 +204,15 @@ def parse_report(path: str) -> dict:
     out["quality_gate_calibrated"] = metrics.get("Quality gate — calibrated horizons", "")
     out["inversion_tasks_failed"] = m("Inversion tasks failed")
     out["inversion_combos_dropped"] = m("Ensemble combos dropped")
+
+    # Calculated-vs-truth water content error (synthetic mode only) --
+    # written by run_pipeline.py Step 6 (see plot_error_metrics_from_pipeline).
+    # XY entries are only present in 2-D mode; m() defaults to NaN when a
+    # key is absent, so 1-D reports just show NaN for the XY columns.
+    out["wc_mae_xz"] = m("Water Content MAE vs Truth (XZ)")
+    out["wc_rmse_xz"] = m("Water Content RMSE vs Truth (XZ)")
+    out["wc_mae_xy"] = m("Water Content MAE vs Truth (XY)")
+    out["wc_rmse_xy"] = m("Water Content RMSE vs Truth (XY)")
 
     # per-epoch forward ECa RMSE: keys look like
     # "Forward ECa RMSE (optimal, t=0)" .. t=N
@@ -395,6 +412,10 @@ SCALAR_METRIC_ROWS = [
     ("matching_largest_group_frac_pct", "Matching: largest group fraction [%]"),
     ("inversion_tasks_failed", "Inversion tasks failed"),
     ("inversion_combos_dropped", "Ensemble combos dropped"),
+    ("wc_mae_xz", "Water content MAE vs truth, XZ [%VWC]"),
+    ("wc_rmse_xz", "Water content RMSE vs truth, XZ [%VWC]"),
+    ("wc_mae_xy", "Water content MAE vs truth, XY [%VWC]"),
+    ("wc_rmse_xy", "Water content RMSE vs truth, XY [%VWC]"),
     ("total_runtime_s", "Total runtime [s]"),
 ]
 
@@ -445,6 +466,42 @@ def plot_rmse_and_cv(parsed, out_dir):
     fig.suptitle("Solution quality across scenarios")
     fig.tight_layout()
     path = os.path.join(out_dir, "fig_rmse_and_cv.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def plot_water_content_error(parsed, out_dir):
+    """
+    Bar chart of calculated-vs-truth water content MAE/RMSE (%VWC) per
+    scenario -- XZ always, XY too wherever a scenario ran in 2-D mode.
+    Synthetic-mode only (needs ground truth); returns None if none of the
+    parsed reports have these metrics (e.g. all real-data runs).
+    """
+    labels = list(parsed.keys())
+    mae_xz = [parsed[l]["wc_mae_xz"] for l in labels]
+    rmse_xz = [parsed[l]["wc_rmse_xz"] for l in labels]
+    mae_xy = [parsed[l]["wc_mae_xy"] for l in labels]
+    rmse_xy = [parsed[l]["wc_rmse_xy"] for l in labels]
+
+    if not any(np.isfinite(v) for v in mae_xz + rmse_xz + mae_xy + rmse_xy):
+        return None
+
+    has_xy = any(np.isfinite(v) for v in mae_xy + rmse_xy)
+    n_panels = 4 if has_xy else 2
+    fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * len(labels) ** 0.3 + 3 * n_panels, 4.2))
+    if n_panels == 1:
+        axes = [axes]
+
+    _bar_grid(axes[0], labels, mae_xz, "MAE [%VWC]", "Water Content MAE vs Truth (XZ)")
+    _bar_grid(axes[1], labels, rmse_xz, "RMSE [%VWC]", "Water Content RMSE vs Truth (XZ)")
+    if has_xy:
+        _bar_grid(axes[2], labels, mae_xy, "MAE [%VWC]", "Water Content MAE vs Truth (XY)")
+        _bar_grid(axes[3], labels, rmse_xy, "RMSE [%VWC]", "Water Content RMSE vs Truth (XY)")
+
+    fig.suptitle("Calculated-vs-truth water content error across scenarios")
+    fig.tight_layout()
+    path = os.path.join(out_dir, "fig_water_content_error.png")
     fig.savefig(path, dpi=150)
     plt.close(fig)
     return path
@@ -836,6 +893,36 @@ def run_truth_comparison(labels: list[str], output_dirs: list[str], realization:
 # Main
 # --------------------------------------------------------------------------
 
+def _sanitize_for_dirname(token: str) -> str:
+    """Turn a run id / label / filename into a safe, readable folder-name
+    fragment: keep alphanumerics, dash, underscore, dot; collapse/replace
+    everything else (spaces, colons, slashes, glob chars, ...) with '_'."""
+    token = str(token).strip()
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", token)
+    return token.strip("_.") or "run"
+
+
+def default_out_dir_from_tokens(id_tokens: list[str], report_only_names: list[str]) -> str:
+    """Build the auto out-dir name (under ./comparison_output/) from the
+    raw --ids tokens (in the order given) followed by names for any
+    --reports-only entries (their default label / filename). Falls back to
+    'comparison' if nothing usable is available, and truncates very long
+    combinations (many ids) to keep the path sane."""
+    parts = [_sanitize_for_dirname(t) for t in id_tokens] + \
+            [_sanitize_for_dirname(t) for t in report_only_names]
+    parts = [p for p in parts if p]
+    if not parts:
+        name = "comparison"
+    else:
+        name = "_".join(parts)
+        if len(name) > 120:
+            # Too long to be a friendly folder name (e.g. many runs) --
+            # keep the first few ids and note the count instead.
+            head = "_".join(parts[:4])
+            name = f"{head}_and_{len(parts) - 4}_more"
+    return os.path.join("./comparison_output", name)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -891,7 +978,13 @@ def main() -> None:
     ap.add_argument("--time-index", type=int, default=-1,
                      help="Time/epoch index for the truth-comparison plots (-1 = last). "
                           "Default: %(default)s")
-    ap.add_argument("--out-dir", default="./comparison_output")
+    ap.add_argument("--out-dir", default=None,
+                     help="Directory to write comparison_table.csv/.md and the "
+                          "comparison PNGs into. Default: an auto-named subfolder "
+                          "of ./comparison_output built from the compared run "
+                          "ids/labels, e.g. ./comparison_output/7_12 for "
+                          "--ids 7 12 (pass this explicitly to use a fixed path "
+                          "instead).")
     args = ap.parse_args()
 
     if not args.reports and not args.ids:
@@ -902,6 +995,7 @@ def main() -> None:
     report_paths: list[str] = []
     default_labels: list[str] = []  # "" where no better-than-parsed default exists
     default_output_dirs: list[str] = []
+    resolved_run_ids: list[str] = []  # only populated for --ids entries, used for --out-dir naming
 
     if args.ids:
         id_map = resolve_ids_to_reports(args.ids, args.log_file)
@@ -909,6 +1003,7 @@ def main() -> None:
             report_paths.append(info["report_path"])
             default_labels.append(info["scenario"])
             default_output_dirs.append(info["output_dir"])
+            resolved_run_ids.append(run_id)
 
     if args.reports:
         explicit_paths = resolve_report_paths(args.reports)
@@ -929,6 +1024,25 @@ def main() -> None:
         raise ValueError(f"--output-dirs has {len(args.output_dirs)} entries but --ids/--reports "
                           f"resolved to {len(report_paths)} files.")
     output_dirs = args.output_dirs or default_output_dirs
+
+    if args.out_dir is None:
+        # Auto-name the output folder from what's being compared, so runs
+        # against different ids/reports don't overwrite each other's
+        # comparison_output/ by default. --ids tokens are used as typed
+        # (e.g. "7", "12", "field_survey_2d:7"); any --reports-only entries
+        # fall back to their default label / filename. (Offset by the
+        # number of *resolved* ids, not raw tokens, in case two tokens
+        # ever resolve to the same run_id.)
+        n_id_entries = len(resolved_run_ids)
+        report_only_names = [
+            name or os.path.splitext(os.path.basename(p))[0]
+            for name, p in zip(default_labels[n_id_entries:], report_paths[n_id_entries:])
+        ]
+        args.out_dir = default_out_dir_from_tokens(
+            id_tokens=list(args.ids) if args.ids else [],
+            report_only_names=report_only_names,
+        )
+        print(f"[compare_scenarios] --out-dir not given, using: {args.out_dir}")
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -962,6 +1076,7 @@ def main() -> None:
     # --- plots ---------------------------------------------------------------
     made = []
     made.append(plot_rmse_and_cv(parsed, args.out_dir))
+    made.append(plot_water_content_error(parsed, args.out_dir))
     made.append(plot_ensemble_and_probes(parsed, args.out_dir))
     made.append(plot_eca_rmse_by_epoch(parsed, args.out_dir))
     made.append(plot_step_timing(parsed, args.out_dir))

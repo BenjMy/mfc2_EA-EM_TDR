@@ -26,6 +26,15 @@
 #   are set). See `--help` for details, current per-scenario status, and
 #   how to enable/disable it either way.
 #
+# EM footprint diagnostic (Step 5c McNeill depth-weighted comparison)
+# ---------------------------------------------------------------------
+#   OFF by default. CLI-only (no scenario JSON field) -- add
+#   --em-footprint-diagnostic to any run. Compares each TDR probe's
+#   hard-routed (single nearest layer) theta_calc against a McNeill
+#   depth-weighted blend across all layers, reporting both RMSEs in
+#   Step 5c. Diagnostic only -- never changes Step 2/4 calibration or
+#   Step 3/5 K-selection. See `--help` for details.
+#
 # Train/validation split (Loiseau et al. 2026, Secs. 2.3 & 2.6)
 # ---------------------------------------------------------------
 #   OFF by default (legacy behaviour: all TDR/SWC observations both fit
@@ -69,7 +78,7 @@ SCENARIO="default"
 CONFIG_FILE=""
 VENV_PATH=""
 PYTHON="python3"
-MODE="1d"
+MODE=""
 NX=10
 NY=5
 EM_DIR=""
@@ -80,6 +89,9 @@ HOMOGENEOUS=false
 FULL_RANGE_GRADIENT=false
 XY_Z_BLEND=""
 INVERT_Z_GRADIENT=false
+RANDOM_XY=false
+XY_PATCH_SIGMA=""
+DEPTH_DRYING_STRENGTH=""
 PROBE_XYZ=""
 XY_RENDER_MODE=""
 NUM_SWC_POSITIONS=""
@@ -89,6 +101,7 @@ BETA=()
 GAMMA=""
 WS_LOCALIZED_BANDWIDTH=""
 WS_LOCALIZED_BANDWIDTH_SWEEP=()
+EM_FOOTPRINT_DIAGNOSTIC=false
 TRAIN_VAL_SPLIT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
@@ -126,7 +139,8 @@ EM channel options:
                           the scenario config. Example: --drop-coils f425
 
 Spatial options:
-      --mode 1d|2d        Spatial mode (default: 1d).
+      --mode 1d|2d        Spatial mode (default: '2d' for real data,
+                          '1d' for synthetic data).
                           1d — single transect, XZ plots only.
                           2d — UTM grid from Alento survey, XZ + XY plots.
       --nx INT            Grid columns in 2-D mode (default: 10).
@@ -155,6 +169,25 @@ Spatial options:
                           the deepest layer is dry (default: dry at
                           surface, wet at depth). Overrides
                           'invert_z_gradient' in the scenario JSON.
+      --random-xy         Synthetic mode only (ignored if --homogeneous,
+                          --infiltration, or --full-range-gradient is also
+                          given). Plan-view (XY) soil moisture is a
+                          spatially RANDOM, optionally patch-smoothed field
+                          per point, while EVERY point dries out with depth
+                          by the same uniform fraction. Overrides
+                          'random_xy' in the scenario JSON.
+      --xy-patch-sigma S  Only used with --random-xy. Gaussian smoothing
+                          sigma (grid cells) applied to the random XY field
+                          so nearby points form correlated wet/dry patches
+                          instead of point-to-point white noise. 0 = no
+                          smoothing. Default: 1.5. Overrides
+                          'xy_patch_sigma' in the scenario JSON.
+      --depth-drying-strength F
+                          Only used with --random-xy. Fraction (0-1) of
+                          each point's surface theta lost by the deepest
+                          layer, applied identically everywhere. Default:
+                          0.6. Overrides 'depth_drying_strength' in the
+                          scenario JSON.
 
 Probe placement and XY plot rendering:
       --probe-xyz PATH    CSV of explicit SWC/TDR probe locations, one row
@@ -216,6 +249,15 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           --ws-localized-bandwidth / scenario value.
                           Overrides 'ws_localized_bandwidth_sweep' in
                           the scenario config.
+      --em-footprint-diagnostic
+                          Compute a McNeill-type depth-weighted "effective
+                          EM theta" per probe and report its discrepancy
+                          against theta_calc at the hard-routed
+                          (nearest-layer) assignment vs. theta_obs (Step
+                          5c). Diagnostic only -- never changes Step 2/4
+                          calibration or Step 3/5 K-selection. See the "EM
+                          footprint diagnostic" section below. OFF by
+                          default; no scenario JSON equivalent (CLI-only).
       --train-val-split METHOD
                           Split TDR/SWC observations into a train subset
                           (drives Step 2/4 Waxman-Smits fitting AND Step
@@ -313,6 +355,45 @@ Localization diagnostic (Step 2 kernel-localized WS calibration):
       (--num-swc-positions, e.g. 6-10) so a bandwidth of 5.0 has more
       than two points to localize between.
 
+EM footprint diagnostic (Step 5c McNeill depth-weighted comparison):
+      This runs a DIAGNOSTIC SIBLING to Step 2/4 calibration and Step 5
+      K-selection, comparing two ways of predicting a TDR probe's water
+      content from theta_calc:
+        - hard-routed: the single layer the probe is geometrically
+          assigned to (current default routing, unchanged by this flag),
+        - McNeill-weighted: a depth-weighted blend across ALL layers,
+          using the closed-form McNeill (1980) cumulative EM response
+          curve for the coil geometry actually in use (see
+          em_sensitivity.py) -- narrow near the surface, wider at depth,
+          the EM analogue of ERT's depth-varying-footprint problem, but
+          tractable here because EM's kernel is a fixed function of coil
+          geometry rather than an emergent property of an inversion mesh.
+
+      DEFAULT: OFF. CLI-only -- add --em-footprint-diagnostic to any run
+      (synthetic or real). No scenario JSON field for this one (unlike
+      ws_localized_bandwidth above); it's a read-only comparison of
+      already-computed theta_calc, not something that needs per-scenario
+      tuning to be meaningful.
+
+      Real vs. synthetic coil geometry are handled differently
+      internally (see em_sensitivity.py's module docstring): real-data
+      runs use the single fixed HCP/1.66 m geometry exactly; synthetic
+      runs average across all six (orientation, spacing) pairs in
+      COILS_LIST, labelled explicitly as an approximation in the log --
+      there is no single physically-correct kernel when six different
+      coil geometries feed one inversion.
+
+      Output: a Step 5c section in pipeline_report_*.md with both RMSEs,
+      a per-probe table, and a one-line interpretation (whether the
+      weighted comparison fits TDR better than hard-routed, and what
+      that would or wouldn't imply about the current probe-to-layer
+      routing) -- plus two PNGs in <output_dir>/diagnostics/:
+      em_footprint_probe_comparison.png (per-probe hard-routed vs.
+      weighted error bars) and em_footprint_spatial_discrepancy.png
+      (which comparison sits closer to TDR at each matched EM point,
+      mapped spatially). Nothing else in the pipeline changes when this
+      is on.
+
 Environment options:
   -e, --env PATH          Path to a Python virtualenv to activate before running
                           (e.g. /path/to/venv or /path/to/conda/envs/myenv)
@@ -339,6 +420,8 @@ Examples:
   ./run_pipeline.sh --mode 2d -s 2d --homogeneous       # spatially uniform ground truth
   ./run_pipeline.sh --mode 2d -s 2d --full-range-gradient   # full dry-to-wet XZ+XY gradient
   ./run_pipeline.sh --mode 2d -s 2d --full-range-gradient --xy-z-blend 0.3 --invert-z-gradient
+  ./run_pipeline.sh --mode 2d -s moisture_2d_random_xy               # random/patchy XY, uniform depth-drying
+  ./run_pipeline.sh --mode 2d -s 2d --random-xy --xy-patch-sigma 2 --depth-drying-strength 0.5
 
   # --- Override SWC/TDR sensor network from the command line ---
   ./run_pipeline.sh --mode 2d -s 2d --num-swc-positions 6
@@ -374,6 +457,13 @@ Examples:
       --em-dir ./data/EMI_MFC2/ \
       --tdr-dir ./data/daily_MFC/ \
       --train-val-split by_probe
+
+  # --- EM footprint diagnostic (Step 5c, McNeill depth weighting) ---
+  ./run_pipeline.sh -s 2d --em-footprint-diagnostic
+  ./run_pipeline.sh --data-source real -s mfc2_real \
+      --em-dir ./data/EMI_MFC2/ \
+      --tdr-dir ./data/daily_MFC/ \
+      --em-footprint-diagnostic
 
   # --- Drop a noisy coil/frequency channel before inversion ---
   ./run_pipeline.sh --data-source real -s mfc2_real \
@@ -508,11 +598,19 @@ while [[ $# -gt 0 ]]; do
         --list)     LIST_ONLY=true;     shift ;;
         --validate) VALIDATE_ONLY=true; shift ;;
         --homogeneous) HOMOGENEOUS=true; shift ;;
+        --em-footprint-diagnostic) EM_FOOTPRINT_DIAGNOSTIC=true; shift ;;
         --full-range-gradient) FULL_RANGE_GRADIENT=true; shift ;;
         --xy-z-blend)
             XY_Z_BLEND="${2:?'--xy-z-blend requires a number'}"
             shift 2 ;;
         --invert-z-gradient) INVERT_Z_GRADIENT=true; shift ;;
+        --random-xy) RANDOM_XY=true; shift ;;
+        --xy-patch-sigma)
+            XY_PATCH_SIGMA="${2:?'--xy-patch-sigma requires a number'}"
+            shift 2 ;;
+        --depth-drying-strength)
+            DEPTH_DRYING_STRENGTH="${2:?'--depth-drying-strength requires a number'}"
+            shift 2 ;;
         --probe-xyz)    PROBE_XYZ="${2:?'--probe-xyz requires a path'}";         shift 2 ;;
         --xy-render-mode)
             XY_RENDER_MODE="${2:?'--xy-render-mode requires scatter or imshow'}"
@@ -523,11 +621,6 @@ while [[ $# -gt 0 ]]; do
         *) die "Unknown option: $1  (run with --help for usage)" ;;
     esac
 done
-
-# Warn when --nx / --ny are passed but mode is 1d
-if [[ "${MODE}" == "1d" && ( "${NX}" != "10" || "${NY}" != "5" ) ]]; then
-    log "WARNING: --nx / --ny are ignored in 1-D mode. Pass --mode 2d to use them."
-fi
 
 # Warn when --homogeneous is passed for real-data runs (synthetic-only flag)
 if ${HOMOGENEOUS} && [[ "${DATA_SOURCE}" == "real" ]]; then
@@ -552,6 +645,32 @@ if [[ -n "${XY_Z_BLEND}" ]] && ! ${FULL_RANGE_GRADIENT}; then
 fi
 if ${INVERT_Z_GRADIENT} && ! ${FULL_RANGE_GRADIENT}; then
     log "WARNING: --invert-z-gradient has no effect without --full-range-gradient."
+fi
+
+# Warn when --random-xy / --xy-patch-sigma / --depth-drying-strength are
+# passed for real-data runs (synthetic-generation-only flags)
+if ${RANDOM_XY} && [[ "${DATA_SOURCE}" == "real" ]]; then
+    log "WARNING: --random-xy is ignored in real-data mode (synthetic generation only)."
+fi
+if [[ -n "${XY_PATCH_SIGMA}" && "${DATA_SOURCE}" == "real" ]]; then
+    log "WARNING: --xy-patch-sigma is ignored in real-data mode (synthetic generation only)."
+fi
+if [[ -n "${DEPTH_DRYING_STRENGTH}" && "${DATA_SOURCE}" == "real" ]]; then
+    log "WARNING: --depth-drying-strength is ignored in real-data mode (synthetic generation only)."
+fi
+
+# Warn when --random-xy's sigma/strength flags are passed without it
+if [[ -n "${XY_PATCH_SIGMA}" ]] && ! ${RANDOM_XY}; then
+    log "WARNING: --xy-patch-sigma has no effect without --random-xy."
+fi
+if [[ -n "${DEPTH_DRYING_STRENGTH}" ]] && ! ${RANDOM_XY}; then
+    log "WARNING: --depth-drying-strength has no effect without --random-xy."
+fi
+
+# --random-xy and --full-range-gradient are mutually exclusive branches in
+# the generator's if/elif chain; --full-range-gradient wins, so warn.
+if ${RANDOM_XY} && ${FULL_RANGE_GRADIENT}; then
+    log "WARNING: --full-range-gradient takes precedence over --random-xy; random_xy will be ignored."
 fi
 
 # ---------------------------------------------------------------------------
@@ -618,6 +737,28 @@ if [[ "${EFFECTIVE_DS}" == "real" ]]; then
     [[ ! -d "${EFFECTIVE_TDR_DIR}" ]] && die "TDR directory not found: ${EFFECTIVE_TDR_DIR}"
     [[ ! -f "${EFFECTIVE_COORD_FILE}" ]] && die "Coordinate file not found: ${EFFECTIVE_COORD_FILE}"
     log "Real data mode — EM=${EFFECTIVE_EM_DIR}, TDR=${EFFECTIVE_TDR_DIR}, Coords=${EFFECTIVE_COORD_FILE}"
+fi
+
+# ---------------------------------------------------------------------------
+# Resolve effective spatial mode
+# ---------------------------------------------------------------------------
+# Explicit --mode always wins, for either data source. Otherwise default by
+# data source: real EM survey positions are already absolute UTM coordinates
+# (see run_pipeline.py's own real-data 2-D fix), so there's no reason to
+# leave 2-D output on the table -- '2d' is the sensible default there.
+# Synthetic keeps its original '1d' default, unchanged.
+if [[ -z "${MODE}" ]]; then
+    if [[ "${EFFECTIVE_DS}" == "real" ]]; then
+        MODE="2d"
+    else
+        MODE="1d"
+    fi
+    log "--mode not given; defaulting to '${MODE}' for data_source='${EFFECTIVE_DS}'."
+fi
+
+# Warn when --nx / --ny are passed but the (now-resolved) mode is 1d
+if [[ "${MODE}" == "1d" && ( "${NX}" != "10" || "${NY}" != "5" ) ]]; then
+    log "WARNING: --nx / --ny are ignored in 1-D mode. Pass --mode 2d to use them."
 fi
 
 # ---------------------------------------------------------------------------
@@ -688,7 +829,9 @@ log "  Mode        : ${MODE^^}  —  ${XY_NOTE}"
 log "  Config      : ${CONFIG_FILE:-${SCENARIO_JSON} (default)}"
 log "  Drop coils  : ${DROP_COILS[*]:-(none)}"
 log "  Homogeneous : ${HOMOGENEOUS}"
+log "  Random XY   : ${RANDOM_XY}"
 log "  Train/val   : ${TRAIN_VAL_SPLIT:-scenario default (or off)}"
+log "  EM footprint diagnostic : ${EM_FOOTPRINT_DIAGNOSTIC}"
 log "  Python      : $(command -v "${PYTHON}") ($(${PYTHON} --version 2>&1))"
 log "  Script      : ${PIPELINE_SCRIPT}"
 log "=================================================="
@@ -731,6 +874,15 @@ fi
 if ${INVERT_Z_GRADIENT}; then
     GRADIENT_ARGS+=(--invert-z-gradient)
 fi
+if ${RANDOM_XY}; then
+    GRADIENT_ARGS+=(--random-xy)
+fi
+if [[ -n "${XY_PATCH_SIGMA}" ]]; then
+    GRADIENT_ARGS+=(--xy-patch-sigma "${XY_PATCH_SIGMA}")
+fi
+if [[ -n "${DEPTH_DRYING_STRENGTH}" ]]; then
+    GRADIENT_ARGS+=(--depth-drying-strength "${DEPTH_DRYING_STRENGTH}")
+fi
 
 SWC_OVERRIDE_ARGS=()
 if [[ -n "${NUM_SWC_POSITIONS}" ]]; then
@@ -768,6 +920,11 @@ fi
 TRAIN_VAL_ARGS=()
 if [[ -n "${TRAIN_VAL_SPLIT}" ]]; then
     TRAIN_VAL_ARGS+=(--train-val-split "${TRAIN_VAL_SPLIT}")
+fi
+
+EM_FOOTPRINT_ARGS=()
+if ${EM_FOOTPRINT_DIAGNOSTIC}; then
+    EM_FOOTPRINT_ARGS=(--em-footprint-diagnostic)
 fi
 
 # ---------------------------------------------------------------------------
@@ -835,6 +992,7 @@ cat >> "${HEADER_TMP}" << MDEOF
 | config | \`${CONFIG_FILE:-default}\` |
 | drop-coils | \`${DROP_COILS[*]:-none}\` |
 | homogeneous | \`${HOMOGENEOUS}\` |
+| random_xy | \`${RANDOM_XY}\` |
 | num-swc-positions | \`${NUM_SWC_POSITIONS:-scenario default}\` |
 | swc-depths | \`${SWC_DEPTHS[*]:-scenario default}\` |
 | window-m | \`${WINDOW_M:-scenario default}\` |
@@ -843,6 +1001,7 @@ cat >> "${HEADER_TMP}" << MDEOF
 | ws-localized-bandwidth | \`${WS_LOCALIZED_BANDWIDTH:-scenario default (or disabled)}\` |
 | ws-localized-bandwidth-sweep | \`${WS_LOCALIZED_BANDWIDTH_SWEEP[*]:-scenario default (or disabled)}\` |
 | train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |
+| em-footprint-diagnostic | \`${EM_FOOTPRINT_DIAGNOSTIC}\` |
 | env | \`${VENV_PATH:-none}\` |
 | python | \`${PYTHON}\` |
 
@@ -869,6 +1028,7 @@ set +e
     "${PLOT_ARGS[@]+"${PLOT_ARGS[@]}"}" \
     "${INVERSION_OVERRIDE_ARGS[@]+"${INVERSION_OVERRIDE_ARGS[@]}"}" \
     "${TRAIN_VAL_ARGS[@]+"${TRAIN_VAL_ARGS[@]}"}" \
+    "${EM_FOOTPRINT_ARGS[@]+"${EM_FOOTPRINT_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
     2>&1 | tee "${RUN_LOG_TMP}"
 EXIT_CODE=${PIPESTATUS[0]}

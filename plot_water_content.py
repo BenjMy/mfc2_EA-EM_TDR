@@ -200,12 +200,34 @@ def _plot_xz_panel(
 # Core XY single-panel (plan view: easting vs northing)
 # ---------------------------------------------------------------------------
 
+def _resolution_from_pixel_size(
+    extent_range: float,
+    pixel_size_m: float,
+    min_res: int = 20,
+    max_res: int = 500,
+) -> int:
+    """
+    Convert a desired physical pixel size [m] into a pixel count along one
+    axis, given that axis's extent [m]. Clamped to [min_res, max_res] so a
+    degenerate input (extent_range ~ 0, or a pixel_size_m much larger/smaller
+    than the survey footprint) can't produce a 1-pixel or a many-thousand-
+    pixel raster.
+    """
+    if pixel_size_m <= 0 or not np.isfinite(pixel_size_m):
+        raise ValueError(f"pixel_size_m must be a positive finite number, got {pixel_size_m!r}.")
+    n = int(round(extent_range / pixel_size_m)) + 1
+    return int(np.clip(n, min_res, max_res))
+
+
 def _interpolate_to_grid(
     utm_x: np.ndarray,
     utm_y: np.ndarray,
     values: np.ndarray,
     grid_resolution: int = 200,
     interp_method: str = "linear",
+    pixel_size_m: float | None = None,
+    min_grid_res: int = 20,
+    max_grid_res: int = 500,
 ) -> tuple[np.ndarray, tuple[float, float, float, float]]:
     """
     Interpolate scattered (utm_x, utm_y, values) onto a regular grid for
@@ -215,15 +237,29 @@ def _interpolate_to_grid(
     Falls back to 'nearest' for any grid cell the primary ``interp_method``
     leaves as NaN (this happens outside the convex hull of the input points
     for 'linear'/'cubic'), so the map has no empty holes.
-    """
-    from scipy.interpolate import griddata
 
+    pixel_size_m : float or None, optional
+        When given, overrides ``grid_resolution`` -- the pixel count along
+        each axis is derived from the physical extent of that axis divided
+        by ``pixel_size_m`` (clamped to [min_grid_res, max_grid_res]), so
+        pixels are the same physical size on x and y rather than a fixed
+        ``grid_resolution`` x ``grid_resolution`` grid stretched over
+        whatever the (possibly non-square) survey footprint happens to be.
+    """
     xmin, xmax = float(np.min(utm_x)), float(np.max(utm_x))
     ymin, ymax = float(np.min(utm_y)), float(np.max(utm_y))
 
+    from scipy.interpolate import griddata
+
+    if pixel_size_m is not None:
+        nx = _resolution_from_pixel_size(xmax - xmin, pixel_size_m, min_grid_res, max_grid_res)
+        ny = _resolution_from_pixel_size(ymax - ymin, pixel_size_m, min_grid_res, max_grid_res)
+    else:
+        nx = ny = grid_resolution
+
     grid_x, grid_y = np.meshgrid(
-        np.linspace(xmin, xmax, grid_resolution),
-        np.linspace(ymin, ymax, grid_resolution),
+        np.linspace(xmin, xmax, nx),
+        np.linspace(ymin, ymax, ny),
     )
 
     points = np.column_stack([utm_x, utm_y])
@@ -257,6 +293,9 @@ def _plot_xy_panel(
     render_mode: str = "scatter",
     grid_resolution: int = 200,
     interp_method: str = "linear",
+    pixel_size_m: float | None = None,
+    min_grid_res: int = 20,
+    max_grid_res: int = 500,
     show_probes: bool = True,
     probe_indices: Sequence[int] | None = None,
     probe_marker: str = "v",
@@ -272,8 +311,13 @@ def _plot_xy_panel(
         measurement point -- exact values, but gappy/blocky for sparse or
         irregular grids. "imshow" interpolates the scattered points onto a
         regular grid (see ``_interpolate_to_grid``) and renders a smooth
-        continuous raster; use ``grid_resolution``/``interp_method`` to
-        control the interpolation.
+        continuous raster; use ``pixel_size_m`` (preferred) or
+        ``grid_resolution``/``interp_method`` to control the interpolation.
+    pixel_size_m : float or None, optional
+        Only used when ``render_mode="imshow"``. Physical pixel size [m];
+        when given, overrides ``grid_resolution`` so pixels are sized in
+        real-world meters (see ``_interpolate_to_grid``) instead of a fixed
+        pixel count stretched over the survey footprint.
     show_probes, probe_indices : control which/whether probe markers are
         drawn. ``probe_indices`` selects a subset of the probe_utm_x/y
         arrays (e.g. to declutter a dense probe layout); None (default)
@@ -286,6 +330,7 @@ def _plot_xy_panel(
         grid_values, extent = _interpolate_to_grid(
             utm_x, utm_y, theta_layer_mean,
             grid_resolution=grid_resolution, interp_method=interp_method,
+            pixel_size_m=pixel_size_m, min_grid_res=min_grid_res, max_grid_res=max_grid_res,
         )
         sc = ax.imshow(
             grid_values, extent=extent, origin="lower",
@@ -511,6 +556,11 @@ def plot_water_content_xy(
     render_mode: str = "scatter",
     grid_resolution: int = 200,
     interp_method: str = "linear",
+    pixel_size_m: float | None = None,
+    bandwidth_m: float | None = None,
+    window_m: float | None = None,
+    min_grid_res: int = 20,
+    max_grid_res: int = 500,
     show_probes: bool = True,
     probe_indices: Sequence[int] | None = None,
     probe_marker: str = "v",
@@ -533,11 +583,39 @@ def plot_water_content_xy(
     render_mode : {"scatter", "imshow"}
         "scatter" (default) draws one square marker per measurement point.
         "imshow" interpolates onto a regular grid for a smooth raster --
-        see ``grid_resolution``/``interp_method``.
+        see ``pixel_size_m``/``grid_resolution``/``interp_method``.
+    pixel_size_m : float or None, optional
+        Only used when ``render_mode="imshow"``. Physical pixel size [m]
+        for the interpolated raster -- see ``_interpolate_to_grid``. If
+        None, resolved from ``bandwidth_m``/``window_m`` -- see those
+        below. Falls back to ``grid_resolution`` if none of the three is
+        given.
+    bandwidth_m : float or None, optional
+        Preferred convenience alternative to ``pixel_size_m``: the
+        Gaspari-Cohn localization radius 'c' (Step 2 LOCALIZED Waxman-Smits
+        calibration), either a fixed value or the one recommended by the
+        LOO-CV bandwidth sweep (``WS_LOCALIZED_BANDWIDTH`` in
+        run_pipeline.py). Used as-is for the pixel size when given (and
+        ``pixel_size_m`` is None) -- takes precedence over ``window_m``,
+        since it reflects the actual spatial scale the calibration
+        resolved, whether from a sweep or a fixed setting.
+    window_m : float or None, optional
+        Fallback alternative to ``pixel_size_m``/``bandwidth_m``: the
+        half-width [m] of the horizontal EM/TDR spatial-matching window
+        (same quantity used elsewhere in the pipeline). Only used when
+        neither ``pixel_size_m`` nor ``bandwidth_m`` is given, in which
+        case the pixel size defaults to ``2 * window_m`` -- the full
+        window width -- so an "imshow" raster never implies spatial
+        resolution finer than what the survey geometry actually supports.
     show_probes, probe_indices, probe_marker, probe_size, probe_color :
         Control which probe markers are drawn and how. ``probe_indices``
         (None = all) selects a subset of ``probe_utm_x``/``probe_utm_y``.
     """
+    if pixel_size_m is None:
+        if bandwidth_m is not None:
+            pixel_size_m = float(bandwidth_m)
+        elif window_m is not None:
+            pixel_size_m = 2.0 * float(window_m)
     if theta_calc.ndim == 2:
         if layer_index is not None:
             theta_map = theta_calc[:, layer_index]
@@ -562,10 +640,14 @@ def plot_water_content_xy(
         show_colorbar=True, cbar_ax=cbar_ax,
         probe_utm_x=probe_utm_x, probe_utm_y=probe_utm_y,
         render_mode=render_mode, grid_resolution=grid_resolution,
-        interp_method=interp_method, show_probes=show_probes,
+        interp_method=interp_method, pixel_size_m=pixel_size_m,
+        min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+        show_probes=show_probes,
         probe_indices=probe_indices, probe_marker=probe_marker,
         probe_size=probe_size, probe_color=probe_color,
     )
+    # NOTE: pixel_size_m above is already fully resolved (pixel_size_m >
+    # bandwidth_m > 2*window_m), so _plot_xy_panel only needs that one value.
 
     if probe_utm_x is not None and show_probes:
         ax.legend(fontsize=7, loc="upper right")
@@ -600,20 +682,34 @@ def plot_water_content_xy_timelapse(
     render_mode: str = "scatter",
     grid_resolution: int = 200,
     interp_method: str = "linear",
+    pixel_size_m: float | None = None,
+    bandwidth_m: float | None = None,
+    window_m: float | None = None,
+    min_grid_res: int = 20,
+    max_grid_res: int = 500,
     show_probes: bool = True,
     probe_indices: Sequence[int] | None = None,
     probe_marker: str = "v",
     probe_size: float = 50.0,
     probe_color: str = "black",
+    filename_suffix: str = "",
 ) -> plt.Figure:
     """
     Grid of XY plan-view panels, one per survey time step (2-D mode).
 
     render_mode : {"scatter", "imshow"} -- see ``plot_water_content_xy``.
+    pixel_size_m, bandwidth_m, window_m : see ``plot_water_content_xy`` --
+        only used when ``render_mode="imshow"``. Resolution order:
+        ``pixel_size_m`` > ``bandwidth_m`` > ``2 * window_m``.
     show_probes, probe_indices, probe_marker, probe_size, probe_color :
         Control which probe markers are drawn (on the first panel only,
         as before) and how.
     """
+    if pixel_size_m is None:
+        if bandwidth_m is not None:
+            pixel_size_m = float(bandwidth_m)
+        elif window_m is not None:
+            pixel_size_m = 2.0 * float(window_m)
     if theta_calc.ndim == 3:
         if layer_index is not None:
             theta_maps = theta_calc[:, :, layer_index]
@@ -659,7 +755,9 @@ def plot_water_content_xy_timelapse(
             probe_utm_x=probe_utm_x if t == 0 else None,
             probe_utm_y=probe_utm_y if t == 0 else None,
             render_mode=render_mode, grid_resolution=grid_resolution,
-            interp_method=interp_method, show_probes=show_probes,
+            interp_method=interp_method, pixel_size_m=pixel_size_m,
+            min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+            show_probes=show_probes,
             probe_indices=probe_indices, probe_marker=probe_marker,
             probe_size=probe_size, probe_color=probe_color,
         )
@@ -678,7 +776,7 @@ def plot_water_content_xy_timelapse(
                  fontsize=11, y=0.97)
 
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"water_content_xy_{scenario_name}.png")
+    out_path = os.path.join(output_dir, f"water_content_xy_{scenario_name}{filename_suffix}.png")
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"[PLOT] Saved XY timelapse: {out_path}")
@@ -780,22 +878,6 @@ def plot_water_content_paired(
                                   cmap=cv_cmap, norm=cv_norm, shading="flat")
         sm_cv_ref = sm_cv
 
-        x_centers = (xe[:-1] + xe[1:]) / 2
-        z_centers = (zb[:-1] + zb[1:]) / 2
-        Xc, Zc   = np.meshgrid(x_centers, z_centers)
-        try:
-            ax_cv.contour(Xc, Zc, cv_t.T, levels=[cv_threshold],
-                          colors=["#FF4500"], linewidths=1.2, linestyles="--")
-        except Exception:
-            pass
-        try:
-            theta_levels = np.linspace(theta_vmin + 5, theta_vmax - 5, 4)
-            cs = ax_cv.contour(Xc, Zc, theta_t.T, levels=theta_levels,
-                               colors=["#333333"], linewidths=0.7, linestyles="-", alpha=0.6)
-            ax_cv.clabel(cs, inline=True, fontsize=5, fmt="%.0f%%")
-        except Exception:
-            pass
-
         _add_hatching(ax_cv, cv_t > 100.0, xe, zb,
                       hatch="xxx", facecolor="white", edgecolor="white", alpha=0.7)
 
@@ -825,10 +907,6 @@ def plot_water_content_paired(
                        label="Coverage ≤ 0 (poorly constrained)"),
         mpatches.Patch(facecolor="white", edgecolor="lightgrey", hatch="xxx",
                        label="CV > 100 % (high uncertainty)"),
-        plt.Line2D([0], [0], color="#FF4500", linewidth=1.2, linestyle="--",
-                   label=f"CV = {cv_threshold:.0f}% threshold"),
-        plt.Line2D([0], [0], color="#333333", linewidth=0.9, linestyle="-",
-                   label="θ contours (% vol.)"),
     ]
     if probe_x is not None:
         legend_elements.append(
@@ -872,6 +950,9 @@ def plot_from_pipeline(
     xy_render_mode: str = "scatter",
     probe_utm_x: list[float] | None = None,
     probe_utm_y: list[float] | None = None,
+    bandwidth_m: float | None = None,
+    window_m: float | None = None,
+    xy_imshow_extra: bool = True,
 ) -> None:
     """
     Render all water-content figures from pipeline output.
@@ -911,6 +992,27 @@ def plot_from_pipeline(
     y_transect : ndarray or None
         Local y-offsets (northing) used as a second spatial axis in XZ plots
         when the transect is truly 2-D.  Usually not needed; pass None.
+    bandwidth_m : float or None, optional
+        Preferred alternative to ``window_m``: the Gaspari-Cohn
+        localization radius 'c' (fixed or LOO-CV-sweep-recommended --
+        ``WS_LOCALIZED_BANDWIDTH`` in run_pipeline.py). When given, the
+        extra interpolated-raster XY plot (see ``xy_imshow_extra``) uses
+        this directly as the pixel size, taking precedence over
+        ``window_m``.
+    window_m : float or None, optional
+        Half-width [m] of the horizontal EM/TDR spatial-matching window
+        (2-D mode). Used as the pixel-size source for the extra
+        interpolated-raster XY plot only when ``bandwidth_m`` is not
+        given, in which case the pixel size defaults to ``2 * window_m``.
+    xy_imshow_extra : bool, optional
+        When True (default) and ``bandwidth_m`` or ``window_m`` is given,
+        save a second XY plan-view file,
+        ``water_content_xy_{scenario_name}_imshow.png``, rendered with
+        ``render_mode="imshow"`` -- in addition to (not instead of) the
+        usual scatter/imshow plot controlled by ``xy_render_mode``. No-op
+        if ``xy_render_mode`` is already ``"imshow"`` (would just
+        duplicate the same file) or if neither ``bandwidth_m`` nor
+        ``window_m`` is given.
     """
     # --- Robust attribute extraction ---
     theta_calc = _extract_theta_calc(selected_output)
@@ -1035,6 +1137,40 @@ def plot_from_pipeline(
                 render_mode=xy_render_mode,
             )
 
+        # Extra interpolated-raster rendering, in addition to the plot(s)
+        # above -- pixel size from bandwidth_m if given (fixed or LOO-CV
+        # sweep-recommended WS_LOCALIZED_BANDWIDTH), else 2 * window_m.
+        # Skipped if xy_render_mode is already "imshow" (would duplicate
+        # the file just written) or neither bandwidth_m nor window_m was
+        # supplied.
+        if xy_imshow_extra and (bandwidth_m is not None or window_m is not None) and xy_render_mode != "imshow":
+            if timelapse and theta_calc.ndim == 3:
+                plot_water_content_xy_timelapse(
+                    theta_calc=theta_calc,
+                    utm_x=utm_x, utm_y=utm_y,
+                    survey_labels=survey_labels,
+                    theta_vmin=0.0, theta_vmax=vmax,
+                    output_dir=output_dir, scenario_name=scenario_name,
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                    filename_suffix="_imshow",
+                )
+            else:
+                tc = theta_calc[0] if theta_calc.ndim == 3 else theta_calc
+                plot_water_content_xy(
+                    theta_calc=tc,
+                    utm_x=utm_x, utm_y=utm_y,
+                    theta_vmin=0.0, theta_vmax=vmax,
+                    title=f"Soil Water Content (XY, interpolated) — {scenario_name}",
+                    output_path=os.path.join(
+                        output_dir, f"water_content_xy_{scenario_name}_imshow.png"
+                    ),
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                )
+
 
 # ---------------------------------------------------------------------------
 # Public: ground-truth counterpart of plot_from_pipeline
@@ -1058,6 +1194,9 @@ def plot_truth_from_pipeline(
     xy_render_mode: str = "scatter",
     probe_utm_x: list[float] | None = None,
     probe_utm_y: list[float] | None = None,
+    bandwidth_m: float | None = None,
+    window_m: float | None = None,
+    xy_imshow_extra: bool = True,
 ) -> None:
     """
     Render the ground-truth counterpart of ``plot_from_pipeline``'s XZ (and,
@@ -1091,6 +1230,11 @@ def plot_truth_from_pipeline(
         color scale and are visually comparable side by side. If None
         (default), it is computed independently from the truth data's
         98th percentile, same convention as plot_from_pipeline.
+    bandwidth_m, window_m, xy_imshow_extra : see ``plot_from_pipeline`` --
+        produces an additional
+        ``water_content_xy_{scenario_name}_truth_imshow.png`` raster
+        (pixel size from ``bandwidth_m`` if given, else ``2 * window_m``)
+        alongside the usual ``xy_render_mode`` truth XY plot.
     """
     theta_true = np.asarray(theta_true, dtype=float)
     if theta_true.ndim not in (2, 3):
@@ -1189,6 +1333,36 @@ def plot_truth_from_pipeline(
                 probe_utm_y=_probe_utm_y,
                 render_mode=xy_render_mode,
             )
+
+        # Extra interpolated-raster rendering -- see plot_from_pipeline's
+        # identically-named parameters for the rationale.
+        if xy_imshow_extra and (bandwidth_m is not None or window_m is not None) and xy_render_mode != "imshow":
+            if timelapse and theta_true_pct.ndim == 3:
+                plot_water_content_xy_timelapse(
+                    theta_calc=theta_true_pct,
+                    utm_x=utm_x, utm_y=utm_y,
+                    survey_labels=survey_labels,
+                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    output_dir=output_dir, scenario_name=truth_scenario_name,
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                    filename_suffix="_imshow",
+                )
+            else:
+                tc = theta_true_pct[0] if theta_true_pct.ndim == 3 else theta_true_pct
+                plot_water_content_xy(
+                    theta_calc=tc,
+                    utm_x=utm_x, utm_y=utm_y,
+                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    title=f"Soil Water Content (XY, interpolated) — Ground Truth — {scenario_name}",
+                    output_path=os.path.join(
+                        output_dir, f"water_content_xy_{truth_scenario_name}_imshow.png"
+                    ),
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -2579,6 +2753,369 @@ def plot_one_to_one_stages(
     print(f"[1:1 PLOT] 3-panel 1:1 figure saved → {out_path}")
 
 
+def plot_water_content_xz_mae_rmse(
+    theta_calc: np.ndarray,
+    theta_true: np.ndarray,
+    x_coords: np.ndarray,
+    depths0: list[float],
+    probe_x: Sequence[float] | None = None,
+    probe_depths: Sequence[float] | None = None,
+    survey_labels: Sequence[str] | None = None,
+    cmap: str = "YlOrRd",
+    n_cols: int = 2,
+    output_dir: str = ".",
+    scenario_name: str = "scenario",
+    dpi: int = 150,
+) -> tuple[str, str, dict]:
+    """
+    Generates two XZ cross-section figure files:
+      1. MAE XZ map  — |θ_calc - θ_true| (% VWC)
+      2. RMSE XZ map — sqrt((θ_calc - θ_true)^2) (% VWC)
+
+    Returns
+    -------
+    tuple[str, str, dict]
+        Filepaths (rmse_path, mae_path), plus a dict of overall scalar
+        metrics ``{"mae_overall": ..., "rmse_overall": ...}`` (% VWC,
+        pooled across every time/x/layer cell) suitable for logging into
+        the pipeline report's Metrics Summary table.
+    """
+    if theta_calc.ndim == 2:
+        theta_calc = theta_calc[np.newaxis]
+    if theta_true.ndim == 2:
+        theta_true = theta_true[np.newaxis]
+
+    n_time, n_x, n_layers = theta_calc.shape
+    abs_err = np.abs(theta_calc - theta_true)
+    sq_err = (theta_calc - theta_true) ** 2
+    rmse_pointwise = np.sqrt(sq_err)
+
+    if survey_labels is None:
+        survey_labels = [f"t = {i}" for i in range(n_time)]
+
+    vmax_mae = float(np.nanpercentile(abs_err, 98)) if abs_err.size else 5.0
+    vmax_rmse = float(np.nanpercentile(rmse_pointwise, 98)) if rmse_pointwise.size else 5.0
+
+    def _plot_and_save(data_maps: np.ndarray, metric_name: str, vmax: float) -> str:
+        n_rows = int(np.ceil(n_time / n_cols))
+        fig_w = 6.0 * n_cols + 1.2
+        fig_h = 2.5 * n_rows
+        fig = plt.figure(figsize=(fig_w, fig_h))
+
+        gs = fig.add_gridspec(
+            n_rows, n_cols + 1,
+            width_ratios=[1.0] * n_cols + [0.04],
+            hspace=0.45, wspace=0.22,
+            left=0.06, right=0.96, top=0.91, bottom=0.10,
+        )
+        cbar_ax = fig.add_subplot(gs[:, -1])
+        sm_ref = None
+
+        for t in range(n_time):
+            row, col = divmod(t, n_cols)
+            ax = fig.add_subplot(gs[row, col])
+            show_y = (col == 0)
+            show_x = (row == n_rows - 1) or (t >= n_time - n_cols)
+
+            epoch_mae = float(np.nanmean(abs_err[t]))
+            epoch_rmse = float(np.sqrt(np.nanmean(sq_err[t])))
+            title_str = f"{survey_labels[t]} (MAE: {epoch_mae:.2f} %VWC, RMSE: {epoch_rmse:.2f} %VWC)"
+
+            sm = _plot_xz_panel(
+                ax=ax, theta=data_maps[t], cv=np.zeros_like(data_maps[t]), coverage=None,
+                x_coords=x_coords, depths0=depths0,
+                probe_x=probe_x if t == 0 else None,
+                probe_depths=probe_depths if t == 0 else None,
+                theta_vmin=0.0, theta_vmax=vmax,
+                cv_threshold=999.0, coverage_threshold=-999.0,
+                cmap=cmap, title=title_str,
+                show_xlabel=show_x, show_ylabel=show_y,
+                value_label=f"{metric_name} (%VWC)",
+            )
+            sm_ref = sm
+
+        for t in range(n_time, n_rows * n_cols):
+            row, col = divmod(t, n_cols)
+            fig.add_subplot(gs[row, col]).set_visible(False)
+
+        if sm_ref is not None:
+            cbar = fig.colorbar(sm_ref, cax=cbar_ax)
+            cbar.set_label(f"{metric_name} (%VWC)", fontsize=9)
+            cbar.ax.tick_params(labelsize=8)
+
+        fig.suptitle(f"Water Content {metric_name} (XZ) — scenario: {scenario_name}",
+                     fontsize=11, y=0.97)
+
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"water_content_xz_{scenario_name}_{metric_name.lower()}.png"
+        out_path = os.path.join(output_dir, filename)
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        return out_path
+
+    mae_path = _plot_and_save(abs_err, "MAE", vmax_mae)
+    rmse_path = _plot_and_save(rmse_pointwise, "RMSE", vmax_rmse)
+
+    overall_metrics = {
+        "mae_overall": float(np.nanmean(abs_err)),
+        "rmse_overall": float(np.sqrt(np.nanmean(sq_err))),
+    }
+
+    return rmse_path, mae_path, overall_metrics
+
+
+def plot_water_content_xy_mae_rmse(
+    theta_calc: np.ndarray,   # (n_points, n_layers) or (n_time, n_points, n_layers), %VWC
+    theta_true: np.ndarray,   # same shape as theta_calc
+    utm_x: np.ndarray,
+    utm_y: np.ndarray,
+    survey_labels: Sequence[str] | None = None,
+    cmap: str = "YlOrRd",
+    n_cols: int = 2,
+    output_dir: str = ".",
+    scenario_name: str = "scenario",
+    dpi: int = 150,
+    render_mode: str = "imshow",
+    pixel_size_m: float | None = None,
+    bandwidth_m: float | None = None,
+    window_m: float | None = None,
+    grid_resolution: int = 200,
+    interp_method: str = "linear",
+    min_grid_res: int = 20,
+    max_grid_res: int = 500,
+    probe_utm_x: Sequence[float] | None = None,
+    probe_utm_y: Sequence[float] | None = None,
+) -> tuple[str, str, dict]:
+    """
+    Plan-view (XY) counterpart of ``plot_water_content_xz_mae_rmse``:
+    per-point MAE/RMSE (%VWC) between calculated and ground-truth water
+    content, averaged over layers, plotted at each point's UTM location.
+    Only meaningful in 2-D mode. Supersedes the old signed %-difference
+    XY plot (``plot_water_content_pct_diff_xy``) for this purpose -- MAE/
+    RMSE are in physical %VWC units and don't blow up / go undefined when
+    truth is near zero.
+
+    render_mode : {"imshow", "scatter"}
+        Defaults to "imshow" (smooth interpolated raster) rather than
+        "scatter", since a per-pixel error map reads far better as a
+        continuous surface than as isolated squares.
+    pixel_size_m : float or None, optional
+        Physical pixel size [m] for ``render_mode="imshow"``. If None,
+        resolved from ``bandwidth_m``/``window_m`` -- see
+        ``plot_water_content_xy`` for the precedence order and rationale.
+        Falls back to ``grid_resolution`` if none of the three is given.
+    bandwidth_m : float or None, optional
+        See ``plot_water_content_xy``. Takes precedence over ``window_m``.
+
+    Returns
+    -------
+    tuple[str, str, dict]
+        Filepaths (rmse_path, mae_path), plus a dict of overall scalar
+        metrics ``{"mae_overall": ..., "rmse_overall": ...}`` (%VWC,
+        pooled across every time/point/layer cell).
+    """
+    if pixel_size_m is None:
+        if bandwidth_m is not None:
+            pixel_size_m = float(bandwidth_m)
+        elif window_m is not None:
+            pixel_size_m = 2.0 * float(window_m)
+
+    theta_calc = np.asarray(theta_calc, dtype=float)
+    theta_true = np.asarray(theta_true, dtype=float)
+    if theta_calc.ndim == 2:
+        theta_calc = theta_calc[np.newaxis]
+    if theta_true.ndim == 2:
+        theta_true = theta_true[np.newaxis]
+
+    abs_err_full = np.abs(theta_calc - theta_true)          # (n_time, n_pts, n_layers)
+    sq_err_full = (theta_calc - theta_true) ** 2
+
+    # Per-point summary: mean |err| and RMS err across layers.
+    mae_maps = np.nanmean(abs_err_full, axis=-1)             # (n_time, n_pts)
+    rmse_maps = np.sqrt(np.nanmean(sq_err_full, axis=-1))    # (n_time, n_pts)
+
+    n_time = mae_maps.shape[0]
+    if survey_labels is None:
+        survey_labels = [f"t = {i}" for i in range(n_time)]
+
+    vmax_mae = float(np.nanpercentile(mae_maps, 98)) if mae_maps.size else 5.0
+    vmax_rmse = float(np.nanpercentile(rmse_maps, 98)) if rmse_maps.size else 5.0
+
+    def _plot_and_save(data_maps: np.ndarray, metric_name: str, vmax: float) -> str:
+        n_rows = int(np.ceil(n_time / n_cols))
+        fig_w = 5.5 * n_cols + 1.0
+        fig_h = 5.0 * n_rows
+        fig = plt.figure(figsize=(fig_w, fig_h))
+
+        gs = fig.add_gridspec(
+            n_rows, n_cols + 1,
+            width_ratios=[1.0] * n_cols + [0.04],
+            hspace=0.40, wspace=0.25,
+            left=0.08, right=0.96, top=0.91, bottom=0.06,
+        )
+        cbar_ax = fig.add_subplot(gs[:, -1])
+        sc_ref = None
+
+        for t in range(n_time):
+            row, col = divmod(t, n_cols)
+            ax = fig.add_subplot(gs[row, col])
+            show_y = (col == 0)
+            show_x = (row == n_rows - 1) or (t >= n_time - n_cols)
+
+            epoch_val = float(np.nanmean(data_maps[t]))
+            title_str = f"{survey_labels[t]} ({metric_name}: {epoch_val:.2f} %VWC)"
+
+            sc = _plot_xy_panel(
+                ax=ax, theta_layer_mean=data_maps[t],
+                utm_x=utm_x, utm_y=utm_y,
+                theta_vmin=0.0, theta_vmax=vmax,
+                cmap=cmap, title=title_str,
+                show_xlabel=show_x, show_ylabel=show_y,
+                cbar_label=f"{metric_name} (%VWC)",
+                render_mode=render_mode, pixel_size_m=pixel_size_m,
+                grid_resolution=grid_resolution, interp_method=interp_method,
+                min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+                probe_utm_x=probe_utm_x if t == 0 else None,
+                probe_utm_y=probe_utm_y if t == 0 else None,
+            )
+            sc_ref = sc
+
+        for t in range(n_time, n_rows * n_cols):
+            row, col = divmod(t, n_cols)
+            fig.add_subplot(gs[row, col]).set_visible(False)
+
+        if sc_ref is not None:
+            cbar = fig.colorbar(sc_ref, cax=cbar_ax)
+            cbar.set_label(f"{metric_name} (%VWC)", fontsize=9)
+            cbar.ax.tick_params(labelsize=8)
+
+        fig.suptitle(f"Water Content {metric_name} (XY Plan View) — scenario: {scenario_name}",
+                     fontsize=11, y=0.97)
+
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"water_content_xy_{scenario_name}_{metric_name.lower()}.png"
+        out_path = os.path.join(output_dir, filename)
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[PLOT] Saved XY {metric_name} map: {out_path}")
+        return out_path
+
+    mae_path = _plot_and_save(mae_maps, "MAE", vmax_mae)
+    rmse_path = _plot_and_save(rmse_maps, "RMSE", vmax_rmse)
+
+    overall_metrics = {
+        "mae_overall": float(np.nanmean(abs_err_full)),
+        "rmse_overall": float(np.sqrt(np.nanmean(sq_err_full))),
+    }
+
+    return rmse_path, mae_path, overall_metrics
+
+
+def plot_error_metrics_from_pipeline(
+    selected_output,
+    theta_true: np.ndarray,
+    x_transect: np.ndarray,
+    depths0: list[float],
+    probe_x_coords: Sequence[float] | None = None,
+    probe_y_coords: Sequence[float] | None = None,
+    probe_depths: Sequence[float] | None = None,
+    output_dir: str = ".",
+    scenario_name: str = "default",
+    timelapse: bool = True,
+    survey_labels: Sequence[str] | None = None,
+    utm_x: np.ndarray | None = None,
+    utm_y: np.ndarray | None = None,
+    probe_utm_x: Sequence[float] | None = None,
+    probe_utm_y: Sequence[float] | None = None,
+    xy_render_mode: str = "imshow",
+    bandwidth_m: float | None = None,
+    window_m: float | None = None,
+) -> dict:
+    """
+    Computes absolute error (%VWC) between calculated and ground truth water
+    content, generating XZ RMSE/MAE maps (always) and, in 2-D mode (when
+    ``utm_x``/``utm_y`` are supplied), XY plan-view RMSE/MAE maps too --
+    the MAE/RMSE counterpart of the old signed %-difference XY plot
+    (``plot_water_content_pct_diff_xy``), which these supersede for this
+    purpose since MAE/RMSE stay well-defined even where truth ~ 0.
+
+    xy_render_mode : {"imshow", "scatter"}
+        Rendering for the XY MAE/RMSE maps -- see
+        ``plot_water_content_xy_mae_rmse``. Defaults to "imshow".
+    bandwidth_m : float or None, optional
+        Preferred alternative to ``window_m`` (and ``xy_render_mode=
+        "imshow"``): the Gaspari-Cohn localization radius 'c' (fixed or
+        LOO-CV-sweep-recommended -- ``WS_LOCALIZED_BANDWIDTH`` in
+        run_pipeline.py). Used directly as the XY raster's pixel size,
+        taking precedence over ``window_m``.
+    window_m : float or None, optional
+        Half-width [m] of the horizontal EM/TDR spatial-matching window;
+        when given (and ``bandwidth_m`` is not, and ``xy_render_mode=
+        "imshow"``), the XY raster's pixel size defaults to
+        ``2 * window_m``.
+
+    Returns
+    -------
+    dict
+        ``{"xz_rmse_path", "xz_mae_path", "xz_mae_overall", "xz_rmse_overall"}``
+        always; plus ``{"xy_rmse_path", "xy_mae_path", "xy_mae_overall",
+        "xy_rmse_overall"}`` when ``utm_x``/``utm_y`` are supplied. The
+        ``*_overall`` values (%VWC, pooled across every time/position/layer
+        cell) are suitable for logging into the pipeline report's Metrics
+        Summary table.
+    """
+    theta_calc = _extract_theta_calc(selected_output)
+
+    # Scale to %VWC if provided in volume fraction [0, 1]
+    if np.nanmax(theta_calc) <= 1.0:
+        theta_calc = theta_calc * 100.0
+    if np.nanmax(theta_true) <= 1.0:
+        theta_true = theta_true * 100.0
+
+    xz_rmse_path, xz_mae_path, xz_overall = plot_water_content_xz_mae_rmse(
+        theta_calc=theta_calc,
+        theta_true=theta_true,
+        x_coords=x_transect,
+        depths0=depths0,
+        probe_x=probe_x_coords,
+        probe_depths=probe_depths,
+        survey_labels=survey_labels,
+        output_dir=output_dir,
+        scenario_name=scenario_name,
+    )
+
+    result: dict = {
+        "xz_rmse_path": xz_rmse_path,
+        "xz_mae_path": xz_mae_path,
+        "xz_mae_overall": xz_overall["mae_overall"],
+        "xz_rmse_overall": xz_overall["rmse_overall"],
+    }
+
+    has_utm = (utm_x is not None and utm_y is not None)
+    if has_utm:
+        xy_rmse_path, xy_mae_path, xy_overall = plot_water_content_xy_mae_rmse(
+            theta_calc=theta_calc,
+            theta_true=theta_true,
+            utm_x=utm_x, utm_y=utm_y,
+            survey_labels=survey_labels,
+            output_dir=output_dir,
+            scenario_name=scenario_name,
+            render_mode=xy_render_mode,
+            bandwidth_m=bandwidth_m,
+            window_m=window_m,
+            probe_utm_x=probe_utm_x,
+            probe_utm_y=probe_utm_y,
+        )
+        result.update({
+            "xy_rmse_path": xy_rmse_path,
+            "xy_mae_path": xy_mae_path,
+            "xy_mae_overall": xy_overall["mae_overall"],
+            "xy_rmse_overall": xy_overall["rmse_overall"],
+        })
+
+    return result
+
+    
 # ---------------------------------------------------------------------------
 # CLI — quick test with synthetic data
 # ---------------------------------------------------------------------------
@@ -2660,3 +3197,5 @@ if __name__ == "__main__":
                 title="Test — Soil Water Content (XY Plan View)",
                 output_path=os.path.join(args.out, "water_content_xy_test.png"),
             )
+
+

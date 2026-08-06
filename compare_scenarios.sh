@@ -37,7 +37,8 @@ TRANSECT_Y=""
 TRANSECT_TOL="1.0"
 REALIZATION="0"
 TIME_INDEX="-1"
-OUT_DIR="./comparison_output"
+OUT_DIR=""
+OUT_DIR_SET=false
 LOG_FILE="mfc2_outputs/run_log.csv"
 VENV_PATH=""
 PYTHON="python3"
@@ -108,7 +109,12 @@ truth arrays 0_generate_synthetic_data.py already writes there):
 
 Output:
       --out-dir PATH      Directory to write comparison_table.csv/.md and
-                          the comparison PNGs into (default: ${OUT_DIR}).
+                          the comparison PNGs into. Default: an auto-named
+                          subfolder of ./comparison_output built from the
+                          runs being compared, e.g. --ids 7 12 writes to
+                          ./comparison_output/7_12 -- so comparisons of
+                          different runs don't overwrite each other. Pass
+                          this to use a fixed path instead.
 
 Environment options:
   -e, --env PATH          Path to a Python virtualenv to activate before
@@ -240,7 +246,7 @@ while [[ $# -gt 0 ]]; do
         --realization)   REALIZATION="${2:?'--realization requires a value'}"; shift 2 ;;
         --time-index)    TIME_INDEX="${2:?'--time-index requires a value'}";   shift 2 ;;
         --log-file)  LOG_FILE="${2:?'--log-file requires a path'}"; shift 2 ;;
-        --out-dir)   OUT_DIR="${2:?'--out-dir requires a path'}";   shift 2 ;;
+        --out-dir)   OUT_DIR="${2:?'--out-dir requires a path'}"; OUT_DIR_SET=true; shift 2 ;;
         -e|--env)    VENV_PATH="${2:?'--env requires a value'}";    shift 2 ;;
         -p|--python) PYTHON="${2:?'--python requires a value'}";   shift 2 ;;
         --list)      LIST_ONLY=true; shift ;;
@@ -305,7 +311,13 @@ POSITION_ARGS=()
 TRANSECT_Y_ARGS=()
 [[ -n "${TRANSECT_Y}" ]] && TRANSECT_Y_ARGS=(--transect-y "${TRANSECT_Y}")
 
-log "Comparing runs → out-dir: ${OUT_DIR}"
+OUT_DIR_ARGS=()
+if ${OUT_DIR_SET}; then
+    OUT_DIR_ARGS=(--out-dir "${OUT_DIR}")
+    log "Comparing runs → out-dir: ${OUT_DIR}"
+else
+    log "Comparing runs → out-dir: (auto-named from ids/reports under ./comparison_output)"
+fi
 [[ ${#IDS[@]} -gt 0 ]] && log "  by run_id : ${IDS[*]}"
 [[ ${#REPORTS[@]} -gt 0 ]] && log "  by report : ${REPORTS[*]}"
 [[ ${#POSITION[@]} -gt 0 ]] && log "  truth comparison @ position: ${POSITION[*]}"
@@ -322,12 +334,16 @@ log "Comparing runs → out-dir: ${OUT_DIR}"
     --transect-tol "${TRANSECT_TOL}" \
     --realization "${REALIZATION}" \
     --time-index "${TIME_INDEX}" \
-    --out-dir "${OUT_DIR}"
+    "${OUT_DIR_ARGS[@]+"${OUT_DIR_ARGS[@]}"}"
 
 EXIT_CODE=$?
 
 if [[ ${EXIT_CODE} -eq 0 ]]; then
-    log "Comparison complete → ${OUT_DIR}"
+    if ${OUT_DIR_SET}; then
+        log "Comparison complete → ${OUT_DIR}"
+    else
+        log "Comparison complete (see '--out-dir not given, using: ...' line above for the folder)"
+    fi
 else
     err "compare_scenarios.py exited with code ${EXIT_CODE}"
 fi

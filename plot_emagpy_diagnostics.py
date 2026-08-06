@@ -181,7 +181,7 @@ def _build_problem_from_csv(csv_path: str,
               if isinstance(fixed_depths, bool) else list(fixed_depths))
     k.setInit(depths0=list(depths0), conds0=list(conds0), fixedDepths=_fixed)
     clean = {key: v for key, v in invert_kwargs.items()
-             if key not in ("targetProjection", "drop_coils")}
+             if key not in ("targetProjection", "drop_coils", "em_unit")}
     k.invert(**clean)
     return k
 
@@ -219,7 +219,7 @@ def _inject_weighted_model(csv_path: str,
               if isinstance(fixed_depths, bool) else list(fixed_depths))
     k.setInit(depths0=list(depths0), conds0=list(conds0), fixedDepths=_fixed)
     clean = {key: v for key, v in invert_kwargs.items()
-             if key not in ("targetProjection", "drop_coils")}
+             if key not in ("targetProjection", "drop_coils", "em_unit")}
     k.invert(**clean)
 
     n_pts = weighted_ec.shape[0]

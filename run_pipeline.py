@@ -32,6 +32,25 @@ import platform
 import re
 import sys
 import numpy as np
+
+# FIX ("stuck at 100% after Step 1 inversion"): pin a headless matplotlib
+# backend BEFORE any of the plot_*/em_methodology modules below get a
+# chance to `import matplotlib.pyplot`, which otherwise happens in this,
+# the PARENT process, ahead of the ProcessPoolExecutor fork further down.
+# If matplotlib had already picked an interactive backend (TkAgg/QtAgg --
+# possible whenever a display is reachable, e.g. over X11/VNC on the
+# host), every forked worker inherits that half-initialised GUI backend
+# state. Workers still return their inversion results fine (which is why
+# tqdm reaches 864/864), but then hang tearing down that inherited state
+# at interpreter shutdown, which blocks the parent's implicit
+# `executor.shutdown(wait=True)` forever with ~0% CPU on the stuck
+# workers -- looks identical to "the pipeline is stuck" but isn't stuck
+# doing any work. `Agg` is headless/file-only, which is all this pipeline
+# ever needs (every plot here is `savefig`'d, never `show()`n).
+import matplotlib
+matplotlib.use("Agg")
+
+import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
@@ -47,6 +66,8 @@ import plot_solution_diagnostics as psol
 import plot_ini_model as pim
 import plot_probe_matching as ppm
 import plot_calibration_density as pcd
+import em_sensitivity as emsens
+import plot_em_footprint as pef
 import plot_pre_inversion_diagnostics as preinvdiag
 import plot_train_val_diagnostics as ptv
 
@@ -1398,10 +1419,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          full_range_gradient: bool | None = None,
          xy_z_blend: float | None = None,
          invert_z_gradient: bool | None = None,
+         random_xy_field: bool | None = None,
+         random_xy_n_blobs: int | None = None,
+         random_xy_correlation_m: float | None = None,
+         random_xy_seed: int | None = None,
          log_file: str | None = None,
          train_val_split_method: str | None = None,
          ws_localized_bandwidth: float | None = None,
-         ws_localized_bandwidth_sweep: list[float] | None = None):
+         ws_localized_bandwidth_sweep: list[float] | None = None,
+         em_footprint_diagnostic: bool = False):
     """
     Run the full EA-EM pipeline.
 
@@ -1496,6 +1522,26 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         Only used when ``full_range_gradient`` is True. When True, flips
         the depth gradient (wet at the surface, dry at depth). ``None``
         (default) uses the scenario value (or False, i.e. dry at surface).
+    random_xy_field : bool or None, optional
+        Only used when ``full_range_gradient`` is True. When True, replaces
+        the deterministic linear XY ramp with a smooth, spatially-
+        correlated RANDOM field (scattered wet/dry patches) instead of a
+        single monotonic gradient direction -- see
+        ``0_generate_synthetic_data._generate_random_xy_field``. ``None``
+        (default) uses the scenario config's ``random_xy_field`` value (or
+        False if unset).
+    random_xy_n_blobs : int or None, optional
+        Only used when ``random_xy_field`` is True. Number of random
+        Gaussian patches summed into the field. ``None`` (default) uses
+        the scenario value (or 8).
+    random_xy_correlation_m : float or None, optional
+        Only used when ``random_xy_field`` is True. Patch radius [m]
+        (1-sigma). ``None`` (default) uses the scenario value (or auto:
+        ~1/4 of the survey's shorter horizontal extent).
+    random_xy_seed : int or None, optional
+        Only used when ``random_xy_field`` is True. Seeds the random field
+        independently of the per-sample noise stream. ``None`` (default)
+        uses the scenario value (or a seed derived from 42).
     log_file : str or None, optional
         Path to the shared run-log CSV that gets one appended row per run
         (see ``append_run_log``). ``None`` (default) uses
@@ -1522,6 +1568,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         the scenario config's ``ws_localized_bandwidth_sweep`` field, or
         skips the sweep if that isn't set either. Overrides the scenario
         value when passed (CLI > scenario, same precedence as beta/gamma).
+    em_footprint_diagnostic : bool, optional
+        Compute a McNeill-type depth-weighted "effective EM theta" per
+        probe (see ``em_sensitivity.py``) and report its discrepancy
+        against ``theta_calc`` at the hard-routed ``layer_index`` and
+        against ``theta_obs`` (Step 5c). Diagnostic only -- does not change
+        Step 2/4 calibration or Step 3/5 K-selection. ``False`` by default
+        (purely additive opt-in, no CLI/scenario fallback needed since
+        there's no meaningful non-boolean scenario value for it).
     """
     mode = mode.lower().strip()
 
@@ -1616,6 +1670,22 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     INVERT_Z_GRADIENT = (
         invert_z_gradient if invert_z_gradient is not None
         else (getattr(cfg, "invert_z_gradient", False) if cfg is not None else False)
+    )
+    RANDOM_XY_FIELD = (
+        random_xy_field if random_xy_field is not None
+        else (getattr(cfg, "random_xy_field", False) if cfg is not None else False)
+    )
+    RANDOM_XY_N_BLOBS = (
+        random_xy_n_blobs if random_xy_n_blobs is not None
+        else (getattr(cfg, "random_xy_n_blobs", 8) if cfg is not None else 8)
+    )
+    RANDOM_XY_CORRELATION_M = (
+        random_xy_correlation_m if random_xy_correlation_m is not None
+        else (getattr(cfg, "random_xy_correlation_m", None) if cfg is not None else None)
+    )
+    RANDOM_XY_SEED = (
+        random_xy_seed if random_xy_seed is not None
+        else (getattr(cfg, "random_xy_seed", None) if cfg is not None else None)
     )
 
     # TDR<->EM spatial-matching quality gate thresholds (report item 3.1).
@@ -1833,6 +1903,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 full_range_gradient=FULL_RANGE_GRADIENT,
                 xy_z_blend=XY_Z_BLEND,
                 invert_z_gradient=INVERT_Z_GRADIENT,
+                random_xy_field=RANDOM_XY_FIELD,
+                random_xy_n_blobs=RANDOM_XY_N_BLOBS,
+                random_xy_correlation_m=RANDOM_XY_CORRELATION_M,
+                random_xy_seed=RANDOM_XY_SEED,
             )
             step0.plot_synthetic_results(output_dir=OUTPUT_DIR)
 
@@ -1922,6 +1996,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 _frg = synthetic_geometry["full_range_gradient_params"]
                 _gen_meta_rows["xy_z_blend (1=XY only, 0=Z only)"] = _frg["xy_z_blend"]
                 _gen_meta_rows["invert_z_gradient"] = _frg["invert_z_gradient"]
+                _gen_meta_rows["random_xy_field"] = _frg["random_xy_field"]
+            if FULL_RANGE_GRADIENT and "random_xy_params" in synthetic_geometry:
+                _rxy = synthetic_geometry["random_xy_params"]
+                _gen_meta_rows["Random XY field: n_blobs / correlation [m] / seed"] = (
+                    f"{_rxy['n_blobs']} / {_rxy['correlation_m']:.2f} / {_rxy['seed']}"
+                )
             if "infiltration_params" in synthetic_geometry:
                 _inf = synthetic_geometry["infiltration_params"]
                 _gen_meta_rows["Wetting front z0 / speed / width [m]"] = (
@@ -2168,7 +2248,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         REAL_DATA_REFERENCE_XY = None
 
         cache_hit = False
-        if os.path.exists(cache_path):
+        # FIX: the ensemble cache is now used ONLY for real-data runs. It
+        # caused a stale-cache bug for synthetic runs (a 1D/10-point cache
+        # was silently reused by a later 2D/50-point run because the cache
+        # fingerprint didn't cover mode/grid size), and synthetic inversions
+        # are already fast enough that re-running is cheap and always
+        # correct. Real-data caching stays as-is (unaffected by this bug and
+        # genuinely expensive to recompute).
+        if data_source != "real":
+            print("[CACHE] Skipped for synthetic data (cache is real-data-only "
+                  "-- always running a fresh inversion).")
+        elif os.path.exists(cache_path):
             print(f"[CACHE] Found existing cache: '{cache_path}'")
             with open(cache_path, "rb") as f:
                 cache_data = pickle.load(f)
@@ -2285,7 +2375,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
             unordered_results = []
             failed_tasks = []       # list of (task_idx, error_message)
-            with ProcessPoolExecutor() as executor:
+            # FIX (same "stuck at 100%" issue): use a fresh `spawn` context
+            # instead of the platform-default `fork` on Linux. `spawn`
+            # starts each worker as a clean interpreter that re-imports
+            # only what it needs, so it can never inherit half-initialised
+            # state (matplotlib backend, BLAS/OpenMP thread pools, open
+            # file handles, etc.) from this parent process -- eliminating
+            # this whole class of "all tasks finished but the pool won't
+            # shut down" hangs, not just the matplotlib instance of it.
+            # Costs a bit more per-worker startup time; negligible next to
+            # the ~11-minute inversion run itself.
+            with ProcessPoolExecutor(mp_context=mp.get_context("spawn")) as executor:
                 results = tqdm(
                     executor.map(_invert_single_worker, tasks),
                     total=len(tasks), desc="Inverting Ensembles", unit="task",
@@ -2419,121 +2519,107 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # 4_run_select_assess.py) treats an unmatched cell as "no data"
             # rather than silently pairing it with an unrelated location.
             #
-            # Synthetic data: point counts are consistent across epochs by
-            # construction (same generator, same grid, every timestep), so
-            # the defensive min_pts trim is kept unchanged as a backward-
-            # compatible no-op safety net.
+            # FIX: previously synthetic data used a SEPARATE, hand-rolled
+            # `arr[:min_pts]` row-POSITION trim here instead of this
+            # coordinate-based matcher, on the assumption that synthetic
+            # epochs always have identical point count AND identical row
+            # order (true today, by construction of 0_generate_synthetic_
+            # data.py -- but a fragile assumption to keep re-verifying by
+            # eye every time that generator changes). Synthetic epoch
+            # coordinates ARE bit-identical across timesteps, so the same
+            # coordinate matcher used for real data gives an EXACT,
+            # provably-correct match for synthetic too (an
+            # essentially-zero tolerance is enough, vs. the coarser
+            # tolerance real GPS noise needs) -- so there is no longer any
+            # reason to keep a second, weaker code path for synthetic runs.
             # ------------------------------------------------------------------
             if timelapse:
-                if data_source == "real":
+                _reference_grid_tolerance = (
+                    SPATIAL_MATCH_TOLERANCE_M if data_source == "real"
+                    # Synthetic coordinates are the same float array written
+                    # to every epoch's CSV (see 0_generate_synthetic_data.py
+                    # export_eca_surveys_to_csv) -- only float round-trip
+                    # noise, not real positional uncertainty, needs covering.
+                    else 1e-6
+                )
+                reporter.log(
+                    f"[STEP1] Building spatial reference grid across {n_time} "
+                    f"{'real-data' if data_source == 'real' else 'synthetic'} "
+                    f"survey epochs (tolerance={_reference_grid_tolerance} m) "
+                    f"instead of trimming to a common point COUNT -- see "
+                    f"'spatial reference-grid matching, not row trimming'."
+                )
+                epoch_xy: list[tuple[np.ndarray, np.ndarray]] = []
+                for t_idx, fname in enumerate(EM_FNAMES):
+                    _pos_df = EMmethod.load_survey_positions(
+                        fname, targetProjection=None, em_unit=EM_UNIT,
+                    )
+                    _x_epoch = _pos_df["x"].to_numpy(dtype=float)
+                    _y_epoch = (
+                        _pos_df["y"].to_numpy(dtype=float)
+                        if "y" in _pos_df.columns else np.zeros_like(_x_epoch)
+                    )
+                    _n_model_pts = packed_models[0][t_idx].shape[0]
+                    if len(_x_epoch) != _n_model_pts:
+                        # Position table and inverted model disagree on
+                        # row count for this epoch (shouldn't normally
+                        # happen since both are read from the same
+                        # already-deduplicated processed CSV, but guard
+                        # defensively rather than mis-pairing points).
+                        reporter.log(
+                            f"[STEP1][WARN] Epoch {t_idx} "
+                            f"('{os.path.basename(fname)}'): position table has "
+                            f"{len(_x_epoch)} rows but its inverted model has "
+                            f"{_n_model_pts} rows. Truncating the shorter of the "
+                            f"two before spatial matching so coordinates and EC "
+                            f"values stay row-aligned for this epoch."
+                        )
+                        _n_use = min(len(_x_epoch), _n_model_pts)
+                        _x_epoch = _x_epoch[:_n_use]
+                        _y_epoch = _y_epoch[:_n_use]
+                    epoch_xy.append((_x_epoch, _y_epoch))
+
+                ref_x, ref_y, matched_indices = geometry_utils.match_epochs_to_reference_grid(
+                    epoch_xy, tolerance_m=_reference_grid_tolerance,
+                )
+                n_ref = len(ref_x)
+
+                for t_idx in range(n_time):
+                    n_matched = int(np.sum(matched_indices[t_idx] >= 0))
                     reporter.log(
-                        f"[STEP1] Building spatial reference grid across {n_time} "
-                        f"real-data survey epochs (tolerance="
-                        f"{SPATIAL_MATCH_TOLERANCE_M} m) instead of trimming to a "
-                        f"common point COUNT -- see 'spatial reference-grid "
-                        f"matching, not row trimming'."
+                        f"[STEP1]   Epoch {t_idx} ('{os.path.basename(EM_FNAMES[t_idx])}'): "
+                        f"{len(epoch_xy[t_idx][0])} own point(s) -> "
+                        f"{n_matched}/{n_ref} reference-grid cell(s) matched "
+                        f"({n_ref - n_matched} left as NaN for this epoch)."
                     )
+                reporter.metric("Spatial reference grid — union points across epochs", n_ref)
+                reporter.metric(
+                    "Spatial reference grid — tolerance (m)", _reference_grid_tolerance
+                )
 
-                    epoch_xy: list[tuple[np.ndarray, np.ndarray]] = []
-                    for t_idx, fname in enumerate(EM_FNAMES):
-                        _pos_df = EMmethod.load_survey_positions(
-                            fname, targetProjection=None, em_unit=EM_UNIT,
-                        )
-                        _x_epoch = _pos_df["x"].to_numpy(dtype=float)
-                        _y_epoch = (
-                            _pos_df["y"].to_numpy(dtype=float)
-                            if "y" in _pos_df.columns else np.zeros_like(_x_epoch)
-                        )
-                        _n_model_pts = packed_models[0][t_idx].shape[0]
-                        if len(_x_epoch) != _n_model_pts:
-                            # Position table and inverted model disagree on
-                            # row count for this epoch (shouldn't normally
-                            # happen since both are read from the same
-                            # already-deduplicated processed CSV, but guard
-                            # defensively rather than mis-pairing points).
-                            reporter.log(
-                                f"[STEP1][WARN] Epoch {t_idx} "
-                                f"('{os.path.basename(fname)}'): position table has "
-                                f"{len(_x_epoch)} rows but its inverted model has "
-                                f"{_n_model_pts} rows. Truncating the shorter of the "
-                                f"two before spatial matching so coordinates and EC "
-                                f"values stay row-aligned for this epoch."
-                            )
-                            _n_use = min(len(_x_epoch), _n_model_pts)
-                            _x_epoch = _x_epoch[:_n_use]
-                            _y_epoch = _y_epoch[:_n_use]
-                        epoch_xy.append((_x_epoch, _y_epoch))
+                def _remap_combo_to_reference(arr_per_time: list[np.ndarray]) -> list[np.ndarray]:
+                    """Remap one combo's list of per-epoch (n_pts_t, n_layers)
+                    (or (n_pts_t, n_interfaces) for depths) arrays onto the
+                    shared (n_ref, n_layers) reference grid, NaN-filling any
+                    reference point that particular epoch didn't cover."""
+                    remapped = []
+                    for t_idx, arr in enumerate(arr_per_time):
+                        out = np.full((n_ref, arr.shape[-1]), np.nan, dtype=float)
+                        idx_map = matched_indices[t_idx]
+                        valid = idx_map >= 0
+                        if np.any(valid):
+                            out[valid] = arr[idx_map[valid]]
+                        remapped.append(out)
+                    return remapped
 
-                    ref_x, ref_y, matched_indices = geometry_utils.match_epochs_to_reference_grid(
-                        epoch_xy, tolerance_m=SPATIAL_MATCH_TOLERANCE_M,
-                    )
-                    n_ref = len(ref_x)
+                packed_models = [_remap_combo_to_reference(combo) for combo in packed_models]
+                packed_depths = [_remap_combo_to_reference(combo) for combo in packed_depths]
+                # pstd arrays share the exact same per-epoch row order/
+                # count as models/depths (same k, same survey), so the
+                # same coordinate-based remap applies unchanged.
+                packed_pstds  = [_remap_combo_to_reference(combo) for combo in packed_pstds]
 
-                    for t_idx in range(n_time):
-                        n_matched = int(np.sum(matched_indices[t_idx] >= 0))
-                        reporter.log(
-                            f"[STEP1]   Epoch {t_idx} ('{os.path.basename(EM_FNAMES[t_idx])}'): "
-                            f"{len(epoch_xy[t_idx][0])} own point(s) -> "
-                            f"{n_matched}/{n_ref} reference-grid cell(s) matched "
-                            f"({n_ref - n_matched} left as NaN for this epoch)."
-                        )
-                    reporter.metric("Spatial reference grid — union points across epochs", n_ref)
-                    reporter.metric(
-                        "Spatial reference grid — tolerance (m)", SPATIAL_MATCH_TOLERANCE_M
-                    )
-
-                    def _remap_combo_to_reference(arr_per_time: list[np.ndarray]) -> list[np.ndarray]:
-                        """Remap one combo's list of per-epoch (n_pts_t, n_layers)
-                        (or (n_pts_t, n_interfaces) for depths) arrays onto the
-                        shared (n_ref, n_layers) reference grid, NaN-filling any
-                        reference point that particular epoch didn't cover."""
-                        remapped = []
-                        for t_idx, arr in enumerate(arr_per_time):
-                            out = np.full((n_ref, arr.shape[-1]), np.nan, dtype=float)
-                            idx_map = matched_indices[t_idx]
-                            valid = idx_map >= 0
-                            if np.any(valid):
-                                out[valid] = arr[idx_map[valid]]
-                            remapped.append(out)
-                        return remapped
-
-                    packed_models = [_remap_combo_to_reference(combo) for combo in packed_models]
-                    packed_depths = [_remap_combo_to_reference(combo) for combo in packed_depths]
-                    # pstd arrays share the exact same per-epoch row order/
-                    # count as models/depths (same k, same survey), so the
-                    # same coordinate-based remap applies unchanged.
-                    packed_pstds  = [_remap_combo_to_reference(combo) for combo in packed_pstds]
-
-                    REAL_DATA_REFERENCE_XY = (ref_x, ref_y)
-                else:
-                    # Synthetic data: point counts already consistent across
-                    # epochs by construction; keep the historical defensive
-                    # min_pts trim as a backward-compatible no-op safety net.
-                    min_pts = min(
-                        arr.shape[0]
-                        for combo in packed_models
-                        for arr in combo
-                    )
-                    if min_pts < max(arr.shape[0] for combo in packed_models for arr in combo):
-                        reporter.log(
-                            f"[STEP1][FIX] Inhomogeneous point counts across surveys detected. "
-                            f"Trimming all time-step models to {min_pts} points "
-                            f"(the minimum across all {n_time} survey epochs and "
-                            f"{len(packed_models)} combos)."
-                        )
-                    packed_models = [
-                        [arr[:min_pts] for arr in combo]
-                        for combo in packed_models
-                    ]
-                    packed_depths = [
-                        [arr[:min_pts] for arr in combo]
-                        for combo in packed_depths
-                    ]
-                    packed_pstds = [
-                        [arr[:min_pts] for arr in combo]
-                        for combo in packed_pstds
-                    ]
-                    REAL_DATA_REFERENCE_XY = None
+                REAL_DATA_REFERENCE_XY = (ref_x, ref_y)
 
             models_clean   = np.array(packed_models)
             depths_clean   = np.array(packed_depths)
@@ -2558,20 +2644,24 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 pstds_clean = np.array(packed_pstds, dtype=object)
             param_metadata = valid_param_metadata
 
-            print(f"[CACHE] Saving matrix {models_clean.shape} to '{cache_path}' "
-                  f"(config fingerprint: {current_fingerprint})")
-            _cache_dir = os.path.dirname(cache_path)
-            if _cache_dir:
-                os.makedirs(_cache_dir, exist_ok=True)
-            with open(cache_path, "wb") as f:
-                pickle.dump({
-                    "models_clean": models_clean,
-                    "param_metadata": param_metadata,
-                    "depths_clean": depths_clean,
-                    "pstds_clean": pstds_clean,
-                    "config_fingerprint": current_fingerprint,
-                    "reference_xy": REAL_DATA_REFERENCE_XY,
-                }, f)
+            # Cache is real-data-only (see the [CACHE] skip above) -- never
+            # write a synthetic-run cache that a later run could stumble
+            # into loading.
+            if data_source == "real":
+                print(f"[CACHE] Saving matrix {models_clean.shape} to '{cache_path}' "
+                      f"(config fingerprint: {current_fingerprint})")
+                _cache_dir = os.path.dirname(cache_path)
+                if _cache_dir:
+                    os.makedirs(_cache_dir, exist_ok=True)
+                with open(cache_path, "wb") as f:
+                    pickle.dump({
+                        "models_clean": models_clean,
+                        "param_metadata": param_metadata,
+                        "depths_clean": depths_clean,
+                        "pstds_clean": pstds_clean,
+                        "config_fingerprint": current_fingerprint,
+                        "reference_xy": REAL_DATA_REFERENCE_XY,
+                    }, f)
 
         # -----------------------------------------------------------------------
         # RECONSTRUCT TASKS FROM param_metadata
@@ -2745,6 +2835,51 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 f"ensemble-median FITTED interface depths {[round(d, 3) for d in EFFECTIVE_DEPTHS0]} "
                 f"instead of the static starting depths0={DEPTHS0}."
             )
+
+        # -----------------------------------------------------------------------
+        # EM DEPTH-SENSITIVITY WEIGHTS (McNeill 1980 closed-form kernel)
+        #   Computed against EFFECTIVE_DEPTHS0, not the static DEPTHS0 --
+        #   EFFECTIVE_DEPTHS0 is what TDR probe-to-horizon routing (below,
+        #   `EMmethod.extract_sample_positions_from_survey` /
+        #   `layer_index_from_depth`) actually uses, so the weights need to
+        #   describe the SAME layer boundaries the hard-routed comparison
+        #   they're diagnosed against is using. Using the unmoved DEPTHS0
+        #   here would silently disagree with EFFECTIVE_DEPTHS0 whenever
+        #   layer interfaces were free during Step 1.
+        #
+        #   Real vs. synthetic coil geometry are NOT the same (see
+        #   em_sensitivity.py module docstring): real-data channels are one
+        #   fixed geometry (HCP, 1.66 m) at six frequencies, so a single
+        #   weight vector is exact. Synthetic scenarios instead sweep six
+        #   distinct (orientation, spacing) coils feeding the SAME
+        #   inversion (`step0.COILS_LIST`) -- there's no single physically
+        #   correct way to collapse those into one kernel, so the synthetic
+        #   branch uses `layer_weights_multi_coil`'s explicitly-labelled
+        #   equal-weighted approximation rather than silently defaulting to
+        #   the real-data HCP1.66 geometry (which would be a different,
+        #   wrong, geometry for synthetic runs).
+        # -----------------------------------------------------------------------
+        if data_source == "real":
+            _COIL_SPACING_M, _COIL_ORIENTATION = 1.66, "HCP"
+            EM_LAYER_WEIGHTS = emsens.layer_weights(
+                EFFECTIVE_DEPTHS0, coil_spacing_m=_COIL_SPACING_M, orientation=_COIL_ORIENTATION,
+            )
+            reporter.log(
+                f"[EM_SENS] McNeill {_COIL_ORIENTATION} weights (spacing={_COIL_SPACING_M} m) "
+                f"over layers {EFFECTIVE_DEPTHS0} + half-space: "
+                f"{np.round(EM_LAYER_WEIGHTS, 4).tolist()}"
+            )
+        else:
+            EM_LAYER_WEIGHTS = emsens.layer_weights_multi_coil(
+                EFFECTIVE_DEPTHS0, step0.COILS_LIST,
+            )
+            reporter.log(
+                f"[EM_SENS] McNeill multi-coil AVERAGE weights (equal-weighted across "
+                f"{step0.COILS_LIST} -- an approximation, not the array's true joint "
+                f"sensitivity; see em_sensitivity.py docstring) over layers "
+                f"{EFFECTIVE_DEPTHS0} + half-space: {np.round(EM_LAYER_WEIGHTS, 4).tolist()}"
+            )
+        reporter.metric("EM_SENS — layer weights (McNeill)", np.round(EM_LAYER_WEIGHTS, 4).tolist())
 
         # -----------------------------------------------------------------------
         # STEP 1b — REAL-DATA EM DIAGNOSTICS
@@ -2946,12 +3081,27 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
             depths_ensemble=plot_depths,
         )
+        # ADDED: per-spatial-point companion view (median +/- min/max per
+        # point, instead of averaged across all points like the plot
+        # above) -- see plot_step1_ensemble_by_point docstring for why
+        # this matters: the plot above can visually manufacture a shared
+        # "conductive layer" that isn't actually shared across points.
+        EMmethod.plot_step1_ensemble_by_point(
+            plot_models, DEPTHS0, OUTPUT_DIR,
+        )
 
         # -----------------------------------------------------------------------
         # UTM GRID LOADING  (needed for 2-D probe placement and XY plots)
         # -----------------------------------------------------------------------
         utm_x = utm_y = None
-        if mode == "2d":
+        if mode == "2d" and data_source == "synthetic":
+            # Synthetic surveys use a LOCAL grid near (0, 0) for
+            # x_transect/y_transect, so the absolute-UTM frame needed for
+            # 2-D probe placement / XY plots has to come from a separate
+            # grid written during synthetic data generation. Real data has
+            # no such file -- its x_transect/y_transect ARE already
+            # absolute UTM, and get assigned directly to utm_x/utm_y below
+            # once they're computed (see "SAMPLE POSITION EXTRACTION").
             utm_x_path = _resolve_npy_path("synthetic_utm_x.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
             utm_y_path = _resolve_npy_path("synthetic_utm_y.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
             if os.path.exists(utm_x_path) and os.path.exists(utm_y_path):
@@ -3056,6 +3206,25 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             survey_df  = survey_df.iloc[:num_measured_points].reset_index(drop=True)
             x_transect = survey_df["x"].to_numpy(dtype=float)
             y_transect = survey_df["y"].to_numpy(dtype=float)
+
+        # FIX (real-data 2-D mode): unlike synthetic surveys, real EM survey
+        # positions (x_transect/y_transect above, from either the
+        # reference-grid or single-file branch) are already absolute UTM
+        # coordinates -- there is no separate synthetic_utm_x/y.npy grid to
+        # load for real data (see the UTM GRID LOADING block further up).
+        # Reuse them directly as utm_x/utm_y so every downstream 2-D
+        # consumer that gates on "utm_x is not None" -- probe UTM
+        # placement, the Step 2 LOCALIZED kernel bandwidth's 2-D-vs-1-D
+        # distance choice, and Step 6's XY plan-view plots -- actually
+        # gets real 2-D behaviour instead of silently falling back to
+        # 1-D/None just because --mode 2d was combined with real data.
+        if data_source == "real" and mode == "2d":
+            utm_x = x_transect
+            utm_y = y_transect
+            print(f"[PIPELINE] Real-data 2-D mode: using the survey's own "
+                  f"{len(x_transect)}-point coordinates as the UTM XY grid "
+                  f"(X {x_transect.min():.1f}\u2013{x_transect.max():.1f}, "
+                  f"Y {y_transect.min():.1f}\u2013{y_transect.max():.1f}).")
 
         # ------------------------------------------------------------------
         # SWC sensor count and depths — driven by scenario config, with
@@ -3916,13 +4085,46 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     output_dir=OUTPUT_DIR,
                 )
                 _calib_probe_x = np.array([r.probe_x for r in CALIB_POSITION_RESULTS])
-                _calib_probe_y = np.array([r.probe_y for r in CALIB_POSITION_RESULTS])
-                for _hz_fit in fits_step2_localized.horizon_fits:
-                    pcd.plot_ws_params_localized_spatial(
-                        fit=_hz_fit,
-                        probe_x=_calib_probe_x,
-                        probe_y=_calib_probe_y,
+                # run_petro_localized returns a list of LocalizedPetroFit, one
+                # per ensemble member (symmetric with fits_step2) -- [0] is the
+                # rank-1 member, matching global_fit=fits_step2[0] passed in
+                # above. NOT a single LocalizedPetroFit with its own
+                # .horizon_fits directly.
+                #
+                # One combined XZ-style figure (horizon = depth axis) rather
+                # than one flat XY scatter per horizon -- directly comparable
+                # to water_content_xz_*.png. depths0=EFFECTIVE_DEPTHS0, not
+                # the static DEPTHS0, for the same reason EM_LAYER_WEIGHTS
+                # uses it above: it's what this fit's probe routing actually
+                # used.
+                pcd.plot_ws_params_xz(
+                    horizon_fits=fits_step2_localized[0].horizon_fits,
+                    depths0=EFFECTIVE_DEPTHS0,
+                    output_dir=OUTPUT_DIR,
+                    probe_x=_calib_probe_x,
+                    # .probe_depth, not a re-derivation via probe_layer_indices:
+                    # sample_positions/probe_layer_indices can be reordered or
+                    # subset relative to CALIB_POSITION_RESULTS (train/val
+                    # split, time-lapse expansion), so indexing one against
+                    # the other isn't safe. SamplePositionResult carries its
+                    # own installation depth directly.
+                    probe_depths=np.array([r.probe_depth for r in CALIB_POSITION_RESULTS]),
+                )
+                # XY (plan-view) counterpart to the XZ figure above -- same
+                # kernel-localized WS parameters, horizons collapsed into
+                # one averaged value per target instead of laid out on the
+                # depth axis. Directly comparable to
+                # plot_footprint_spatial_discrepancy's XY map, the same way
+                # plot_ws_params_xz is comparable to water_content_xz_*.png.
+                # Only meaningful with real (x, y) spread, hence 2-D mode
+                # gating below; in 1-D mode target_y is all zeros and this
+                # would just collapse to a line.
+                if mode == "2d":
+                    pcd.plot_ws_params_xy(
+                        horizon_fits=fits_step2_localized[0].horizon_fits,
                         output_dir=OUTPUT_DIR,
+                        probe_x=_calib_probe_x,
+                        probe_y=np.array([r.probe_y for r in CALIB_POSITION_RESULTS]),
                     )
             except Exception as e:
                 # Diagnostic sibling only -- never let it fail a run that
@@ -4053,6 +4255,132 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             depths0=DEPTHS0, output_dir=OUTPUT_DIR, generate_plots=True,
             probe_layer_indices=probe_layer_indices,
         )
+
+        # -----------------------------------------------------------------------
+        # STEP 5c — EM FOOTPRINT DISCREPANCY (McNeill depth weighting)
+        #   Diagnostic only, opt-in via --em-footprint-diagnostic. Does not
+        #   change Step 2/4 calibration or Step 3/5 K-selection -- reuses
+        #   selected_output.theta_calc (already computed, whole grid, at K)
+        #   rather than re-deriving anything, and just adds the
+        #   McNeill-weighted comparison alongside the existing hard-routed
+        #   (nearest-layer) one.
+        # -----------------------------------------------------------------------
+        if em_footprint_diagnostic:
+            reporter.step("Step 5c", "EM footprint discrepancy (McNeill depth weighting)")
+
+            # theta_calc is ALWAYS (n_time, num_measured_points, num_layers) --
+            # SelectionOutput guarantees this (4_run_select_assess.py
+            # normalises `if theta_calc.ndim == 2: theta_calc = theta_calc[np.newaxis, ...]`
+            # right before returning), so t_idx = 0 covers the single-time
+            # case directly -- no separate timelapse-conditional 2-D branch.
+            _footprint_theta_calc = selected_output.theta_calc
+            _eff_theta = emsens.effective_theta(_footprint_theta_calc, EM_LAYER_WEIGHTS)
+            # _eff_theta shape: (n_time, num_measured_points) -- one depth-weighted
+            # "what the coil actually saw" value per position per time step.
+
+            _footprint_discrepancies = []
+            for _fp_i, (_fp_pos, _fp_li, _fp_obs) in enumerate(
+                zip(sample_positions, probe_layer_indices, theta_obs)
+            ):
+                _fp_t_idx = sample_times[_fp_i] if timelapse else 0
+                _fp_hard_routed = _footprint_theta_calc[_fp_t_idx, _fp_pos, _fp_li]
+                _fp_weighted = _eff_theta[_fp_t_idx, _fp_pos]
+                _footprint_discrepancies.append({
+                    "probe": _fp_i, "pos": int(_fp_pos), "obs": _fp_obs,
+                    # 'horizon' -- the probe's own routed layer index, same
+                    # as used for _fp_hard_routed above -- carried through
+                    # so plot_footprint_spatial_discrepancy_xz can place
+                    # this record on the depth axis without re-deriving it.
+                    "horizon": int(_fp_li),
+                    "hard_routed": _fp_hard_routed, "weighted": _fp_weighted,
+                    "hard_routed_err": _fp_hard_routed - _fp_obs,
+                    "weighted_err": _fp_weighted - _fp_obs,
+                })
+
+            _hr_rmse = np.sqrt(np.nanmean([d["hard_routed_err"] ** 2 for d in _footprint_discrepancies]))
+            _w_rmse = np.sqrt(np.nanmean([d["weighted_err"] ** 2 for d in _footprint_discrepancies]))
+            reporter.log(
+                f"[STEP 5c] RMSE vs TDR — hard-routed (nearest layer): {_hr_rmse:.5f} m³/m³  "
+                f"|  depth-weighted (McNeill {_COIL_ORIENTATION if data_source == 'real' else 'multi-coil avg'}): "
+                f"{_w_rmse:.5f} m³/m³"
+            )
+            reporter.metric("Footprint RMSE — hard-routed layer", f"{_hr_rmse:.5f} m³/m³")
+            reporter.metric("Footprint RMSE — McNeill-weighted", f"{_w_rmse:.5f} m³/m³")
+            reporter.table(
+                "Step 5c — EM footprint discrepancy (per probe)",
+                ["Probe #", "TDR obs [m³/m³]", "Hard-routed θ", "Weighted θ",
+                 "Hard-routed err", "Weighted err"],
+                [
+                    [d["probe"], f"{d['obs']:.4f}", f"{d['hard_routed']:.4f}", f"{d['weighted']:.4f}",
+                     f"{d['hard_routed_err']:+.4f}", f"{d['weighted_err']:+.4f}"]
+                    for d in _footprint_discrepancies
+                ],
+                note=(
+                    "'Hard-routed' = theta_calc at the probe's single assigned layer "
+                    "(current Step 2/4 calibration routing, unchanged). 'Weighted' = "
+                    "McNeill depth-weighted blend across all layers (EM_LAYER_WEIGHTS). "
+                    "Diagnostic only -- neither RMSE feeds back into calibration or "
+                    "K-selection."
+                ),
+            )
+            if _w_rmse < _hr_rmse:
+                reporter.log(
+                    "[STEP 5c] Depth-weighted comparison fits TDR better than the "
+                    "hard-routed layer -- the current nearest-layer probe routing "
+                    "may be discarding real cross-layer signal contribution. "
+                    "See the explainer's Step D for what it would take to fold "
+                    "this into calibration itself, and note the caveats there "
+                    "before doing so."
+                )
+            else:
+                reporter.log(
+                    "[STEP 5c] Hard-routed layer already matches TDR at least as "
+                    "well as the McNeill-weighted blend -- either your layers are "
+                    "thick relative to the coil spacing used (weight concentrates in "
+                    "one layer anyway) or CS/high-frequency LIN departure is "
+                    "degrading the kernel here. Check EM_LAYER_WEIGHTS -- if one "
+                    "layer already carries >90% of the weight, this result is "
+                    "expected and the current routing is fine."
+                )
+
+            try:
+                pef.plot_footprint_probe_comparison(
+                    discrepancies=_footprint_discrepancies,
+                    output_dir=OUTPUT_DIR,
+                    hr_rmse=_hr_rmse, w_rmse=_w_rmse,
+                )
+                pef.plot_footprint_spatial_discrepancy(
+                    discrepancies=_footprint_discrepancies,
+                    survey_df=survey_df,
+                    output_dir=OUTPUT_DIR,
+                    probe_x=np.array([r.probe_x for r in CALIB_POSITION_RESULTS]),
+                    probe_y=np.array([r.probe_y for r in CALIB_POSITION_RESULTS]),
+                )
+                # XZ (depth) counterpart to the XY map above -- same
+                # per-(position, horizon) improvement metric
+                # (|err_hard| - |err_weighted|), but placed on the depth
+                # axis via each record's own 'horizon' instead of the
+                # survey's y/utm_y coordinate. Directly comparable to
+                # water_content_xz_*.png and plot_ws_params_xz's XZ
+                # figures elsewhere in this pipeline. Uses
+                # EFFECTIVE_DEPTHS0 (not the static DEPTHS0), same reason
+                # as the Step 2 LOCALIZED XZ call above: it's what this
+                # run's actual (possibly fitted) interfaces are.
+                pef.plot_footprint_spatial_discrepancy_xz(
+                    discrepancies=_footprint_discrepancies,
+                    survey_df=survey_df,
+                    depths0=EFFECTIVE_DEPTHS0,
+                    output_dir=OUTPUT_DIR,
+                    probe_x=np.array([r.probe_x for r in CALIB_POSITION_RESULTS]),
+                    probe_depths=np.array([r.probe_depth for r in CALIB_POSITION_RESULTS]),
+                )
+            except Exception as _footprint_plot_exc:
+                reporter.log(
+                    f"[STEP 5c][WARN] Footprint diagnostic plots failed "
+                    f"(pipeline continues): {type(_footprint_plot_exc).__name__}: {_footprint_plot_exc}"
+                )
+
+            reporter.end_step("Step 5c")
 
         # ------------------------------------------------------------------
         # Report Step 5 selection and uncertainty details
@@ -4364,6 +4692,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             probe_utm_x=PROBE_X_COORDS_UTM,
             probe_utm_y=PROBE_Y_COORDS_UTM,
             xy_render_mode=xy_render_mode,
+            # Auto-sizes the extra water_content_xy_{scenario}_imshow.png
+            # raster's pixel size to 2 * window_m -- see plot_from_pipeline.
+            window_m=WINDOW_M,
         )
 
         # Ground-truth counterpart of the plot above (water_content_xz_<scenario>_truth.png
@@ -4391,6 +4722,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     probe_utm_x=PROBE_X_COORDS_UTM,
                     probe_utm_y=PROBE_Y_COORDS_UTM,
                     xy_render_mode=xy_render_mode,
+                    window_m=WINDOW_M,
                 )
                 reporter.log(
                     f"[STEP 6] Ground-truth XZ (and XY, if 2-D) water-content "
@@ -4400,11 +4732,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             except Exception as e:
                 reporter.log(f"[STEP 6][WARN] plot_truth_from_pipeline failed: {e}")
 
-            # % -difference between the calculated and ground-truth XZ
-            # sections above -- (theta_calc - theta_true) / theta_true * 100,
-            # signed (over- vs. under-estimation), masked where truth ≈ 0.
+            # Calculated-vs-truth error maps: MAE and RMSE (%VWC), XZ always
+            # and XY too in 2-D mode -- these supersede the old signed
+            # %-difference plot (water_content_xy_{scenario}_pctdiff.png),
+            # which is undefined/blows up wherever truth ~ 0. Also logs the
+            # pooled overall MAE/RMSE into the report's Metrics Summary so
+            # compare_scenarios.py can pull them into scenario comparisons.
             try:
-                pctdiff_path = pwc.plot_pct_diff_from_pipeline(
+                error_metrics = pwc.plot_error_metrics_from_pipeline(
                     selected_output=selected_output,
                     theta_true=theta_true_realization,
                     x_transect=x_transect,
@@ -4418,15 +4753,22 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     survey_labels=None,
                     utm_x=utm_x,
                     utm_y=utm_y,
-                    # FIX: same probe_utm_x/y fix as plot_from_pipeline/
-                    # plot_truth_from_pipeline above.
                     probe_utm_x=PROBE_X_COORDS_UTM,
                     probe_utm_y=PROBE_Y_COORDS_UTM,
+                    xy_render_mode="imshow",
+                    window_m=WINDOW_M,
                 )
-                if pctdiff_path is not None:
-                    reporter.log(f"[STEP 6] Calculated-vs-truth %% difference -> {pctdiff_path}")
+                reporter.log(f"[STEP 6] Calculated-vs-truth XZ RMSE map -> {error_metrics['xz_rmse_path']}")
+                reporter.log(f"[STEP 6] Calculated-vs-truth XZ MAE map  -> {error_metrics['xz_mae_path']}")
+                reporter.metric("Water Content MAE vs Truth (XZ)", f"{error_metrics['xz_mae_overall']:.3f} %VWC")
+                reporter.metric("Water Content RMSE vs Truth (XZ)", f"{error_metrics['xz_rmse_overall']:.3f} %VWC")
+                if "xy_rmse_path" in error_metrics:
+                    reporter.log(f"[STEP 6] Calculated-vs-truth XY RMSE map -> {error_metrics['xy_rmse_path']}")
+                    reporter.log(f"[STEP 6] Calculated-vs-truth XY MAE map  -> {error_metrics['xy_mae_path']}")
+                    reporter.metric("Water Content MAE vs Truth (XY)", f"{error_metrics['xy_mae_overall']:.3f} %VWC")
+                    reporter.metric("Water Content RMSE vs Truth (XY)", f"{error_metrics['xy_rmse_overall']:.3f} %VWC")
             except Exception as e:
-                reporter.log(f"[STEP 6][WARN] plot_pct_diff_from_pipeline failed: {e}")
+                reporter.log(f"[STEP 6][WARN] plot_error_metrics_from_pipeline failed: {e}")
 
             # Initial model (starting guess, conds0's layer MIN/MAX bounds) vs.
             # ground truth -- a QC check for whether the inversion's starting
@@ -4800,11 +5142,17 @@ if __name__ == "__main__":
     parser.add_argument("--config",   default=None,      metavar="PATH",
                         help="Custom scenario config JSON file.")
     parser.add_argument(
-        "--mode", choices=["1d", "2d"], default="1d",
+        "--mode", choices=["1d", "2d"], default=None,
         help=(
-            "Spatial mode. '1d' (default): single transect, XZ plots only. "
+            "Spatial mode. '1d': single transect, XZ plots only. "
             "'2d': rectangular UTM grid anchored to the Alento survey; "
-            "produces XZ cross-section AND XY plan-view plots."
+            "produces XZ cross-section AND XY plan-view plots. "
+            "Default (when not passed): '2d' for --data-source real "
+            "(real EM survey positions are already absolute UTM, so "
+            "there's no reason to leave 2-D output on the table), '1d' "
+            "for synthetic data (unchanged legacy default). Pass "
+            "--mode explicitly to override either default, e.g. to force "
+            "a 1-D run on real data for a quick/lightweight check."
         ),
     )
     parser.add_argument("--em-dir",   default=None,      metavar="PATH",
@@ -4855,6 +5203,38 @@ if __name__ == "__main__":
              "passed.",
     )
     parser.add_argument(
+        "--random-xy-field", action="store_true", default=False,
+        help="Only used with --full-range-gradient. Replace the linear XY "
+             "ramp with a smooth, spatially-correlated RANDOM field "
+             "(scattered wet/dry patches) instead of one monotonic "
+             "direction. Combine with --random-xy-n-blobs / "
+             "--random-xy-correlation-m / --random-xy-seed. Overrides "
+             "'random_xy_field' in the scenario config when passed.",
+    )
+    parser.add_argument(
+        "--random-xy-n-blobs", type=int, default=None, metavar="N",
+        help="Only used with --random-xy-field. Number of random Gaussian "
+             "patches summed into the field. Overrides 'random_xy_n_blobs' "
+             "in the scenario config when passed; falls back to the "
+             "scenario value (or 8) otherwise.",
+    )
+    parser.add_argument(
+        "--random-xy-correlation-m", type=float, default=None, metavar="M",
+        help="Only used with --random-xy-field. Patch radius [m] "
+             "(1-sigma). Overrides 'random_xy_correlation_m' in the "
+             "scenario config when passed; falls back to the scenario "
+             "value (or auto: ~1/4 of the survey's shorter extent) "
+             "otherwise.",
+    )
+    parser.add_argument(
+        "--random-xy-seed", type=int, default=None, metavar="SEED",
+        help="Only used with --random-xy-field. Seeds the random field "
+             "independently of the per-sample noise stream. Overrides "
+             "'random_xy_seed' in the scenario config when passed; falls "
+             "back to the scenario value (or a seed derived from 42) "
+             "otherwise.",
+    )
+    parser.add_argument(
         "--num-swc-positions", type=int, default=None, metavar="N",
         help="Number of horizontal SWC/TDR sensor positions. Total probes "
              "= N x n_layers (one per soil horizon at each position). "
@@ -4874,6 +5254,14 @@ if __name__ == "__main__":
              "each SWC/TDR probe to nearby EM measurement indices. "
              "Overrides 'window_m' in the scenario config when passed; "
              "falls back to the scenario value (or 1.0) otherwise.",
+    )
+    parser.add_argument(
+        "--em-footprint-diagnostic", action="store_true",
+        help="Compute a McNeill-type depth-weighted 'effective EM theta' per "
+             "probe (see em_sensitivity.py) and report its discrepancy "
+             "against theta_calc at the hard-routed layer_index and against "
+             "theta_obs (Step 5c). Diagnostic only -- does not change Step "
+             "2/4 calibration or Step 3/5 K-selection. Off by default.",
     )
     parser.add_argument(
         "--probe-xyz", default=None, metavar="PATH",
@@ -5057,6 +5445,22 @@ if __name__ == "__main__":
                 sys.exit(1)
         print("[VALIDATION] Real data mode: all paths verified ✓")
 
+    # Resolve effective spatial mode.
+    #   - Explicit --mode always wins, for either data source (e.g. to
+    #     force a quick 1-D check on real data, or a 2-D synthetic run).
+    #   - Otherwise, default by data source: real data's own survey
+    #     positions are already absolute UTM (see the real-data 2-D fix
+    #     in main()), so there's no reason to default it to 1-D and lose
+    #     XY plan-view output/localized calibration for free -- '2d' is
+    #     the sensible default there. Synthetic keeps its original '1d'
+    #     default unchanged.
+    if args.mode is not None:
+        effective_mode = args.mode
+    else:
+        effective_mode = "2d" if effective_ds == "real" else "1d"
+        print(f"[PIPELINE] --mode not given; defaulting to "
+              f"'{effective_mode}' for data_source='{effective_ds}'.")
+
     # Startup banner
     data_source_label = "REAL DATA" if effective_ds == "real" else "SYNTHETIC"
     print("\n" + "=" * 80)
@@ -5066,12 +5470,12 @@ if __name__ == "__main__":
         print(f" [PIPELINE] EM directory    : {effective_em_dir}")
         print(f" [PIPELINE] TDR directory   : {effective_tdr_dir}")
         print(f" [PIPELINE] Coordinates     : {effective_coord_file}")
-    print(f" [PIPELINE] Spatial mode    : {args.mode.upper()}")
+    print(f" [PIPELINE] Spatial mode    : {effective_mode.upper()}")
     print(cfg.summary())
     print("=" * 80 + "\n")
 
     try:
-        main(cfg, mode=args.mode, data_source=effective_ds,
+        main(cfg, mode=effective_mode, data_source=effective_ds,
              em_dir=effective_em_dir, tdr_dir=effective_tdr_dir,
              coord_file=effective_coord_file, drop_coils=args.drop_coils,
              homogeneous=(True if args.homogeneous else None),
@@ -5086,10 +5490,15 @@ if __name__ == "__main__":
              full_range_gradient=(True if args.full_range_gradient else None),
              xy_z_blend=args.xy_z_blend,
              invert_z_gradient=(True if args.invert_z_gradient else None),
+             random_xy_field=(True if args.random_xy_field else None),
+             random_xy_n_blobs=args.random_xy_n_blobs,
+             random_xy_correlation_m=args.random_xy_correlation_m,
+             random_xy_seed=args.random_xy_seed,
              log_file=args.log_file,
              train_val_split_method=args.train_val_split,
              ws_localized_bandwidth=args.ws_localized_bandwidth,
-             ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep)
+             ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
+             em_footprint_diagnostic=args.em_footprint_diagnostic)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

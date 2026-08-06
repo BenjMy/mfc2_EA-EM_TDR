@@ -24,6 +24,14 @@
 #   - beta DOES accept multiple values, but space-separated, no brackets/
 #     commas: --beta 0 0.5 1
 #
+# NOTE on --em-footprint-diagnostic:
+#   CLI-only, no scenario JSON field (unlike ws_localized_bandwidth above)
+#   -- it's a read-only comparison against theta_calc that's already been
+#   computed by the time Step 5c runs, so there's nothing scenario-specific
+#   to persist. Add it to any of the calls below to get the Step 5c
+#   McNeill depth-weighting comparison in that run's report; see the block
+#   further down for a dedicated 3-scenario sweep.
+#
 # NOTE on run numbers used below with compare_scenarios.sh:
 #   '2d' and '2d_intermediate' currently share the same output_dir in
 #   ensemble_scenarios.json (mfc2_outputs/field_survey_2d), so their <seq>
@@ -36,12 +44,12 @@
 set -euo pipefail
 
 # --- Baseline runs -----------------------------------------------------------
-./run_pipeline.sh -s 2d
-./run_pipeline.sh -s 2d_intermediate
-./run_pipeline.sh -s 2d_dense_tdr
+./run_pipeline.sh -s 2d --em-footprint-diagnostic
+./run_pipeline.sh -s 2d_intermediate --em-footprint-diagnostic
+./run_pipeline.sh -s 2d_dense_tdr --em-footprint-diagnostic
 
 ./compare_scenarios.sh --list   # copy the 3 run numbers just produced, e.g.:
-./compare_scenarios.sh --ids 2d:1 2d_intermediate:1 2d_dense_tdr:1 --position 0 0 
+#./compare_scenarios.sh --ids 2d:1 2d_intermediate:1 2d_dense_tdr:1 --position 0 0 
 ./compare_scenarios.sh --ids 2d:1 2d_intermediate:1 2d_dense_tdr:1 --position 5 0
 
 # --- Localized-bandwidth sweep diagnostic ------------------------------------
@@ -51,20 +59,36 @@ set -euo pipefail
 # baseline runs' sweep), pass --ws-localized-bandwidth-sweep directly --
 # it overrides the scenario's JSON value for that run, no config edit needed:
 
-./run_pipeline.sh -s 2d              --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20
-./run_pipeline.sh -s 2d_intermediate --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20
-./run_pipeline.sh -s 2d_dense_tdr    --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20
+
+./run_pipeline.sh -s 2d              --ws-localized-bandwidth 20 --em-footprint-diagnostic
+
+
+
+./run_pipeline.sh -s 2d              --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
+./run_pipeline.sh -s 2d_intermediate --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
+./run_pipeline.sh -s 2d_dense_tdr    --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
 
 ./compare_scenarios.sh --list
-./compare_scenarios.sh --ids 2d:2 2d_intermediate:2 2d_dense_tdr:2
+./compare_scenarios.sh --ids 2d:2 2d_intermediate:2 2d_dense_tdr:2 --position 5 0
+
+
+
+./run_pipeline.sh -s 2d_random_xy_drying --mode 2d
+./run_pipeline.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_2sensors.csv
+./run_pipeline.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_8sensors.csv
+./compare_scenarios.sh --ids 2d_random_xy_drying:1 2d_random_xy_drying:1 --position 5 0
+
+
+./run_pipeline.sh --mode 2d -s 2d_horizon_ws
+./run_pipeline.sh --mode 1d -s 2d_horizon_ws
+
+
+
 
 # --- Beta sweep ---------------------------------------------------------------
-./run_pipeline.sh -s 2d              --beta 0 0.5 1
-./run_pipeline.sh -s 2d_intermediate --beta 0 0.5 1
-./run_pipeline.sh -s 2d_dense_tdr    --beta 0 0.5 1
-
-./compare_scenarios.sh --list
-./compare_scenarios.sh --ids 2d:3 2d_intermediate:3 2d_dense_tdr:3
+#./run_pipeline.sh -s 2d              --beta 0 0.5 1
+#./run_pipeline.sh -s 2d_intermediate --beta 0 0.5 1
+#./run_pipeline.sh -s 2d_dense_tdr    --beta 0 0.5 1
 
 # --- Gamma sweep ---------------------------------------------------------------
 # gamma takes exactly one value per call -- loop over the sweep values.
@@ -72,7 +96,7 @@ set -euo pipefail
 # your synthetic setup actually has multiple epochs, otherwise this has
 # no effect regardless of value.)
 for scenario in 2d 2d_intermediate 2d_dense_tdr; do
-    for g in 0 0.5 1; do
+    for g in 0 10; do
         ./run_pipeline.sh -s "${scenario}" --gamma "${g}"
     done
 done
@@ -80,4 +104,10 @@ done
 ./compare_scenarios.sh --list
 # ./compare_scenarios.sh --ids <scenario:number> <scenario:number> <scenario:number> ...
 
-# ./run_pipeline.sh -s 2d --train-val-split alternate_sorted
+# --- train-val-split ------------------------------------
+#./run_pipeline.sh -s 2d --train-val-split alternate_sorted
+#./run_pipeline.sh -s 2d_intermediate --train-val-split alternate_sorted
+#./run_pipeline.sh -s 2d_dense_tdr --train-val-split alternate_sorted
+
+#./compare_scenarios.sh --list
+#./compare_scenarios.sh --ids 2d:3 2d_intermediate:3 2d_dense_tdr:3

@@ -13,11 +13,15 @@ COILS_LIST = ['VCP0.5', 'HCP0.5', 'VCP1.0', 'HCP1.0', 'VCP1.5', 'HCP1.5']
 # Alento field-survey spatial reference (UTM Zone 33N, from 1_ALENTO_040820.csv)
 # Used to anchor synthetic coordinates so they are geographically realistic.
 # ---------------------------------------------------------------------------
-ALENTO_UTM_ORIGIN_X = 515487.23   # SW corner easting  [m]
-ALENTO_UTM_ORIGIN_Y = 4468201.66  # SW corner northing [m]
-ALENTO_TRANSECT_LENGTH_X = 239.0  # E-W extent of survey area [m]
-ALENTO_TRANSECT_LENGTH_Y = 310.4  # N-S extent of survey area [m]
+#ALENTO_UTM_ORIGIN_X = 515487.23   # SW corner easting  [m]
+#ALENTO_UTM_ORIGIN_Y = 4468201.66  # SW corner northing [m]
+#ALENTO_TRANSECT_LENGTH_X = 239.0  # E-W extent of survey area [m]
+#ALENTO_TRANSECT_LENGTH_Y = 310.4  # N-S extent of survey area [m]
 
+ORIGIN_X = 0   # SW corner easting  [m]
+ORIGIN_Y = 0  # SW corner northing [m]
+TRANSECT_LENGTH_X = 100  # E-W extent of survey area [m]
+TRANSECT_LENGTH_Y = 100  # N-S extent of survey area [m]
 
 def _build_transect_x_coords(num_measured_points: int, point_spacing: float = 2.0) -> np.ndarray:
     """
@@ -33,16 +37,15 @@ def _build_2d_grid_coords(
     point_spacing: float = 2.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Build a 2-D regular grid of UTM coordinates anchored to the Alento
-    survey bounding box.
+    Build a 2-D regular grid of UTM coordinates.
     """
     xs = np.arange(num_x, dtype=float) * point_spacing
     ys = np.arange(num_y, dtype=float) * point_spacing
     XX, YY = np.meshgrid(xs, ys)          # shape (num_y, num_x)
     x_local = XX.ravel()
     y_local = YY.ravel()
-    utm_x = ALENTO_UTM_ORIGIN_X + x_local
-    utm_y = ALENTO_UTM_ORIGIN_Y + y_local
+    utm_x = ORIGIN_X + x_local
+    utm_y = ORIGIN_Y + y_local
     return x_local, y_local, utm_x, utm_y
 
 
@@ -53,6 +56,78 @@ def forward_waxman_smits(theta, a, m, sigma_w, sigma_s):
     """
     theta = np.clip(theta, 0.01, 1.0)
     return (theta ** m / a) * (sigma_w + sigma_s)
+
+
+def _generate_random_xy_field(
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    n_blobs: int,
+    correlation_m: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """
+    Smooth, spatially-correlated random field over the (x_coords, y_coords)
+    measurement points, normalized to [0, 1] -- the "more random" XY
+    counterpart to the deterministic linear ``xy_frac`` ramp used by the
+    plain and ``full_range_gradient`` ratios.
+
+    Built as a sum of ``n_blobs`` random Gaussian "patches" (random center,
+    random sign/amplitude, fixed correlation length ``correlation_m``)
+    rather than per-point white noise, so the result looks like plausible
+    patchy soil texture/moisture heterogeneity (spatially smooth, with
+    both wetter- and drier-than-average patches) instead of salt-and-pepper
+    noise that would be unphysical and impossible for any real EM/TDR
+    survey to resolve.
+
+    Parameters
+    ----------
+    x_coords, y_coords : ndarray, shape (n_points,)
+        Local (or UTM) coordinates of every measurement point. In 1-D mode
+        ``y_coords`` is all zeros, which still works fine -- the field just
+        varies along x only.
+    n_blobs : int
+        Number of random Gaussian patches summed together. More blobs ->
+        busier, more fragmented pattern; fewer -> a handful of broad
+        wet/dry zones.
+    correlation_m : float
+        Gaussian patch radius [m] (1-sigma). Roughly the size of one
+        wet/dry zone. Should be a meaningful fraction of the survey extent
+        -- too small relative to the point spacing degenerates toward
+        white noise; too large degenerates toward a single smooth blob.
+    rng : np.random.Generator
+        Seeded generator, so the field is reproducible.
+
+    Returns
+    -------
+    ndarray, shape (n_points,)
+        Field values normalized to [0, 1] (min-max scaled across all
+        points), ready to substitute for ``xy_frac`` in the theta_xy
+        formula.
+    """
+    x_min, x_max = x_coords.min(), x_coords.max()
+    y_min, y_max = y_coords.min(), y_coords.max()
+    # Guard against a degenerate (zero-extent) axis, e.g. 1-D mode's
+    # all-zero y_coords -- still center blobs at 0 rather than dividing
+    # by a zero range anywhere downstream.
+    x_span = max(x_max - x_min, 1e-9)
+    y_span = max(y_max - y_min, 1e-9)
+
+    field = np.zeros_like(x_coords, dtype=float)
+    for _ in range(n_blobs):
+        cx = rng.uniform(x_min - 0.25 * x_span, x_max + 0.25 * x_span)
+        cy = rng.uniform(y_min - 0.25 * y_span, y_max + 0.25 * y_span)
+        amp = rng.uniform(-1.0, 1.0)   # signed -> both wet and dry patches
+        d2 = (x_coords - cx) ** 2 + (y_coords - cy) ** 2
+        field += amp * np.exp(-d2 / (2.0 * correlation_m ** 2))
+
+    f_min, f_max = field.min(), field.max()
+    if f_max > f_min:
+        field = (field - f_min) / (f_max - f_min)
+    else:
+        # Degenerate case (e.g. n_blobs=0): fall back to a flat mid-value
+        # field rather than dividing by zero.
+        field = np.full_like(field, 0.5)
+    return field
 
 
 def generate_time_lapse_dataset(
@@ -73,6 +148,10 @@ def generate_time_lapse_dataset(
     full_range_gradient: bool = False,
     xy_z_blend: float = 0.5,
     invert_z_gradient: bool = False,
+    random_xy_field: bool = False,
+    random_xy_n_blobs: int = 8,
+    random_xy_correlation_m: float | None = None,
+    random_xy_seed: int | None = None,
 ):
     """
     Generate synthetic 4-D subsurface property matrices (EC_bulk, ECa, θ)
@@ -107,8 +186,10 @@ def generate_time_lapse_dataset(
         (z_frac=0 at the shallowest layer, 1 at the deepest -- reverse with
         `invert_z_gradient`), and theta_xy = theta_dry + (theta_wet -
         theta_dry) * xy_frac, with xy_frac = 0.5*x_frac + 0.5*y_frac (2-D
-        mode) or x_frac alone (1-D mode). A small temporal trend and noise
-        are still layered on top, same as the default gradient.
+        mode) or x_frac alone (1-D mode) by default -- or a random spatial
+        field when `random_xy_field=True`, see below. A small temporal
+        trend and noise are still layered on top, same as the default
+        gradient.
     xy_z_blend : float, default 0.5
         Only used when `full_range_gradient=True`. Weight in [0, 1] between
         the XY component (1.0 = XY gradient only) and the Z/depth component
@@ -116,8 +197,38 @@ def generate_time_lapse_dataset(
     invert_z_gradient : bool, default False
         Only used when `full_range_gradient=True`. When True, flips the
         depth gradient so the shallowest layer is wet and the deepest layer
-        is dry (default is dry-at-surface, wet-at-depth).
+        is dry (default is dry-at-surface, wet-at-depth) -- i.e. the soil
+        dries out uniformly with depth. This depth trend is a function of
+        z_frac ONLY (identical at every XY location), so "uniform" here
+        means "the same drying rate everywhere in plan view", independent
+        of whatever XY pattern (linear or random) is layered on top of it.
+    random_xy_field : bool, default False
+        Only used when `full_range_gradient=True`. When True, replaces the
+        deterministic linear `xy_frac` ramp (a simple diagonal gradient)
+        with a smooth, spatially-correlated RANDOM field (sum of Gaussian
+        patches, see `_generate_random_xy_field`) -- i.e. scattered wetter/
+        drier patches instead of a single monotonic direction. One field is
+        drawn per ensemble member (so different ensemble members see a
+        different, but equally plausible, spatial pattern) and held fixed
+        across all timesteps/layers within that member -- only the
+        Z/depth trend and the small temporal/noise terms still evolve.
+    random_xy_n_blobs : int, default 8
+        Only used when `random_xy_field=True`. Number of random Gaussian
+        patches summed into the field -- see `_generate_random_xy_field`.
+    random_xy_correlation_m : float or None, default None
+        Only used when `random_xy_field=True`. Patch radius [m] -- see
+        `_generate_random_xy_field`. `None` (default) auto-picks ~1/4 of
+        the survey's shorter horizontal extent (x or y span), a reasonable
+        default patch size for most grids.
+    random_xy_seed : int or None, default None
+        Only used when `random_xy_field=True`. Seeds the random field
+        generator independently of the module's global `np.random.seed(42)`
+        call, so the XY pattern is reproducible run-to-run without being
+        coupled to (or perturbing) the per-sample noise stream. `None`
+        (default) derives a seed from the global seed instead (still
+        reproducible, just not independently controllable).
     """
+
     os.makedirs(output_dir, exist_ok=True)
 
     if cond_ranges is not None:
@@ -188,6 +299,32 @@ def generate_time_lapse_dataset(
     x_min, x_max = x_coords.min(), x_coords.max()
     y_min, y_max = y_coords.min(), y_coords.max()
 
+    # Random XY field: one draw per ensemble member (see docstring), using
+    # its own seeded Generator so it neither depends on nor perturbs the
+    # np.random.seed(42) stream consumed below for per-sample noise.
+    if random_xy_field:
+        _base_seed = random_xy_seed if random_xy_seed is not None else 42
+        if random_xy_correlation_m is None:
+            # In 1-D mode y_coords is all zeros (y_max == y_min), which
+            # would otherwise collapse this to ~0 via the min() below --
+            # use the x extent alone in that case.
+            if mode == "2d":
+                _shorter_span = min(max(x_max - x_min, 1e-9), max(y_max - y_min, 1e-9))
+            else:
+                _shorter_span = max(x_max - x_min, 1e-9)
+            _correlation_m = 0.25 * _shorter_span
+        else:
+            _correlation_m = random_xy_correlation_m
+        xy_random_fields = [
+            _generate_random_xy_field(
+                x_coords, y_coords, random_xy_n_blobs, _correlation_m,
+                np.random.default_rng(_base_seed + ens_idx),
+            )
+            for ens_idx in range(ensemble_size)
+        ]
+    else:
+        xy_random_fields = None
+
     for ens_idx in range(ensemble_size):
         time_lapse_ec = np.zeros((n_time, num_measured_points, num_layers))
         time_lapse_eca = np.zeros((n_time, num_measured_points, len(coils_list)))
@@ -242,10 +379,18 @@ def generate_time_lapse_dataset(
                     elif full_range_gradient:
                         # Full [theta_dry, theta_wet] range gradient, independently
                         # in Z (depth) and XY (plan view), blended via xy_z_blend.
-                        z_frac_eff = (1.0 - z_frac) if invert_z_gradient else z_frac
+                        z_frac_eff = z_frac if invert_z_gradient else (1.0 - z_frac)
                         theta_z = theta_dry + (theta_wet - theta_dry) * z_frac_eff
 
-                        xy_frac = (0.5 * x_frac + 0.5 * y_frac) if mode == "2d" else x_frac
+                        if random_xy_field:
+                            # Spatially-correlated random patches instead of a
+                            # monotonic ramp -- same value at every layer/
+                            # timestep for this point/ensemble member, so the
+                            # depth trend above stays the only thing varying
+                            # with z.
+                            xy_frac = xy_random_fields[ens_idx][p_idx]
+                        else:
+                            xy_frac = (0.5 * x_frac + 0.5 * y_frac) if mode == "2d" else x_frac
                         theta_xy = theta_dry + (theta_wet - theta_dry) * xy_frac
 
                         base_theta = (
@@ -348,6 +493,8 @@ def generate_time_lapse_dataset(
         gradient_mode = "homogeneous (spatially uniform theta; temporal trend only)"
     elif full_range_gradient:
         gradient_mode = "full_range_gradient (XY/XZ each span full [theta_dry, theta_wet])"
+        if random_xy_field:
+            gradient_mode += ", random_xy_field (patchy XY, not linear)"
     else:
         gradient_mode = "default gradient (small fixed-amplitude XY/XZ offset)"
 
@@ -388,6 +535,13 @@ def generate_time_lapse_dataset(
     if full_range_gradient:
         result["full_range_gradient_params"] = {
             "xy_z_blend": xy_z_blend, "invert_z_gradient": invert_z_gradient,
+            "random_xy_field": random_xy_field,
+        }
+    if full_range_gradient and random_xy_field:
+        result["random_xy_params"] = {
+            "n_blobs": random_xy_n_blobs,
+            "correlation_m": _correlation_m,
+            "seed": _base_seed,
         }
     return result
 
@@ -588,6 +742,29 @@ if __name__ == "__main__":
              "shallowest layer is wet and the deepest layer is dry "
              "(default: dry at surface, wet at depth).",
     )
+    parser.add_argument(
+        "--random-xy-field", action="store_true",
+        help="With --full-range-gradient, replace the linear XY ramp with a "
+             "smooth spatially-correlated RANDOM field (patchy wet/dry "
+             "zones) instead of a single monotonic direction. See "
+             "--random-xy-n-blobs / --random-xy-correlation-m / "
+             "--random-xy-seed.",
+    )
+    parser.add_argument(
+        "--random-xy-n-blobs", type=int, default=8, metavar="N",
+        help="Number of random Gaussian patches summed into the field when "
+             "--random-xy-field is set. Default 8.",
+    )
+    parser.add_argument(
+        "--random-xy-correlation-m", type=float, default=None, metavar="M",
+        help="Patch radius [m] (1-sigma) when --random-xy-field is set. "
+             "Default: auto, ~1/4 of the shorter survey extent.",
+    )
+    parser.add_argument(
+        "--random-xy-seed", type=int, default=None, metavar="SEED",
+        help="Seed for the random XY field (independent of the module's "
+             "internal per-sample noise seed). Default: derived from 42.",
+    )
     parser.add_argument("--depths0", type=str, default=None,
                          help="Comma-separated layer-bottom depths [m], e.g. '0.4,0.9,1.5' "
                               "(gives layer centers at 0.2, 0.65, 1.2 m). Defaults to [0.3, 0.6, 1.0].")
@@ -615,6 +792,10 @@ if __name__ == "__main__":
         full_range_gradient=args.full_range_gradient,
         xy_z_blend=args.xy_z_blend,
         invert_z_gradient=args.invert_z_gradient,
+        random_xy_field=args.random_xy_field,
+        random_xy_n_blobs=args.random_xy_n_blobs,
+        random_xy_correlation_m=args.random_xy_correlation_m,
+        random_xy_seed=args.random_xy_seed,
     )
 
     print(f"[DATA GEN] {len(res['layer_bottoms']) + 1} layers derived from depths0={res['layer_bottoms']}")

@@ -1,11 +1,91 @@
+
+# remove nosie in EC and TDR? in real data mode
+
+
+# varying spatial Waxman parameters
+
+# would be nice to have also scenario with only VCP or HCP coil orientations
+
+
 # Propagating EC-ensemble uncertainty to θ (volumetric water content)
 
-Currently COverage and CV have nothing to deal with TDR sensors! they are just proxies of ensemble spread and model reliability
 
-# Need a "how many EM points are calibrated near this cell"
-extract_sample_positions_from_survey computes, for every TDR probe, a SamplePositionResult with an indices field — literally "the EM measurement array indices that fall within window_m of this probe" (i.e. the actual EM points already treated as "this probe's data" for calibration purposes, not just the probe's own coordinate). That's a hard window, not a smooth kernel, and it's exactly "how many EM EC points are calibrated [i.e. matched to real TDR data] around here":
-That's arguably the more natural proxy for this pipeline, because it reuses the exact same window-matching logic that decides which EM points get folded into calibrate_petrophysical_relationship in the first place — no new distance metric to justify or tune a bandwidth for. My kernel version is really just a smoothed generalization of that (hard cutoff → tapered falloff), useful mainly if you want a continuous map instead of a step function at window_m. Want me to add the hard-window count version too (or swap it in as the primary one, since it's more directly tied to what actually feeds the calibration)?
+# does ws-localized-bandwidth-sweep and window_m somehow overlap? ws-localized-bandwidth-sweep activated deactived somehow window_m?
+
+This is conceptually closer to your --ws-localized-bandwidth-sweep (LOO-CV bandwidth selection) than to window_m itself — both are "sweep candidate widths, pick the one that minimizes validation error" solutions to a horizontal-footprint problem. 
 
 
-# 2d map fix, does Emagpy account for xy variation (since inverison is 1d)
-see .md corresponding file
+# for the real dataset
+
+| `window_m` | `1.0` |
+| `spatial_match_tolerance_m (real time-lapse)` | `2.0` |
+
+what are the differences between both?
+
+# How to compensate for the lack of sensors at depth?
+
+# remove CV thershold and contour lines in water_content_paired_2d.png
+
+
+
+# The bottleneck
+
+The idea is: don't run a full 4-parameter optimization at every single EM measurement point — fit on a coarser subset of targets, then fill in the rest by interpolating the fitted parameters rather than re-optimizing.
+
+**Why it's defensible here specifically**
+
+The localized fit is Gaspari-Cohn weighted with a `bandwidth` (`c`) that controls how far each target "sees." Two targets that are close together relative to that bandwidth are looking at almost the same weighted subset of observations — their weight vectors `combined_w` are nearly identical, so their optimal `(a, m, sigma_w, sigma_s)` are nearly identical too. The Waxman-Smits parameters are physical soil properties (tortuosity, cementation exponent, pore/surface conductivity) — they vary smoothly in space by construction, not point-to-point. So the *true* underlying `a(x), m(x), sigma_w(x), sigma_s(x)` curves are smooth, and solving for every single grid point is spending a full L-BFGS-B run to resolve variation that mostly isn't there.
+
+**Concretely, in this code:**
+
+- `target_x_all` (and `target_y_all` in 2D) is already the ordered array of candidate target locations, and `target_indices` in the docstring is explicitly exposed for subsampling — it's already built for this.
+- Instead of `for t_i, target in enumerate(target_x_all)` calling `_fit_ws_horizon_weighted` every time, you'd pick a stride — say every 3rd or 5th target, or an adaptive spacing tied to `bandwidth` (e.g. one fit per `bandwidth/2`) — and only call the optimizer at those "anchor" targets.
+- For the skipped targets in between, you'd get `a, m, sigma_w, sigma_s` by interpolating (linear or cubic spline in 1D; something like `scipy.interpolate.griddata` in 2D) between the nearest anchor fits, indexed by `target_x_all[t_i]` position.
+- RMSE for interpolated targets would still be computed directly (cheap — it's just evaluating `waxman_smits_theta`, no optimization), so `rmse_arr` stays meaningful and comparable to today's convention.
+
+**The tradeoff:** you're trading exactness for speed. Anywhere the parameter field is smooth (typical case, given the physical interpretation), interpolation is nearly indistinguishable from a full fit. Anywhere there's a sharp discontinuity in soil properties over a short spatial scale (e.g. a lithology boundary crossing the transect), interpolation would smear it — the anchors on either side would still capture it, but points near the boundary would look like a gradual transition instead of a step.
+
+Two ways to control that risk:
+1. Tie anchor spacing to `bandwidth` itself (e.g. `bandwidth / 2` or `bandwidth / 3`) so you're never interpolating over a distance larger than the kernel's own support — that keeps the approximation error bounded by roughly the same smoothness assumption the Gaspari-Cohn weighting already relies on.
+2. Keep it opt-in via a stride/interpolation-factor argument, defaulting to fitting every target (today's exact behavior) so existing calls are unaffected unless explicitly requested.
+
+Want me to implement this as an additional optional parameter (e.g. `target_stride` or `interp_factor`) on `calibrate_petrophysical_relationship_localized`, off by default?
+
+
+# The paper's footprint issue
+
+Section 2.3 states it directly: "ERT and water-content measurements differ significantly in spatial resolution and integration volume. ERT integrates over significantly larger volumes (≈m3) than water content sensors (≈cm3)." This is the exact ERT analogue of your EM-vs-TDR mismatch — same physical problem, different instrument.
+
+Their fix — and its limits
+
+They address only the horizontal side, the same way window_m does in your pipeline:
+
+Before extracting resistivity at a probe location, they average ρ within a horizontal window centered on the sensor, to smooth lateral noise/artifacts.
+The window width isn't fixed a priori — they swept it (1–5 m in 0.2 m steps) and picked whichever width minimized RMSE between ERT-derived and measured θ. Avignon ended up at 4.2 m, Larzac at 2.8 m — site-specific, empirically tuned, not closed-form.
+
+This is conceptually closer to your --ws-localized-bandwidth-sweep (LOO-CV bandwidth selection) than to window_m itself — both are "sweep candidate widths, pick the one that minimizes validation error" solutions to a horizontal-footprint problem.
+
+Critically, they explicitly did not solve the vertical (depth) side, and they say why in the Discussion:
+
+the integration volume does not account for vertical resistivity variability. Adjusting the integration height around each sensor may be relevant. Yet, vertical averaging would also combine data with different sensitivities, which may not be desirable, as ERT sensitivity decreases and uncertainty increases with depth.
+
+And they spell out why they couldn't just do it, unlike the horizontal case:
+
+resistivity values could be integrated over a volume that varies with depth. However... the integration volume is affected not only by electrode spacing and array geometry, but also by the inversion mesh, inversion settings, and the applied regularization... and may therefore vary from one inversion model to another.
+
+In other words: for ERT, there's no clean closed-form depth-sensitivity kernel to weight by — it depends on the mesh and regularization of that particular inversion, which changes across their 240-model ensemble. So they left it as an open limitation rather than a solved problem, and their eventual convergence criterion (RMSE at probe depth) is effectively hard-routed by depth too — same as your probe_layer_indices.
+
+Does McNeill help in your case? Yes — and for a reason the paper couldn't use
+
+This is actually the key asymmetry between ERT and EM here: EM has exactly the closed-form depth-sensitivity function the ERT paper says it lacks. em_sensitivity.py's own docstring makes this precise:
+
+physically grounded per coil geometry instead of empirically tuned by RMSE sweep
+
+McNeill's cumulative-response kernel (phi_hcp/phi_vcp) depends only on coil spacing/orientation and depth — it's a fixed analytic function of the instrument, not of the inversion mesh or regularization settings. That's structurally different from ERT's depth sensitivity, which (per the paper) is inversion-parameter-dependent and would need re-deriving per model. So where the ERT authors had to punt on depth-weighting because "no single physically-correct way" existed without re-deriving it per inversion, your EM case genuinely has that closed form already implemented and already computed once per run (EM_LAYER_WEIGHTS, logged in Step 1a).
+
+That said, two caveats from the design doc still apply and are worth keeping in view given this paper:
+
+McNeill/LIN validity has its own approximation regime (em_sensitivity.py's own caveat, degrading for CS/high-frequency), the EM equivalent of the ERT paper's "sensitivity decreases with depth" concern — it's a better-grounded approximation, not a perfect one.
+The paper's CV/coverage-based reliability mapping (Step 5, their §2.5) is the same instinct as your MCMC posterior std / coverage map — worth noting they do eventually connect low-sensitivity zones to high uncertainty (their CV>100% hatching), which is exactly the "precision weighting" mechanism I flagged in the design doc's correction. Confirms that reframing was on the right track: low-sensitivity regions being unreliable, not "wrongly blended," is the paper's own framework too.
+
+One more thing worth flagging: this paper is literally the "Loiseau et al., 2026" your run_pipeline.py docstring says the whole EA-EM method is "adapted from" — so Steps 2–5 in your pipeline are a direct port of their Steps 2–5 (petrophysical calibration → inverted model averaging → recalibration → selection/CV), and their explicit non-solution to the depth-footprint problem is effectively the gap your Step 5c diagnostic (and the Option B design) is trying to close that the source method never did. Want me to fold this paper's context (§2.3's horizontal-window precedent, the explicit "didn't solve depth" limitation, and their CV/uncertainty framing) into the design doc as grounding for why Option B is worth pursuing?
