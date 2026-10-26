@@ -4,7 +4,9 @@
 # =============================================================================
 # Usage:
 #   ./run_pipeline.sh                                           # synthetic, default scenario, 1-D mode
-#   ./run_pipeline.sh --data-source real --em-dir ./data/EMI_MFC2/ --tdr-dir ./data/daily_MFC/
+
+#   ./run_pipeline.sh --mode 2d -s 2d_real       --em-dir ./data/EMI_MFC2/       --tdr-dir ./data/daily_MFC/
+
 #   ./run_pipeline.sh --em-dir ./data/EMI_MFC2/ --tdr-dir ./data/daily_MFC/ --coord-file ./data/SOILNET_MFC2_coordinates_sensors.csv
 #   ./run_pipeline.sh --mode 2d                                # synthetic, 2-D UTM grid
 #   ./run_pipeline.sh -s mixed_middle_free                     # synthetic, named scenario, 1-D
@@ -98,7 +100,7 @@ NUM_SWC_POSITIONS=""
 SWC_DEPTHS=()
 WINDOW_M=""
 BETA=()
-GAMMA=""
+GAMMA=()
 WS_LOCALIZED_BANDWIDTH=""
 WS_LOCALIZED_BANDWIDTH_SWEEP=()
 EM_FOOTPRINT_DIAGNOSTIC=false
@@ -226,10 +228,12 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           smoothing, emagpy inversion) to sweep, e.g.
                           --beta 0.0 0.1 0.5. Overrides 'param_grid.beta'
                           in the scenario config.
-      --gamma G           Temporal regularisation between time steps
-                          (>= 0), only used for time-lapse (multi-epoch)
-                          inversions. Overrides 'gamma' in the scenario
-                          config.
+      --gamma G [G ...]   One or more temporal regularisation values
+                          (>= 0, time-lapse/multi-epoch inversions only)
+                          to sweep, e.g. --gamma 0 5 10. Overrides
+                          'param_grid.gamma' (or scalar 'gamma') in the
+                          scenario config. No effect on non-time-lapse
+                          (single-epoch) runs regardless of value.
       --ws-localized-bandwidth C
                           Gaspari-Cohn localization radius 'c' (same
                           units as your x/y coordinates, e.g. metres)
@@ -298,7 +302,7 @@ Inversion options (override the scenario JSON's param_grid / gamma):
 
 Scenario options (apply in both synthetic and real-data mode):
   -s, --scenario NAME     Scenario name from ensemble_scenarios.json
-                          (default: 'default'; use e.g. 'mfc2_real' for
+                          (default: 'default'; use e.g. '2d_real' for
                           real-data runs to match your actual sensor depths)
   -c, --config PATH       Path to a custom JSON scenario file
                           (default: ensemble_scenarios.json next to this script)
@@ -432,41 +436,33 @@ Examples:
   # --- Control the XY plan-view plot rendering (2-D mode) ---
   ./run_pipeline.sh --mode 2d -s 2d --xy-render-mode imshow
 
-  # --- Real data 1-D (field observations) ---
-  ./run_pipeline.sh --data-source real --em-dir ./data/EMI_MFC2/ --tdr-dir ./data/daily_MFC/
-  ./run_pipeline.sh --data-source real \
-      --em-dir ./data/EMI_MFC2/ \
-      --tdr-dir ./data/daily_MFC/ \
-      --coord-file ./data/coordinates.csv
-  # Use the dedicated real-data scenario (matches real 15cm/30cm TDR depths):
-  ./run_pipeline.sh --data-source real -s mfc2_real \
-      --em-dir ./data/EMI_MFC2/ \
-      --tdr-dir ./data/daily_MFC/
-
   # --- Real data 2-D (field observations on UTM grid) ---
-  ./run_pipeline.sh --data-source real --mode 2d -s mfc2_real \
+  ./run_pipeline.sh --data-source real --mode 2d -s 2d_real \
       --em-dir ./data/EMI_MFC2/ \
       --tdr-dir ./data/daily_MFC/ \
-      --nx 15 --ny 8
+      --drop-coils f425 f1525 \
+      --beta 0.5 20 \
+      --gamma 0.5 20 \
+      --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20
 
   # --- Train/validation split (held-out RMSE, Loiseau et al. 2026) ---
   ./run_pipeline.sh --train-val-split alternate_sorted
   ./run_pipeline.sh --train-val-split by_probe             # fully independent
   ./run_pipeline.sh --train-val-split by_time_block         # fully independent (time)
-  ./run_pipeline.sh --data-source real -s mfc2_real \
+  ./run_pipeline.sh --data-source real -s 2d_real \
       --em-dir ./data/EMI_MFC2/ \
       --tdr-dir ./data/daily_MFC/ \
       --train-val-split by_probe
 
   # --- EM footprint diagnostic (Step 5c, McNeill depth weighting) ---
   ./run_pipeline.sh -s 2d --em-footprint-diagnostic
-  ./run_pipeline.sh --data-source real -s mfc2_real \
+  ./run_pipeline.sh --data-source real -s 2d_real \
       --em-dir ./data/EMI_MFC2/ \
       --tdr-dir ./data/daily_MFC/ \
       --em-footprint-diagnostic
 
   # --- Drop a noisy coil/frequency channel before inversion ---
-  ./run_pipeline.sh --data-source real -s mfc2_real \
+  ./run_pipeline.sh --data-source real -s 2d_real \
       --em-dir ./data/EMI_MFC2/ \
       --tdr-dir ./data/daily_MFC/ \
       --drop-coils f425
@@ -571,8 +567,17 @@ while [[ $# -gt 0 ]]; do
             [[ ${#BETA[@]} -ge 1 ]] || die "--beta requires at least one value"
             ;;
         --gamma)
-            GAMMA="${2:?'--gamma requires a number'}"
-            shift 2 ;;
+            [[ $# -ge 2 ]] || die "--gamma requires at least one value"
+            shift # consume the flag itself
+            GAMMA=()
+            # Greedily consume one-or-more following tokens, stopping at the
+            # next recognised flag (mirrors Python argparse's nargs='+').
+            while [[ $# -gt 0 && "$1" != -* ]]; do
+                GAMMA+=("$1")
+                shift
+            done
+            [[ ${#GAMMA[@]} -ge 1 ]] || die "--gamma requires at least one value"
+            ;;
         --ws-localized-bandwidth)
             WS_LOCALIZED_BANDWIDTH="${2:?'--ws-localized-bandwidth requires a number'}"
             shift 2 ;;
@@ -907,8 +912,8 @@ INVERSION_OVERRIDE_ARGS=()
 if [[ ${#BETA[@]} -gt 0 ]]; then
     INVERSION_OVERRIDE_ARGS+=(--beta "${BETA[@]}")
 fi
-if [[ -n "${GAMMA}" ]]; then
-    INVERSION_OVERRIDE_ARGS+=(--gamma "${GAMMA}")
+if [[ ${#GAMMA[@]} -gt 0 ]]; then
+    INVERSION_OVERRIDE_ARGS+=(--gamma "${GAMMA[@]}")
 fi
 if [[ -n "${WS_LOCALIZED_BANDWIDTH}" ]]; then
     INVERSION_OVERRIDE_ARGS+=(--ws-localized-bandwidth "${WS_LOCALIZED_BANDWIDTH}")
@@ -997,7 +1002,7 @@ cat >> "${HEADER_TMP}" << MDEOF
 | swc-depths | \`${SWC_DEPTHS[*]:-scenario default}\` |
 | window-m | \`${WINDOW_M:-scenario default}\` |
 | beta | \`${BETA[*]:-scenario default}\` |
-| gamma | \`${GAMMA:-scenario default}\` |
+| gamma | \`${GAMMA[*]:-scenario default}\` |
 | ws-localized-bandwidth | \`${WS_LOCALIZED_BANDWIDTH:-scenario default (or disabled)}\` |
 | ws-localized-bandwidth-sweep | \`${WS_LOCALIZED_BANDWIDTH_SWEEP[*]:-scenario default (or disabled)}\` |
 | train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |

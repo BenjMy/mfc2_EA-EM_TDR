@@ -152,6 +152,13 @@ def generate_time_lapse_dataset(
     random_xy_n_blobs: int = 8,
     random_xy_correlation_m: float | None = None,
     random_xy_seed: int | None = None,
+    ws_xy_variation: bool = False,
+    ws_xy_params: list | None = None,
+    ws_xy_ranges: dict | None = None,
+    ws_xy_pattern: str = "linear",
+    ws_xy_n_blobs: int = 6,
+    ws_xy_correlation_m: float | None = None,
+    ws_xy_seed: int | None = None,
 ):
     """
     Generate synthetic 4-D subsurface property matrices (EC_bulk, ECa, θ)
@@ -227,6 +234,50 @@ def generate_time_lapse_dataset(
         coupled to (or perturbing) the per-sample noise stream. `None`
         (default) derives a seed from the global seed instead (still
         reproducible, just not independently controllable).
+    ws_xy_variation : bool, default False
+        When True, the TRUTH Waxman-Smits parameters (a, m, sigma_w,
+        sigma_s) are no longer spatially uniform (the `_WS_DEFAULTS`
+        constant) -- instead, the parameters listed in `ws_xy_params` are
+        linearly (or randomly, see `ws_xy_pattern`) interpolated across
+        their `ws_xy_ranges` as a function of plan-view (x, y) position,
+        independent of and in addition to the existing per-layer (depth)
+        variation. This is the "spatially-heterogeneous petrophysics mode"
+        the `cond_ranges` warning above refers to. Every parameter NOT
+        listed in `ws_xy_params` stays fixed at its `_WS_DEFAULTS` value,
+        identical everywhere, same as before.
+    ws_xy_params : list of str or None, default None
+        Which Waxman-Smits parameters vary spatially when
+        `ws_xy_variation=True`. Subset of {"a", "m", "sigma_w", "sigma_s"}.
+        `None` (default) -> ["m", "sigma_s"], since the cementation
+        exponent and surface conductivity are the parameters most
+        plausibly tied to spatially-varying soil texture/lithology, while
+        `a` and `sigma_w` are more often treated as near-constant
+        lab/pore-water values across a small survey.
+    ws_xy_ranges : dict or None, default None
+        Per-parameter [min, max] truth range spanned across the XY field,
+        e.g. {"sigma_s": [50.0, 200.0]}. Only keys in `ws_xy_params` are
+        used. `None` (default) -> `_WS_XY_DEFAULT_RANGES` below. At
+        xy_frac=0 a point gets `min`, at xy_frac=1 it gets `max` (same
+        xy_frac convention as the moisture field: linear x/y ramp, or a
+        random field -- see `ws_xy_pattern`).
+    ws_xy_pattern : {"linear", "random"}, default "linear"
+        "linear": xy_frac = 0.5*x_frac + 0.5*y_frac (2-D mode) or x_frac
+        (1-D mode) -- the same simple diagonal ramp used elsewhere.
+        "random": a smooth spatially-correlated random field (sum of
+        Gaussian patches, see `_generate_random_xy_field`), drawn with its
+        OWN seed stream independent of `random_xy_field`'s moisture
+        pattern -- so e.g. moisture and sigma_s can show unrelated spatial
+        patterns even if both are randomized. One field per ensemble
+        member, held fixed across all layers/timesteps for that member.
+    ws_xy_n_blobs : int, default 6
+        Only used when `ws_xy_pattern="random"`. See `random_xy_n_blobs`.
+    ws_xy_correlation_m : float or None, default None
+        Only used when `ws_xy_pattern="random"`. See
+        `random_xy_correlation_m`.
+    ws_xy_seed : int or None, default None
+        Only used when `ws_xy_pattern="random"`. Seeds the WS-parameter
+        random field independently of both the global noise seed and
+        `random_xy_seed`. `None` -> derived from 99.
     """
 
     os.makedirs(output_dir, exist_ok=True)
@@ -235,10 +286,10 @@ def generate_time_lapse_dataset(
         print(
             "[DATA GEN][WARN] cond_ranges was provided but is currently NOT used by "
             "generate_time_lapse_dataset -- the truth Waxman-Smits parameters (a, m, "
-            "sigma_w, sigma_s) are fixed by the hardcoded _WS_DEFAULTS below, "
-            "identical for every layer/position/time/ensemble member, regardless of "
-            "cond_ranges. Only `theta` varies spatially/temporally. This parameter is "
-            "reserved for a future spatially-heterogeneous petrophysics mode."
+            "sigma_w, sigma_s) are fixed by the hardcoded _WS_DEFAULTS below (or, if "
+            "ws_xy_variation=True, drawn from ws_xy_ranges instead), regardless of "
+            "cond_ranges. Only `theta` (and, with ws_xy_variation, the WS params "
+            "themselves) varies spatially/temporally."
         )
 
     ensemble_size = 4
@@ -262,6 +313,40 @@ def generate_time_lapse_dataset(
         l: _WS_DEFAULTS.get(l, _WS_DEFAULTS[3])
         for l in range(num_layers)
     }
+
+    # --- spatially-heterogeneous petrophysics (ws_xy_variation) ---------
+    _WS_XY_DEFAULT_RANGES = {
+        "a":       [0.30, 0.70],
+        "m":       [2.00, 4.00],
+        "sigma_w": [300.0, 700.0],
+        "sigma_s": [50.0, 200.0],
+    }
+    _WS_VALID_PARAMS = {"a", "m", "sigma_w", "sigma_s"}
+    if ws_xy_variation:
+        if ws_xy_params is None:
+            ws_xy_params = ["m", "sigma_s"]
+        bad = set(ws_xy_params) - _WS_VALID_PARAMS
+        if bad:
+            raise ValueError(
+                f"ws_xy_params contains unknown Waxman-Smits parameter(s) {sorted(bad)}; "
+                f"valid choices are {sorted(_WS_VALID_PARAMS)}."
+            )
+        _ws_ranges = dict(_WS_XY_DEFAULT_RANGES)
+        if ws_xy_ranges:
+            for k, v in ws_xy_ranges.items():
+                if k not in _WS_VALID_PARAMS:
+                    raise ValueError(
+                        f"ws_xy_ranges key '{k}' is not a valid Waxman-Smits parameter; "
+                        f"valid choices are {sorted(_WS_VALID_PARAMS)}."
+                    )
+                _ws_ranges[k] = v
+        _active_ranges = {k: _ws_ranges[k] for k in ws_xy_params}
+        print(
+            f"[DATA GEN] ws_xy_variation enabled: {ws_xy_params} will vary spatially "
+            f"in XY (pattern='{ws_xy_pattern}'), ranges={_active_ranges}"
+        )
+    else:
+        _ws_ranges = None
 
     coils_list = COILS_LIST
 
@@ -325,10 +410,40 @@ def generate_time_lapse_dataset(
     else:
         xy_random_fields = None
 
+    # WS-parameter spatial field: independent seed stream from the moisture
+    # random_xy_field above, so the two patterns don't have to coincide.
+    if ws_xy_variation and ws_xy_pattern == "random":
+        _ws_base_seed = ws_xy_seed if ws_xy_seed is not None else 99
+        if ws_xy_correlation_m is None:
+            if mode == "2d":
+                _ws_correlation_m = 0.25 * min(max(x_max - x_min, 1e-9), max(y_max - y_min, 1e-9))
+            else:
+                _ws_correlation_m = 0.25 * max(x_max - x_min, 1e-9)
+        else:
+            _ws_correlation_m = ws_xy_correlation_m
+        ws_random_fields = [
+            _generate_random_xy_field(
+                x_coords, y_coords, ws_xy_n_blobs, _ws_correlation_m,
+                np.random.default_rng(_ws_base_seed + ens_idx),
+            )
+            for ens_idx in range(ensemble_size)
+        ]
+    else:
+        ws_random_fields = None
+
+    # Per-point-per-layer truth WS params actually used (constant across
+    # timesteps within an ensemble member, so only tracked here, not saved
+    # per-timestep). Only populated/saved when ws_xy_variation is set.
+    ensemble_ws_truth = {p: [] for p in ("a", "m", "sigma_w", "sigma_s")} if ws_xy_variation else None
+
     for ens_idx in range(ensemble_size):
         time_lapse_ec = np.zeros((n_time, num_measured_points, num_layers))
         time_lapse_eca = np.zeros((n_time, num_measured_points, len(coils_list)))
         time_lapse_theta = np.zeros((n_time, num_measured_points, num_layers))
+        if ws_xy_variation:
+            ws_truth_this_member = {
+                p: np.zeros((num_measured_points, num_layers)) for p in ("a", "m", "sigma_w", "sigma_s")
+            }
 
         for t_idx in range(n_time):
             # Gentle temporal trend (progressive wetting over subsequent timesteps)
@@ -347,6 +462,16 @@ def generate_time_lapse_dataset(
                 # Normalized spatial fractions for horizontal (XY) gradient
                 x_frac = (x_coords[p_idx] - x_min) / (x_max - x_min) if x_max > x_min else 0.0
                 y_frac = (y_coords[p_idx] - y_min) / (y_max - y_min) if y_max > y_min else 0.0
+
+                # Plan-view fraction driving the spatially-varying truth WS
+                # params (independent stream from the moisture xy_frac /
+                # xy_random_fields above, even though the "linear" pattern
+                # uses the same formula).
+                if ws_xy_variation:
+                    if ws_xy_pattern == "random":
+                        ws_frac = ws_random_fields[ens_idx][p_idx]
+                    else:
+                        ws_frac = (0.5 * x_frac + 0.5 * y_frac) if mode == "2d" else x_frac
 
                 for l_idx in range(num_layers):
                     # Normalized vertical fraction for depth (XZ) gradient
@@ -419,12 +544,23 @@ def generate_time_lapse_dataset(
                         theta_val = np.clip(theta_val, 0.05, 0.45)
                     time_lapse_theta[t_idx, p_idx, l_idx] = theta_val
 
+                    if ws_xy_variation:
+                        point_ws = dict(layer_params[l_idx])
+                        for pname in ws_xy_params:
+                            pmin, pmax = _ws_ranges[pname]
+                            point_ws[pname] = pmin + (pmax - pmin) * ws_frac
+                        if t_idx == 0:
+                            for pname in ("a", "m", "sigma_w", "sigma_s"):
+                                ws_truth_this_member[pname][p_idx, l_idx] = point_ws[pname]
+                    else:
+                        point_ws = layer_params[l_idx]
+
                     ec_bulk = forward_waxman_smits(
                         theta_val,
-                        layer_params[l_idx]["a"],
-                        layer_params[l_idx]["m"],
-                        layer_params[l_idx]["sigma_w"],
-                        layer_params[l_idx]["sigma_s"],
+                        point_ws["a"],
+                        point_ws["m"],
+                        point_ws["sigma_w"],
+                        point_ws["sigma_s"],
                     )
                     ec_bulk = max(1.0, ec_bulk + np.random.normal(0, 0.1))
                     time_lapse_ec[t_idx, p_idx, l_idx] = ec_bulk
@@ -447,12 +583,32 @@ def generate_time_lapse_dataset(
         ensemble_ec_bulk.append(time_lapse_ec)
         ensemble_ec_apparent.append(time_lapse_eca)
         ensemble_theta_true.append(time_lapse_theta)
+        if ws_xy_variation:
+            for pname in ("a", "m", "sigma_w", "sigma_s"):
+                ensemble_ws_truth[pname].append(ws_truth_this_member[pname])
 
     np.save(os.path.join(output_dir, "synthetic_time_lapse_ec.npy"),    np.array(ensemble_ec_bulk))
     np.save(os.path.join(output_dir, "synthetic_time_lapse_eca.npy"),   np.array(ensemble_ec_apparent))
     np.save(os.path.join(output_dir, "synthetic_time_lapse_theta.npy"), np.array(ensemble_theta_true))
     np.save(os.path.join(output_dir, "synthetic_x_coords.npy"), x_coords)
     np.save(os.path.join(output_dir, "synthetic_y_coords.npy"), y_coords)
+
+    if ws_xy_variation:
+        # Per-point-per-layer TRUTH WS params actually used, shape
+        # (ensemble_size, num_measured_points, num_layers). Constant across
+        # timesteps, so these are ground truth for validating any
+        # localized/spatial WS calibration (e.g. step2.run_petro_localized)
+        # against the true spatial pattern, not just the fitted one.
+        for pname in ("a", "m", "sigma_w", "sigma_s"):
+            np.save(
+                os.path.join(output_dir, f"synthetic_ws_truth_{pname}.npy"),
+                np.array(ensemble_ws_truth[pname]),
+            )
+    else:
+        for pname in ("a", "m", "sigma_w", "sigma_s"):
+            _stale_path = os.path.join(output_dir, f"synthetic_ws_truth_{pname}.npy")
+            if os.path.exists(_stale_path):
+                os.remove(_stale_path)
 
     if mode == "2d" and utm_x_grid is not None:
         np.save(os.path.join(output_dir, "synthetic_utm_x.npy"), utm_x_grid)
@@ -508,11 +664,15 @@ def generate_time_lapse_dataset(
         "mode":               mode,
         "homogeneous":        homogeneous,
         # --- new: truth petrophysics + generation settings, for reporting ---
-        # NOTE: layer_params is currently IDENTICAL across all layers (see
-        # _WS_DEFAULTS above) -- there is no spatial (x/y) or per-horizon
-        # variation of (a, m, sigma_w, sigma_s) in the truth model. Only
-        # `theta` varies, via the gradient/infiltration logic below.
+        # NOTE: layer_params (below) is the per-LAYER baseline from
+        # _WS_DEFAULTS -- with ws_xy_variation=False this is exactly what
+        # every point used (identical across x/y/ensemble/time). With
+        # ws_xy_variation=True, the params listed in ws_xy_params instead
+        # vary continuously across x/y per ensemble member; the actual
+        # per-point-per-layer values used are saved to
+        # synthetic_ws_truth_{a,m,sigma_w,sigma_s}.npy, not summarized here.
         "ws_truth_params":    {l: dict(p) for l, p in layer_params.items()},
+        "ws_xy_variation":    ws_xy_variation,
         "gradient_mode":      gradient_mode,
         "theta_dry":          theta_dry,
         "theta_wet":          theta_wet,
@@ -543,6 +703,18 @@ def generate_time_lapse_dataset(
             "correlation_m": _correlation_m,
             "seed": _base_seed,
         }
+    if ws_xy_variation:
+        result["ws_xy_variation_params"] = {
+            "varying_params": ws_xy_params,
+            "ranges": {k: _ws_ranges[k] for k in ws_xy_params},
+            "pattern": ws_xy_pattern,
+        }
+        if ws_xy_pattern == "random":
+            result["ws_xy_variation_params"].update({
+                "n_blobs": ws_xy_n_blobs,
+                "correlation_m": _ws_correlation_m,
+                "seed": _ws_base_seed,
+            })
     return result
 
 
@@ -609,6 +781,99 @@ def export_eca_surveys_to_csv(
         csv_paths.append(csv_path)
 
     return csv_paths, theta_realization, tdr_noise_std
+
+
+def plot_ws_truth_xy_maps(output_dir: str = "mfc2_outputs", realization_index: int = 0) -> list:
+    """
+    Plot the TRUE (ground-truth) Waxman-Smits petrophysical params (a, m,
+    sigma_w, sigma_s) as spatial XY maps, for scenarios generated with
+    ws_xy_variation=True. No-op (returns []) if none of the
+    synthetic_ws_truth_{a,m,sigma_w,sigma_s}.npy files exist -- i.e. the
+    dataset was generated with ws_xy_variation=False (the default), so the
+    truth petrophysics is spatially uniform and there's nothing to map.
+
+    Each param is averaged across layers before plotting (params NOT in the
+    scenario's ws_xy_params stay spatially uniform -- their layer values are
+    identical everywhere -- while params IN ws_xy_params are also constant
+    across layers by construction, see generate_time_lapse_dataset, so the
+    layer-mean is exactly the per-point spatial value either way; it's not
+    smoothing over a real depth trend).
+
+    2-D mode: rendered as an imshow heatmap on the (num_y, num_x) survey
+    grid, using synthetic_utm_x/y.npy + synthetic_grid_shape.npy if present.
+    1-D mode (or missing grid files): rendered as a 1-D scatter/line along
+    x_coords, matching plot_synthetic_results' point-indexed style.
+
+    Returns a list of the saved PNG paths (empty if nothing was plotted).
+    """
+    import matplotlib.pyplot as plt
+
+    _param_labels = {
+        "a":       "a (tortuosity factor)",
+        "m":       "m (cementation exponent)",
+        "sigma_w": "sigma_w [mS/m] (pore-water conductivity)",
+        "sigma_s": "sigma_s [mS/m] (surface conductivity)",
+    }
+    _present = [
+        p for p in ("a", "m", "sigma_w", "sigma_s")
+        if os.path.exists(os.path.join(output_dir, f"synthetic_ws_truth_{p}.npy"))
+    ]
+    if not _present:
+        return []
+
+    x_coords_path = os.path.join(output_dir, "synthetic_x_coords.npy")
+    y_coords_path = os.path.join(output_dir, "synthetic_y_coords.npy")
+    x_coords = np.load(x_coords_path) if os.path.exists(x_coords_path) else None
+    y_coords = np.load(y_coords_path) if os.path.exists(y_coords_path) else None
+
+    utm_x_path = os.path.join(output_dir, "synthetic_utm_x.npy")
+    utm_y_path = os.path.join(output_dir, "synthetic_utm_y.npy")
+    grid_shape_path = os.path.join(output_dir, "synthetic_grid_shape.npy")
+    has_grid = (
+        os.path.exists(utm_x_path) and os.path.exists(utm_y_path)
+        and os.path.exists(grid_shape_path)
+    )
+
+    fig, axes = plt.subplots(1, len(_present), figsize=(5.5 * len(_present), 5), squeeze=False)
+    axes = axes[0]
+    saved_paths = []
+
+    for ax, pname in zip(axes, _present):
+        arr = np.load(os.path.join(output_dir, f"synthetic_ws_truth_{pname}.npy"))
+        # arr shape: (ensemble_size, num_measured_points, num_layers)
+        point_vals = arr[realization_index].mean(axis=-1)  # (num_measured_points,)
+
+        if has_grid:
+            grid_shape = tuple(np.load(grid_shape_path).tolist())
+            utm_x_grid = np.load(utm_x_path)
+            utm_y_grid = np.load(utm_y_path)
+            value_grid = point_vals.reshape(grid_shape)
+            im = ax.imshow(
+                value_grid,
+                origin="lower",
+                aspect="auto",
+                extent=[utm_x_grid.min(), utm_x_grid.max(), utm_y_grid.min(), utm_y_grid.max()],
+                cmap="viridis",
+            )
+            ax.set_xlabel("UTM X [m]")
+            ax.set_ylabel("UTM Y [m]")
+            fig.colorbar(im, ax=ax, label=_param_labels[pname])
+        else:
+            _x = x_coords if x_coords is not None else np.arange(len(point_vals))
+            _y = y_coords if y_coords is not None else np.zeros(len(point_vals))
+            sc = ax.scatter(_x, _y, c=point_vals, cmap="viridis", s=80, edgecolors="k", linewidths=0.5)
+            ax.set_xlabel("x [m]")
+            ax.set_ylabel("y [m]" if y_coords is not None and np.any(y_coords != 0) else "")
+            fig.colorbar(sc, ax=ax, label=_param_labels[pname])
+
+        ax.set_title(f"Truth {pname}", fontsize=11, fontweight="bold")
+
+    plt.tight_layout()
+    out_path = os.path.join(output_dir, "synthetic_ws_truth_xy_maps.png")
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+    saved_paths.append(out_path)
+    return saved_paths
 
 
 def plot_synthetic_results(output_dir: str = "mfc2_outputs", realization_index: int = 0) -> None:
@@ -685,6 +950,10 @@ def plot_synthetic_results(output_dir: str = "mfc2_outputs", realization_index: 
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "synthetic_eca_surface_data.png"), dpi=200)
     plt.close()
+
+    # WS truth XY maps: no-op (returns []) when ws_xy_variation wasn't used,
+    # so this is safe to call unconditionally for every scenario.
+    plot_ws_truth_xy_maps(output_dir=output_dir, realization_index=realization_index)
 
 
 if __name__ == "__main__":
@@ -768,6 +1037,35 @@ if __name__ == "__main__":
     parser.add_argument("--depths0", type=str, default=None,
                          help="Comma-separated layer-bottom depths [m], e.g. '0.4,0.9,1.5' "
                               "(gives layer centers at 0.2, 0.65, 1.2 m). Defaults to [0.3, 0.6, 1.0].")
+    parser.add_argument(
+        "--ws-xy-variation", action="store_true",
+        help="Make the TRUTH Waxman-Smits parameters (default: m, sigma_s) "
+             "vary spatially across x/y instead of being spatially uniform. "
+             "See --ws-xy-params / --ws-xy-pattern.",
+    )
+    parser.add_argument(
+        "--ws-xy-params", type=str, default=None, metavar="P1,P2",
+        help="Comma-separated subset of {a,m,sigma_w,sigma_s} to vary in XY "
+             "when --ws-xy-variation is set. Default: 'm,sigma_s'.",
+    )
+    parser.add_argument(
+        "--ws-xy-pattern", choices=["linear", "random"], default="linear",
+        help="'linear': diagonal x/y ramp (same convention as the moisture "
+             "gradient). 'random': smooth spatially-correlated random field, "
+             "independent of the moisture pattern. Default 'linear'.",
+    )
+    parser.add_argument(
+        "--ws-xy-n-blobs", type=int, default=6, metavar="N",
+        help="Number of random Gaussian patches when --ws-xy-pattern=random. Default 6.",
+    )
+    parser.add_argument(
+        "--ws-xy-correlation-m", type=float, default=None, metavar="M",
+        help="Patch radius [m] when --ws-xy-pattern=random. Default: auto.",
+    )
+    parser.add_argument(
+        "--ws-xy-seed", type=int, default=None, metavar="SEED",
+        help="Seed for the WS-parameter random field. Default: derived from 99.",
+    )
     args = parser.parse_args()
 
     depths0 = (
@@ -796,6 +1094,15 @@ if __name__ == "__main__":
         random_xy_n_blobs=args.random_xy_n_blobs,
         random_xy_correlation_m=args.random_xy_correlation_m,
         random_xy_seed=args.random_xy_seed,
+        ws_xy_variation=args.ws_xy_variation,
+        ws_xy_params=(
+            [p.strip() for p in args.ws_xy_params.split(",")]
+            if args.ws_xy_params is not None else None
+        ),
+        ws_xy_pattern=args.ws_xy_pattern,
+        ws_xy_n_blobs=args.ws_xy_n_blobs,
+        ws_xy_correlation_m=args.ws_xy_correlation_m,
+        ws_xy_seed=args.ws_xy_seed,
     )
 
     print(f"[DATA GEN] {len(res['layer_bottoms']) + 1} layers derived from depths0={res['layer_bottoms']}")

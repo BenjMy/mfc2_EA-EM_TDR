@@ -34,15 +34,28 @@ Consolidated here:
       routes it to its soil horizon using EXACTLY the same rule
       ``em_methodology.calibrate_petrophysical_relationship`` uses
       internally: explicit ``probe_layer_indices`` when given, else a
-      strided split, else wrap-around modulo assignment. Returns the values
-      concatenated per-horizon (matching the order of
-      ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta``), plus the
-      per-horizon start/end slice bounds for callers that need to know
-      which returned elements belong to which horizon.
+      strided split, else wrap-around modulo assignment -- THEN drops any
+      observation whose extracted EC is non-finite, again exactly
+      mirroring that function's own NaN-observation filter (real-data
+      time-lapse reference-grid gaps). Returns the values concatenated
+      per-horizon (matching the order AND length of
+      ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta`` exactly),
+      the per-horizon start/end slice bounds, and ``kept_indices`` --
+      which other per-observation arrays should be gathered with, via
+      ``arr[kept_indices]``, to stay aligned.
 
       Previously duplicated (independently, with parallel but subtly
       different code) across ``2_run_petro.py::_extract_ec_for_plots`` and
-      ``4_run_select_assess.py::_extract_ec_at_probes``.
+      ``4_run_select_assess.py::_extract_ec_at_probes`` -- the latter
+      wasn't available to check against when this consolidation happened;
+      worth confirming it replicates the NaN-drop too, or routes through
+      this function instead.
+
+  route_array_to_horizons(values, probe_layer_indices, num_layers)
+      Routing only (no NaN-drop) for arrays that don't need to match
+      ``PetroFit.observed_theta`` exactly. See its docstring for when NOT
+      to use it -- prefer ``route_ec_to_horizons``'s ``kept_indices``
+      whenever alignment with the fitted values matters.
 
   match_epochs_to_reference_grid(epoch_xy, tolerance_m)
       Builds a UNION spatial reference grid across multiple real-data
@@ -160,13 +173,112 @@ def build_inversion_bnds(
 # 3. EC-at-probe extraction / horizon routing
 # ---------------------------------------------------------------------------
 
+def _horizon_index_groups(
+    n_samples: int,
+    probe_layer_indices: Sequence[int] | None,
+    num_layers: int,
+) -> list[list[int]]:
+    """
+    Shared index-selection rule underlying both ``route_ec_to_horizons``
+    and ``route_array_to_horizons``. Returns, per horizon (list position =
+    horizon index), the list of observation indices (into a
+    length-``n_samples`` per-observation array) that horizon routes to.
+
+    Factored out so the two public routing functions can never drift out
+    of sync with each other -- both call this, so there is exactly one
+    place the strided/modulo/explicit-index rule is written down. See
+    ``route_ec_to_horizons`` for the routing rule itself.
+    """
+    groups: list[list[int]] = []
+    for layer in range(num_layers):
+        if probe_layer_indices is not None:
+            indices = [i for i, li in enumerate(probe_layer_indices) if li == layer]
+        elif n_samples >= num_layers:
+            step = n_samples // num_layers
+            start = layer * step
+            end = start + step if layer < num_layers - 1 else n_samples
+            indices = list(range(start, end))
+        else:
+            indices = [i for i in range(n_samples) if i % num_layers == layer]
+            if not indices:
+                indices = list(range(n_samples))
+        groups.append(indices)
+    return groups
+
+
+def route_array_to_horizons(
+    values: Sequence,
+    probe_layer_indices: Sequence[int] | None,
+    num_layers: int,
+) -> np.ndarray:
+    """
+    Reorder/subset an arbitrary per-observation array using the horizon
+    ROUTING rule shared with ``route_ec_to_horizons`` -- but see the
+    WARNING below before using this for anything that must line up with
+    ``PetroFit.observed_theta``/``predicted_theta``.
+
+    Typical use: routing ``sample_positions`` itself (rather than an EC
+    array) so per-observation metadata -- e.g. which sensor an observation
+    came from -- can be matched up with the fitted values for plotting,
+    without duplicating the routing logic at the call site.
+
+    WARNING -- this does NOT reproduce the NaN-observation drop
+    -----------------------------------------------------------
+    ``em_methodology.calibrate_petrophysical_relationship`` performs one
+    extra step per horizon, AFTER routing: any observation whose bulk EC
+    (``sigma_b``) is non-finite -- which happens for real-data time-lapse
+    runs when a TDR observation lands on a (reference-grid point, epoch)
+    pair that particular epoch didn't cover, see
+    ``geometry_utils.match_epochs_to_reference_grid`` -- is dropped from
+    that horizon's ``theta_layer``/``sigma_b_layer`` before fitting. This
+    means ``PetroFit.observed_theta``/``predicted_theta`` can be SHORTER
+    than what pure routing (this function, or ``route_ec_to_horizons``'s
+    ``ec_extracted`` on its own) produces, whenever any such NaN exists.
+
+    This function has no way to know about that drop -- it never sees the
+    EC array, only ``probe_layer_indices``. If you need an array that
+    lines up with ``PetroFit.observed_theta`` element-for-element, do NOT
+    use this function; instead call ``route_ec_to_horizons`` (which DOES
+    replicate the drop) and index your array with the ``kept_indices`` it
+    returns, e.g.::
+
+        ec_extracted, slices, kept_indices = route_ec_to_horizons(...)
+        routed_positions = np.asarray(sample_positions)[kept_indices]
+
+    Use this function only when you know the array in question is not
+    affected -- e.g. synthetic-data runs (no reference grid, so no NaNs
+    ever enter the EC array), or single-survey real-data runs.
+
+    Parameters
+    ----------
+    values : sequence, length n_samples
+        Any per-observation array, in the SAME order as the
+        ``sample_positions``/``sample_times`` originally passed to
+        ``em_methodology.calibrate_petrophysical_relationship``.
+    probe_layer_indices, num_layers
+        Same as ``route_ec_to_horizons``.
+
+    Returns
+    -------
+    np.ndarray
+        ``values`` reordered/subset per horizon, concatenated in
+        ascending horizon order, WITHOUT the NaN-observation drop (see
+        warning above).
+    """
+    values = np.asarray(values)
+    n_samples = len(values)
+    groups = _horizon_index_groups(n_samples, probe_layer_indices, num_layers)
+    parts = [values[idx] for idx in groups if idx]
+    return np.concatenate(parts) if parts else values[:0]
+
+
 def route_ec_to_horizons(
     ec_array: np.ndarray,
     sample_positions: Sequence[int],
     sample_times: Sequence[int],
     probe_layer_indices: Sequence[int] | None,
     num_layers: int,
-) -> tuple[np.ndarray, list[tuple[int, int]]]:
+) -> tuple[np.ndarray, list[tuple[int, int]], np.ndarray]:
     """
     Extract sigma_b (bulk EC) at each TDR probe location from an EC array
     with any ensemble axis already resolved by the caller, and route each
@@ -184,6 +296,17 @@ def route_ec_to_horizons(
        strided slice: layer i gets a contiguous, non-overlapping subset.
     3. ``probe_layer_indices`` is None and ``n_samples < num_layers`` ->
        wrap-around: probe i assigned to layer ``i % num_layers``.
+
+    AFTER routing, any observation whose extracted ``sigma_b`` is
+    non-finite is dropped from its horizon -- replicating
+    ``em_methodology.calibrate_petrophysical_relationship``'s own
+    NaN-observation filter exactly (its docstring there: real-data
+    time-lapse observations landing on a (reference-grid point, epoch)
+    pair that epoch didn't cover come through as NaN and are dropped
+    rather than fed to the optimizer or silently paired with an unrelated
+    EC value). This is what makes ``ec_extracted`` here guaranteed to
+    match ``PetroFit.observed_theta``/``predicted_theta`` length-for-length
+    and order-for-order, including in that case.
 
     Parameters
     ----------
@@ -205,17 +328,25 @@ def route_ec_to_horizons(
     -------
     ec_extracted : np.ndarray, shape (n_routed,)
         Flat EC values, concatenated per horizon in ascending horizon
-        order -- matches ``PetroFit.observed_theta`` /
-        ``PetroFit.predicted_theta`` ordering exactly. ``n_routed`` equals
-        ``len(sample_positions)`` unless ``probe_layer_indices`` leaves one
-        or more horizons uncovered (those probes are simply omitted, same
-        as the calibration engine).
+        order, with non-finite entries dropped -- matches
+        ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta``
+        ordering AND length exactly.
     horizon_slices : list of (start, end)
         For each horizon (index = list position), the ``[start, end)``
-        slice into ``ec_extracted`` holding that horizon's values. Useful
-        for callers (e.g. plotting) that need to know which returned
-        elements belong to which horizon without re-deriving the routing
-        themselves.
+        slice into ``ec_extracted`` holding that horizon's (post-NaN-drop)
+        values. Useful for callers (e.g. plotting) that need to know which
+        returned elements belong to which horizon without re-deriving the
+        routing themselves.
+    kept_indices : np.ndarray, shape (n_routed,)
+        For each element of ``ec_extracted`` (same order), the index into
+        the ORIGINAL length-``len(sample_positions)`` per-observation
+        arrays it came from. Index any other per-observation array (e.g.
+        ``sample_positions`` itself, ``probe_layer_indices``,
+        per-probe coordinates) with this -- ``arr = np.asarray(other)[kept_indices]``
+        -- to get an array that lines up with ``ec_extracted`` /
+        ``PetroFit.observed_theta`` exactly, NaN-drop included. Prefer
+        this over ``route_array_to_horizons`` whenever the result needs to
+        match ``PetroFit.observed_theta`` (see that function's warning).
     """
     timelapse = ec_array.ndim == 3
     sample_positions = list(sample_positions)
@@ -223,8 +354,10 @@ def route_ec_to_horizons(
     n_samples = len(sample_positions)
 
     ec_parts: list[np.ndarray] = []
+    kept_parts: list[np.ndarray] = []
     horizon_slices: list[tuple[int, int]] = []
     cursor = 0
+    horizon_groups = _horizon_index_groups(n_samples, probe_layer_indices, num_layers)
 
     for layer in range(num_layers):
         if timelapse:
@@ -239,26 +372,30 @@ def route_ec_to_horizons(
                 dtype=float,
             )
 
-        if probe_layer_indices is not None:
-            indices = [i for i, li in enumerate(probe_layer_indices) if li == layer]
-            layer_vals = sigma_b_full[indices] if indices else np.array([], dtype=float)
-        elif n_samples >= num_layers:
-            step = n_samples // num_layers
-            start = layer * step
-            end = start + step if layer < num_layers - 1 else n_samples
-            layer_vals = sigma_b_full[start:end]
-        else:
-            indices = [i for i in range(n_samples) if i % num_layers == layer]
-            if not indices:
-                indices = list(range(n_samples))
-            layer_vals = sigma_b_full[indices]
+        indices = horizon_groups[layer]
+        layer_vals = sigma_b_full[indices] if indices else np.array([], dtype=float)
+        layer_indices = np.asarray(indices, dtype=int)
+
+        # NaN-observation drop -- mirrors em_methodology.
+        # calibrate_petrophysical_relationship's own filter exactly (see
+        # docstring above), so ec_extracted/kept_indices stay aligned with
+        # PetroFit.observed_theta even when the reference-grid remap left
+        # some (position, epoch) pairs uncovered for this horizon's probes.
+        if layer_vals.size > 0:
+            finite = np.isfinite(layer_vals)
+            if not np.all(finite):
+                layer_vals = layer_vals[finite]
+                layer_indices = layer_indices[finite]
 
         ec_parts.append(layer_vals)
+        kept_parts.append(layer_indices)
         horizon_slices.append((cursor, cursor + len(layer_vals)))
         cursor += len(layer_vals)
 
     ec_extracted = np.concatenate(ec_parts) if ec_parts else np.array([], dtype=float)
-    return ec_extracted, horizon_slices
+    kept_indices = (np.concatenate(kept_parts) if kept_parts
+                     else np.array([], dtype=int))
+    return ec_extracted, horizon_slices, kept_indices
 
 
 # ---------------------------------------------------------------------------

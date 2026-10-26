@@ -73,6 +73,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 
 import geometry_utils
 
@@ -796,6 +797,15 @@ def _plot_reference_grid_coverage(ref_x, ref_y, matched_indices, probe_table,
             ax.scatter(px[valid], py[valid], marker="+", s=110, linewidths=1.8,
                        color="black", zorder=5, label="TDR probes")
             ax.legend(fontsize=9, loc="upper right")
+            if "station_name" in probe_table.columns:
+                ids = probe_table["station_name"].to_numpy()[valid]
+                for x_i, y_i, id_i in zip(px[valid], py[valid], ids):
+                    ax.annotate(
+                        str(id_i), (x_i, y_i), xytext=(4, 4),
+                        textcoords="offset points", fontsize=6.5,
+                        color="black", zorder=6,
+                        path_effects=[pe.withStroke(linewidth=1.5, foreground="white")],
+                    )
 
     n_full = int(np.sum(coverage_count == n_epochs))
     n_partial = int(np.sum((coverage_count > 0) & (coverage_count < n_epochs)))

@@ -196,6 +196,43 @@ class ScenarioConfig:
     independently of the per-sample noise stream, so the pattern is
     reproducible run-to-run. None (default) derives a seed from 42."""
 
+    ws_xy_variation: bool              = False
+    """When True, the TRUTH Waxman-Smits params (a, m, sigma_w, sigma_s)
+    vary spatially in XY instead of being spatially uniform, independent
+    of the theta gradient above (random_xy_field/full_range_gradient).
+    This is the ground-truth petrophysics used to generate the synthetic
+    data, not the Step-2 calibration fit. Default False (spatially
+    uniform, unchanged)."""
+
+    ws_xy_params: list | None          = None
+    """Only used when ws_xy_variation is True. Subset of ["a", "m",
+    "sigma_w", "sigma_s"] that varies in XY; every other param stays
+    fixed at its lab default. None (default) -> ["m", "sigma_s"]."""
+
+    ws_xy_ranges: dict | None          = None
+    """Only used when ws_xy_variation is True. Per-param {"param":
+    [min, max]} truth range spanned across the XY field. None (default)
+    -> a [0.3,0.7], m [2.0,4.0], sigma_w [300,700], sigma_s [50,200]."""
+
+    ws_xy_pattern: str                 = "linear"
+    """Only used when ws_xy_variation is True. "linear" (diagonal x/y
+    ramp, same convention as theta) or "random" (smooth spatially-
+    correlated random field, independently seeded from the moisture
+    pattern). Default "linear"."""
+
+    ws_xy_n_blobs: int                 = 6
+    """Only used when ws_xy_pattern is "random". Number of random
+    Gaussian patches summed into the WS-parameter field. Default 6."""
+
+    ws_xy_correlation_m: float | None  = None
+    """Only used when ws_xy_pattern is "random". Patch radius [m]
+    (1-sigma). None (default) auto-picks."""
+
+    ws_xy_seed: int | None             = None
+    """Only used when ws_xy_pattern is "random". Seeds the WS-parameter
+    field independently of random_xy_seed. None (default) derives a
+    seed from 99."""
+
     # ------------------------------------------------------------------
     # Ensemble spread control
     # ------------------------------------------------------------------
@@ -505,6 +542,20 @@ class ScenarioConfig:
         lines += [
             f"  Drop coils      : {self.drop_coils if self.drop_coils else '(none)'}",
             f"  WS fixed params : {self.ws_fixed_params if self.ws_fixed_params else '(none — all 4 free)'}",
+            f"  WS xy variation : {self.ws_xy_variation}"
+            + (
+                f"  (params={self.ws_xy_params if self.ws_xy_params else ['m', 'sigma_s']}, "
+                f"ranges={self.ws_xy_ranges if self.ws_xy_ranges else '(defaults)'}, "
+                f"pattern={self.ws_xy_pattern}"
+                + (
+                    f" [n_blobs={self.ws_xy_n_blobs}, "
+                    f"corr_m={self.ws_xy_correlation_m}, "
+                    f"seed={self.ws_xy_seed}]"
+                    if self.ws_xy_pattern == "random" else ""
+                )
+                + ")"
+                if self.ws_xy_variation else ""
+            ),
             f"  WS lab_p0       : {self.lab_p0 if self.lab_p0 else '(none — using DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0])'}",
             f"  WS localized c  : {self.ws_localized_bandwidth if self.ws_localized_bandwidth is not None else '(none — localized Step 2 diagnostic disabled)'}",
             f"  WS localized c sweep : {self.ws_localized_bandwidth_sweep if self.ws_localized_bandwidth_sweep is not None else '(none — fixed bandwidth used as-is)'}",
@@ -1015,6 +1066,80 @@ def _validate(name: str, raw: dict) -> None:
             f"got {random_xy_correlation_m!r}."
         )
 
+    ws_xy_variation = raw.get("ws_xy_variation", False)
+    if not isinstance(ws_xy_variation, bool):
+        raise ValueError(
+            f"Scenario '{name}': ws_xy_variation must be a bool, got "
+            f"{ws_xy_variation!r}."
+        )
+
+    _valid_ws_xy_params = {"a", "m", "sigma_w", "sigma_s"}
+    ws_xy_params = raw.get("ws_xy_params", None)
+    if ws_xy_params is not None:
+        if not isinstance(ws_xy_params, list) or not all(
+            isinstance(p, str) for p in ws_xy_params
+        ):
+            raise ValueError(
+                f"Scenario '{name}': ws_xy_params must be null or a list of "
+                f"strings from {sorted(_valid_ws_xy_params)}, got {ws_xy_params!r}."
+            )
+        _bad_ws_xy_params = set(ws_xy_params) - _valid_ws_xy_params
+        if _bad_ws_xy_params:
+            raise ValueError(
+                f"Scenario '{name}': ws_xy_params has unknown Waxman-Smits "
+                f"parameter(s) {sorted(_bad_ws_xy_params)}. Valid: "
+                f"{sorted(_valid_ws_xy_params)}."
+            )
+
+    ws_xy_ranges = raw.get("ws_xy_ranges", None)
+    if ws_xy_ranges is not None:
+        if not isinstance(ws_xy_ranges, dict):
+            raise ValueError(
+                f"Scenario '{name}': ws_xy_ranges must be null or an object "
+                f"mapping a subset of {sorted(_valid_ws_xy_params)} to "
+                f"[min, max], got {ws_xy_ranges!r}."
+            )
+        _bad_range_keys = set(ws_xy_ranges.keys()) - _valid_ws_xy_params
+        if _bad_range_keys:
+            raise ValueError(
+                f"Scenario '{name}': ws_xy_ranges has unknown key(s) "
+                f"{sorted(_bad_range_keys)}. Valid keys: "
+                f"{sorted(_valid_ws_xy_params)}."
+            )
+        for _pname, _prange in ws_xy_ranges.items():
+            if (
+                not isinstance(_prange, list) or len(_prange) != 2
+                or not all(isinstance(x, (int, float)) for x in _prange)
+                or _prange[0] >= _prange[1]
+            ):
+                raise ValueError(
+                    f"Scenario '{name}': ws_xy_ranges[{_pname!r}] must be a "
+                    f"[min, max] pair with min < max, got {_prange!r}."
+                )
+
+    ws_xy_pattern = raw.get("ws_xy_pattern", "linear")
+    if ws_xy_pattern not in ("linear", "random"):
+        raise ValueError(
+            f"Scenario '{name}': ws_xy_pattern must be 'linear' or 'random', "
+            f"got {ws_xy_pattern!r}."
+        )
+
+    ws_xy_n_blobs = raw.get("ws_xy_n_blobs", 6)
+    if not isinstance(ws_xy_n_blobs, int) or ws_xy_n_blobs < 1:
+        raise ValueError(
+            f"Scenario '{name}': ws_xy_n_blobs must be a positive int, "
+            f"got {ws_xy_n_blobs!r}."
+        )
+
+    ws_xy_correlation_m = raw.get("ws_xy_correlation_m", None)
+    if ws_xy_correlation_m is not None and (
+        not isinstance(ws_xy_correlation_m, (int, float)) or ws_xy_correlation_m <= 0
+    ):
+        raise ValueError(
+            f"Scenario '{name}': ws_xy_correlation_m must be > 0 or null, "
+            f"got {ws_xy_correlation_m!r}."
+        )
+
     # ---- Ensemble spread: alpha log-sweep -----------------------------
     alpha_range = raw.get("alpha_range_log", None)
     if alpha_range is not None:
@@ -1158,6 +1283,23 @@ def load_scenario(
         ),
         random_xy_seed    = (
             int(raw["random_xy_seed"]) if raw.get("random_xy_seed") is not None else None
+        ),
+        ws_xy_variation   = bool(raw.get("ws_xy_variation", False)),
+        ws_xy_params      = (
+            list(raw["ws_xy_params"]) if raw.get("ws_xy_params") is not None else None
+        ),
+        ws_xy_ranges      = (
+            {k: [float(v[0]), float(v[1])] for k, v in raw["ws_xy_ranges"].items()}
+            if raw.get("ws_xy_ranges") is not None else None
+        ),
+        ws_xy_pattern     = str(raw.get("ws_xy_pattern", "linear")),
+        ws_xy_n_blobs     = int(raw.get("ws_xy_n_blobs", 6)),
+        ws_xy_correlation_m = (
+            float(raw["ws_xy_correlation_m"])
+            if raw.get("ws_xy_correlation_m") is not None else None
+        ),
+        ws_xy_seed        = (
+            int(raw["ws_xy_seed"]) if raw.get("ws_xy_seed") is not None else None
         ),
         # Ensemble spread
         alpha_range_log   = alpha_range_log,

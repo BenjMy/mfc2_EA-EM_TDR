@@ -3,9 +3,9 @@
     "Ensemble scenario configuration for the EA-EM pipeline (run_pipeline.py).",
     "Each top-level key (except '_comment' and '_schema') is a named scenario.",
     "Pass the scenario name via:  python run_pipeline.py --scenario <name>",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "SCENARIOS IN THIS FILE",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "  2d       Synthetic 2-D UTM grid run (data_source omitted -> synthetic).",
     "  2d_dense_tdr  Same as '2d' but 10 SWC positions (40 probes) for denser TDR coverage.",
     "  2d_random_xy_drying  Same '2d' family, but a RANDOM (patchy) plan-view",
@@ -14,16 +14,16 @@
     "           See full_range_gradient / random_xy_* fields below.",
     "  2d_real  Same 2-D UTM survey geometry and inversion settings, but",
     "           driven by real GEM-2 EM data + SoilNet TDR data.",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "FIELD REFERENCE",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "output_dir        str   Output folder for plots, cache, and NPY files.",
     "realization_index int   Which synthetic ground-truth member to use (0-based).",
     "                        Ignored when using real field data.",
     "depths0           list  Starting layer interface depths [m], length = n_layers-1.",
-    "fixed_depths      bool  True  → all interfaces pinned (classic mode).",
-    "              or  list  False → all interfaces free to move during inversion.",
-    "                        [bool…] → per-interface control, same length as depths0.",
+    "fixed_depths      bool  True  \u2192 all interfaces pinned (classic mode).",
+    "              or  list  False \u2192 all interfaces free to move during inversion.",
+    "                        [bool\u2026] \u2192 per-interface control, same length as depths0.",
     "param_grid        obj   Cartesian-product inversion parameter sweep.",
     "                        Recognised keys (all optional, all accept a list):",
     "                          alpha        regularisation weight  (float > 0)",
@@ -33,14 +33,14 @@
     "                        Valid forwardModel values: CS | FSlin | FS | QP",
     "alpha_range_log   list  Overrides param_grid['alpha'] with a log-spaced sweep.",
     "              or  null  Format: [min, max, n_steps]  (min and max both > 0,",
-    "                        min < max, n_steps >= 2). null → param_grid['alpha'] used as-is.",
+    "                        min < max, n_steps >= 2). null \u2192 param_grid['alpha'] used as-is.",
     "cond_ranges       list  Per-layer starting conductivity bounds [mS/m].",
     "                        Each element is [min, max] or [single_value].",
     "                        Length must equal number of layers (len(depths0)+1).",
     "forward_model     str   Default EMagPy forward model for all ensemble members.",
     "                        Per-member overrides go in param_grid['forwardModel'].",
     "gamma             float Temporal regularisation between time steps (>= 0).",
-    "                        0.0 → no smoothing (recommended for most cases).",
+    "                        0.0 \u2192 no smoothing (recommended for most cases).",
     "ws_fixed_params  obj   Waxman-Smits params held fixed at lab_p0 during",
     "                        Steps 2/4 calibration, e.g. {\"m\": true}.",
     "                        Keys: a | m | sigma_w | sigma_s (bool values).",
@@ -69,13 +69,13 @@
     "tdr_data_dir      str   Folder with real TDR XLSX files (real data_source only).",
     "coord_file        str   CSV of sensor/position coordinates (real data_source only).",
     "time_tolerance_days float Max days between EM survey and TDR reading to match (real only).",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "SWC / TDR SENSOR NETWORK FIELDS",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "num_swc_positions int   Number of horizontal positions where SWC/TDR sensors",
-    "                        are placed. Total probes = num_swc_positions × n_layers.",
+    "                        are placed. Total probes = num_swc_positions \u00d7 n_layers.",
     "swc_depths        list  Explicit sensor installation depths [m].",
-    "              or  null  null → pipeline derives depths from layer_centers",
+    "              or  null  null \u2192 pipeline derives depths from layer_centers",
     "                        (midpoints of depths0 intervals).",
     "window_m          float Half-width of the spatial averaging window that matches",
     "                        each TDR probe to its nearest EM measurement indices [m].",
@@ -86,19 +86,19 @@
     "                        [WARN]. Range (0, 1]. Default 0.5.",
     "matching_error_fraction float  Same as above but aborts the run before Step 2 if",
     "              or  null  exceeded. null (default) disables this hard gate.",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "OBSERVATION NOISE FIELDS (synthetic scenarios only)",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "eca_noise_level   float Relative Gaussian noise added to synthetic ECa BEFORE",
-    "                        inversion (std = eca_noise_level × ECa_signal).",
-    "tdr_noise_std     float Absolute Gaussian noise added to theta_obs [m³/m³].",
-    "homogeneous       bool  True  → disables both spatial gradients (XY position",
+    "                        inversion (std = eca_noise_level \u00d7 ECa_signal).",
+    "tdr_noise_std     float Absolute Gaussian noise added to theta_obs [m\u00b3/m\u00b3].",
+    "homogeneous       bool  True  \u2192 disables both spatial gradients (XY position",
     "                        and XZ/depth) in synthetic generation, so theta is",
     "                        spatially uniform. Temporal trend (progressive",
     "                        wetting over timesteps) and per-sample noise are",
     "                        still applied. Ignored for data_source='real'.",
     "                        Default: false.",
-    "full_range_gradient bool  True → static XZ (depth) and XY (plan-view)",
+    "full_range_gradient bool  True \u2192 static XZ (depth) and XY (plan-view)",
     "                        initial-model gradients each span the FULL",
     "                        [theta_dry, theta_wet] range independently,",
     "                        instead of the small default-gradient offset.",
@@ -108,13 +108,13 @@
     "                        in [0, 1] between the XY component (1.0 = XY",
     "                        only) and the Z/depth component (0.0 = Z only).",
     "                        Default: 0.5 (equal blend).",
-    "invert_z_gradient bool  Only used when full_range_gradient=true. True →",
+    "invert_z_gradient bool  Only used when full_range_gradient=true. True \u2192",
     "                        flips the depth gradient so the shallowest layer",
     "                        is wet and the deepest is dry, i.e. the soil",
     "                        dries out uniformly with depth (same rate at",
     "                        every XY location). Default: false (dry at",
     "                        surface, wet at depth).",
-    "random_xy_field   bool  Only used when full_range_gradient=true. True →",
+    "random_xy_field   bool  Only used when full_range_gradient=true. True \u2192",
     "                        replaces the linear XY ramp with a smooth,",
     "                        spatially-correlated RANDOM field (scattered",
     "                        wet/dry patches) instead of one monotonic",
@@ -123,7 +123,7 @@
     "                        Default: false.",
     "random_xy_n_blobs int   Only used when random_xy_field=true. Number of",
     "                        random Gaussian patches summed into the field.",
-    "                        More → busier/fragmented; fewer → broad zones.",
+    "                        More \u2192 busier/fragmented; fewer \u2192 broad zones.",
     "                        Default: 8.",
     "random_xy_correlation_m float or null  Only used when random_xy_field=",
     "                        true. Patch radius [m] (1-sigma). null (default)",
@@ -132,26 +132,52 @@
     "                        Seeds the random field independently of the",
     "                        per-sample noise stream, for reproducibility.",
     "                        null (default) derives a seed from 42.",
+    "ws_xy_variation   bool  True \u2192 the TRUTH Waxman-Smits params (a, m,",
+    "                        sigma_w, sigma_s) vary spatially in XY instead of",
+    "                        being spatially uniform, independent of the",
+    "                        theta gradient above. This is the ground-truth",
+    "                        petrophysics, not the Step-2 calibration fit.",
+    "                        Default: false.",
+    "ws_xy_params      list  Only used when ws_xy_variation=true. Subset of",
+    "                        [\"a\",\"m\",\"sigma_w\",\"sigma_s\"] that varies in XY;",
+    "                        every other param stays fixed at its lab default.",
+    "                        Default: [\"m\", \"sigma_s\"].",
+    "ws_xy_ranges      obj   Only used when ws_xy_variation=true. Per-param",
+    "                        {\"param\": [min, max]} truth range spanned across",
+    "                        the XY field. Default per param: a [0.3,0.7],",
+    "                        m [2.0,4.0], sigma_w [300,700], sigma_s [50,200].",
+    "ws_xy_pattern     str   Only used when ws_xy_variation=true. \"linear\"",
+    "                        (diagonal x/y ramp, same convention as theta) or",
+    "                        \"random\" (smooth spatially-correlated random",
+    "                        field, independently seeded from the moisture",
+    "                        pattern). Default: \"linear\".",
+    "ws_xy_n_blobs     int   Only used when ws_xy_pattern=random. Number of",
+    "                        random Gaussian patches. Default: 6.",
+    "ws_xy_correlation_m float or null  Only used when ws_xy_pattern=random.",
+    "                        Patch radius [m]. null (default) auto-picks.",
+    "ws_xy_seed        int or null  Only used when ws_xy_pattern=random.",
+    "                        Seeds the WS-parameter field independently of",
+    "                        random_xy_seed. null (default) derives from 99.",
     "cache_tag         str   Optional suffix appended to the cache filename.",
     "                        Change this whenever you alter depths0 or cond_ranges",
     "                        to avoid loading a stale cached ensemble.",
     "description       str   Free-text label shown in pipeline log and report.",
-    "════════════════════════════════════════════════════════════════════",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "HOW TO RUN SCENARIOS",
-    "════════════════════════════════════════════════════════════════════",
-    "── Basic usage ──────────────────────────────────────────────",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "\u2500\u2500 Basic usage \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
     "  Synthetic 2-D UTM grid run:",
     "    ./run_pipeline.sh --mode 2d -s 2d",
     "  Real-data 2-D UTM grid run:",
     "    ./run_pipeline.sh --mode 2d -s 2d_real",
-    "── Spatial grid size (2-D mode only) ────────────────────────",
+    "\u2500\u2500 Spatial grid size (2-D mode only) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
     "  Control the number of UTM grid points with --nx and --ny.",
     "    ./run_pipeline.sh --mode 2d -s 2d --nx 15 --ny 8",
     "    ./run_pipeline.sh --mode 2d -s 2d_real --nx 15 --ny 8",
-    "── Calling run_pipeline.py directly (without the shell wrapper) ─────",
+    "\u2500\u2500 Calling run_pipeline.py directly (without the shell wrapper) \u2500\u2500\u2500\u2500\u2500",
     "  python run_pipeline.py --scenario 2d --mode 2d",
     "  python run_pipeline.py --scenario 2d_real --mode 2d",
-    "── Scenario discovery & validation ───────────────────────────────",
+    "\u2500\u2500 Scenario discovery & validation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
     "  List all available scenarios:",
     "    ./run_pipeline.sh --list",
     "    python scenario_loader.py --list",
@@ -161,7 +187,7 @@
     "  Inspect a single scenario's resolved config:",
     "    python scenario_loader.py 2d",
     "    python scenario_loader.py 2d_real",
-    "── Full argument reference (run_pipeline.sh) ────────────────────",
+    "\u2500\u2500 Full argument reference (run_pipeline.sh) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
     "  -s / --scenario NAME    Scenario key from this JSON file (2d | 2d_real)",
     "  -c / --config   PATH    Path to a custom JSON scenario file",
     "       --mode     1d|2d   Spatial mode (default: 1d; use 2d for these scenarios)",
@@ -287,10 +313,30 @@
       "sigma_s": false
     },
     "lab_p0": [
-      [0.5, 2.2, 500.0, 150.0],
-      [0.5, 2.6, 500.0, 100.0],
-      [0.5, 3.0, 500.0, 60.0],
-      [0.5, 3.4, 500.0, 30.0]
+      [
+        0.5,
+        2.2,
+        500.0,
+        150.0
+      ],
+      [
+        0.5,
+        2.6,
+        500.0,
+        100.0
+      ],
+      [
+        0.5,
+        3.0,
+        500.0,
+        60.0
+      ],
+      [
+        0.5,
+        3.4,
+        500.0,
+        30.0
+      ]
     ],
     "fixed_depths": false,
     "param_grid": {
@@ -533,15 +579,9 @@
     "random_xy_correlation_m": 5.0,
     "random_xy_seed": 7
   },
-  "2d_real": {
-    "description": "Real-data counterpart of the '2d' scenario: same 2-D UTM survey geometry, layer depths, and conductivity bounds, but driven by real GEM-2 EM surveys and SoilNet TDR data instead of a synthetic ground truth.",
-    "output_dir": "mfc2_outputs/field_survey_2d_real",
-    "data_source": "real",
-    "em_data_dir": "./data/EMI_MFC2/",
-    "em_unit": "ppm",
-    "tdr_data_dir": "./data/daily_MFC/",
-    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
-    "time_tolerance_days": 1.0,
+  "2d_xy_waxman": {
+    "description": "Same '2d' family (2-D UTM grid, realistic noise, 1-60 mS/m conductivity range), but the ground-truth Waxman-Smits parameters themselves vary spatially in XY (ws_xy_variation), rather than theta as in '2d_random_xy_drying'. Cementation exponent m and surface conductivity sigma_s are drawn from a smooth, spatially-correlated random field (ws_xy_pattern='random'), independently seeded from the moisture pattern; a and sigma_w stay fixed at lab defaults everywhere. theta itself follows the same simple diagonal ramp as '2d' (random_xy_field is NOT set here), so the XY heterogeneity under test is purely petrophysical, not a moisture artifact. m and sigma_s float during calibration (ws_fixed_params) since they're the params that actually vary in the truth; a and sigma_w are pinned. Denser SWC network (4 positions) than the base '2d', since a spatially heterogeneous petrophysics field needs more spatial sampling to calibrate than a uniform lab_p0 does.",
+    "output_dir": "mfc2_outputs/field_survey_2d_xy_waxman",
     "realization_index": 0,
     "depths0": [
       0.3,
@@ -550,8 +590,8 @@
     ],
     "ws_fixed_params": {
       "a": true,
-      "m": true,
-      "sigma_w": false,
+      "m": false,
+      "sigma_w": true,
       "sigma_s": false
     },
     "lab_p0": [
@@ -560,8 +600,13 @@
       500.0,
       100.0
     ],
-    "fixed_depths": true,
+    "fixed_depths": false,
     "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
       "method": [
         "ROPE"
       ],
@@ -570,101 +615,50 @@
         "CS"
       ]
     },
-    "alpha_range_log": [
-      0.001,
-      5.0,
-      9
-    ],
     "cond_ranges": [
       [
         0.01,
-        300.0
+        60.0
       ],
       [
         0.01,
-        300.0
+        60.0
       ],
       [
         0.01,
-        300.0
+        60.0
       ],
       [
         0.01,
-        300.0
+        60.0
       ]
     ],
+    "forward_model": "CS",
     "gamma": 0.0,
-    "num_swc_positions": 2,
+    "num_swc_positions": 4,
     "swc_depths": null,
     "window_m": 1.0,
     "tdr_noise_std": 0.01,
-    "eca_noise_level": 0.03,
-    "cache_tag": "field_survey_2d_real"
-  },
-  "mfc2_real_synthetic_mirror": {
-    "description": "Synthetic twin of the real MFC2 deployment: real EM survey dates/point-count asymmetry (incl. the degraded 15/12/2020 epoch) and real 24-station TDR coordinates at 15/30 cm, with known ground truth for scoring.",
-    "output_dir": "mfc2_outputs/mfc2_real_synthetic_mirror",
-    "data_source": "real",
-    "em_data_dir": "./out_smoke2/EMI_MFC2_synthetic",
-    "em_unit": "ppm",
-    "tdr_data_dir": "./out_smoke2/daily_MFC_synthetic",
-    "coord_file": "/mnt/user-data/uploads/SOILNET_MFC2_coordinates_sensors.csv",
-    "time_tolerance_days": 3.0,
-    "realization_index": 0,
-    "depths0": [
-      0.3,
-      0.6,
-      1.0
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
     ],
-    "ws_fixed_params": {
-      "a": true,
-      "m": true,
-      "sigma_w": false,
-      "sigma_s": false
-    },
-    "lab_p0": [
-      0.5,
-      3.0,
-      500.0,
-      100.0
-    ],
-    "fixed_depths": true,
-    "param_grid": {
-      "method": [
-        "MCMC"
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
       ],
-      "forwardModel": [
-        "CS"
+      "sigma_s": [
+        50.0,
+        200.0
       ]
     },
-    "alpha_range_log": [
-      0.001,
-      5.0,
-      9
-    ],
-    "cond_ranges": [
-      [
-        0.01,
-        300.0
-      ],
-      [
-        0.01,
-        300.0
-      ],
-      [
-        0.01,
-        300.0
-      ],
-      [
-        0.01,
-        300.0
-      ]
-    ],
-    "gamma": 0.0,
-    "window_m": 3.0,
-    "spatial_match_tolerance_m": 3.0,
-    "tdr_noise_std": 0.015,
-    "eca_noise_level": 0.03,
-    "cache_tag": "mfc2_real_synthetic_mirror"
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 4.0,
+    "ws_xy_seed": 21
   }
 }

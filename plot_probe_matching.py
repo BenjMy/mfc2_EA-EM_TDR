@@ -53,6 +53,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 
 
 def _ensure_dir(path: str) -> str:
@@ -171,6 +172,15 @@ def plot_probe_matching(
         ax.scatter([r.probe_x], [r.probe_y], marker=marker, s=55,
                    color=marker_color, edgecolor="white", linewidth=0.6,
                    zorder=4, label=label)
+
+        probe_id = getattr(r, "probe_id", None)
+        if probe_id is not None:
+            ax.annotate(
+                str(probe_id), (r.probe_x, r.probe_y),
+                xytext=(4, 4), textcoords="offset points",
+                fontsize=6.5, color=marker_color, zorder=5,
+                path_effects=[pe.withStroke(linewidth=1.5, foreground="white")],
+            )
 
     ax.set_xlabel("x [m]" if y_em.any() else "Distance along transect [m]", fontsize=10)
     ax.set_ylabel("y [m]", fontsize=10)

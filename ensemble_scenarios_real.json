@@ -1,0 +1,1072 @@
+{
+  "_comment": [
+    "Ensemble scenario configuration for REAL MFC2 field-data runs only.",
+    "Companion file to 'ensemble_scenarios.json' (synthetic scenarios).",
+    "Pass via:  ./run_pipeline.sh -s <name> -c ensemble_scenarios_real.json",
+    "or:        python run_pipeline.py --scenario <name> --config ensemble_scenarios_real.json",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "SCENARIO NAMING",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  real_<layer_group>_<variant>",
+    "",
+    "  layer_group:",
+    "    single   1 interface  (depths0=[0.225], 2 layers) -- matches 15/30cm",
+    "             SoilNet TDR depths, same geometry as the original '2d_real'.",
+    "    multi    3 interfaces (depths0=[0.3,0.6,1.0], 4 layers) -- matches the",
+    "             synthetic '2d' family layout, for a richer real-data profile.",
+    "",
+    "  variant (each changes EXACTLY ONE axis relative to that group's _base):",
+    "    base             both forward models [FSlin, CS], fixed_depths=true,",
+    "                     ws_fixed_params = {a:true, m:true, sigma_w:false,",
+    "                     sigma_s:false} (only sigma_w & sigma_s float).",
+    "    fslin            forwardModel=[FSlin] only  (else = base)",
+    "    cs               forwardModel=[CS] only     (else = base)",
+    "    depth_free       fixed_depths=false          (else = base)",
+    "    ws_all_fixed     ws_fixed_params: a,m,sigma_w,sigma_s all true (else = base)",
+    "    ws_free_sigmaw   ws_fixed_params: only sigma_w floats (a,m,sigma_s fixed)",
+    "    ws_free_sigmas   ws_fixed_params: only sigma_s floats (a,m,sigma_w fixed)",
+    "",
+    "  14 scenarios total = 2 layer_groups x 7 variants.",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "WS_LOCALIZED_BANDWIDTH_SWEEP -- ALWAYS SET, EVERY SCENARIO",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  Every scenario in this file sets ws_localized_bandwidth_sweep = [0.5, 1, 3, 5, 8, 12, 20] , so the leave-one-probe-out bandwidth",
+    "  CV + the localized Step-2 diagnostic run automatically on every call in",
+    "  run_real_PAPER.sh -- no extra flag needed (same convention as '2d',",
+    "  '2d_intermediate', '2d_dense_tdr' in the synthetic scenarios file).",
+    "  To try DIFFERENT candidate bandwidths for a one-off run without editing",
+    "  this JSON, pass --ws-localized-bandwidth-sweep <c1> <c2> ... on the CLI",
+    "  -- it overrides the JSON value for that run only.",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "WHAT ELSE IS CLI-ONLY (not baked into this JSON)",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  beta, gamma, and train_val_split are all CLI-sweepable per",
+    "  run_pipeline.sh and are driven from run_real_PAPER.sh instead of being",
+    "  set here. Only axes that CANNOT be set from the CLI (forward model,",
+    "  fixed_depths, ws_fixed_params, layer geometry) get their own named",
+    "  scenario in this file.",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "SHARED SETTINGS (same across all 14 scenarios unless noted)",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  em_data_dir       ./data/EMI_MFC2/",
+    "  tdr_data_dir      ./data/daily_MFC/",
+    "  coord_file        ./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "  em_unit           ppm  (GEM-2 quadrature -- do not change to 'ppt')",
+    "  time_tolerance_days  1.0",
+    "  spatial_match_tolerance_m  3.0  (time-lapse epoch matching)",
+    "  lab_p0            [0.5, 3.0, 500.0, 100.0]  (flat, applied to every horizon)",
+    "  alpha_range_log   [0.001, 5.0, 5]  (log-spaced sweep, 5 steps)",
+    "  ws_localized_bandwidth_sweep  [0.5, 1, 3, 5, 8, 12, 20]",
+    "  method            ['ROPE']  (only optimiser that supports alpha/beta/gamma)",
+    "  gamma             0.0 in JSON -- override with --gamma from the CLI for",
+    "                    time-lapse runs (no-op on single-epoch data regardless).",
+    "",
+    "  EDIT THE PATHS ABOVE (via gen_real_scenarios.py) if your real MFC2 data",
+    "  folders live somewhere else -- all 14 scenarios inherit them identically."
+  ],
+  "_schema": {
+    "required": [
+      "depths0",
+      "fixed_depths",
+      "param_grid",
+      "cond_ranges"
+    ],
+    "optional": [
+      "output_dir",
+      "realization_index",
+      "forward_model",
+      "gamma",
+      "cache_tag",
+      "description",
+      "swc_depths",
+      "alpha_range_log",
+      "data_source",
+      "em_data_dir",
+      "em_unit",
+      "tdr_data_dir",
+      "coord_file",
+      "time_tolerance_days",
+      "spatial_match_tolerance_m",
+      "ws_fixed_params",
+      "lab_p0",
+      "window_m",
+      "ws_localized_bandwidth_sweep"
+    ]
+  },
+  "real_single_base": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Base scenario for this layer group -- all other variants change exactly one axis relative to this one.",
+    "output_dir": "mfc2_outputs/real_single_base",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_single_base"
+  },
+  "real_single_fslin": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_single_base (forwardModel=['FSlin'] only).",
+    "output_dir": "mfc2_outputs/real_single_fslin",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_single_fslin"
+  },
+  "real_single_cs": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_single_base (forwardModel=['CS'] only).",
+    "output_dir": "mfc2_outputs/real_single_cs",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_single_cs"
+  },
+  "real_single_depth_free": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FREE. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Depth-varying variant of real_single_base (fixed_depths=false instead of true).",
+    "output_dir": "mfc2_outputs/real_single_depth_free",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_single_depth_free"
+  },
+  "real_single_ws_all_fixed": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_single_ws_all_fixed",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_single_ws_all_fixed"
+  },
+  "real_single_ws_free_sigmaw": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_single_ws_free_sigmaw",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_single_ws_free_sigmaw"
+  },
+  "real_single_ws_free_sigmas": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}).",
+    "output_dir": "mfc2_outputs/real_single_ws_free_sigmas",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_single_ws_free_sigmas"
+  },
+  "real_multi_base": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Base scenario for this layer group -- all other variants change exactly one axis relative to this one.",
+    "output_dir": "mfc2_outputs/real_multi_base",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_multi_base"
+  },
+  "real_multi_fslin": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_multi_base (forwardModel=['FSlin'] only).",
+    "output_dir": "mfc2_outputs/real_multi_fslin",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_multi_fslin"
+  },
+  "real_multi_cs": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_multi_base (forwardModel=['CS'] only).",
+    "output_dir": "mfc2_outputs/real_multi_cs",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_multi_cs"
+  },
+  "real_multi_depth_free": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FREE. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Depth-varying variant of real_multi_base (fixed_depths=false instead of true).",
+    "output_dir": "mfc2_outputs/real_multi_depth_free",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_multi_depth_free"
+  },
+  "real_multi_ws_all_fixed": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_multi_ws_all_fixed",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_multi_ws_all_fixed"
+  },
+  "real_multi_ws_free_sigmaw": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_multi_ws_free_sigmaw",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_multi_ws_free_sigmaw"
+  },
+  "real_multi_ws_free_sigmas": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}).",
+    "output_dir": "mfc2_outputs/real_multi_ws_free_sigmas",
+    "data_source": "real",
+    "em_data_dir": "./data/EMI_MFC2/",
+    "em_unit": "ppm",
+    "tdr_data_dir": "./data/daily_MFC/",
+    "coord_file": "./data/SOILNET_MFC2_coordinates_sensors.csv",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "cache_tag": "real_multi_ws_free_sigmas"
+  }
+}

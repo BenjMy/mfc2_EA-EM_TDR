@@ -70,6 +70,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
+import geometry_utils
+
 
 # ---------------------------------------------------------------------------
 # Column aliases — kept in sync with _COLUMN_VARIANTS in run_pipeline.py
@@ -282,13 +284,30 @@ def _overlay_probes(ax: plt.Axes, probe_table: pd.DataFrame | None) -> None:
 def _plot_common_points(
     raw_dfs: list[pd.DataFrame],
     names: list[str],
-    min_pts: int,
+    tolerance_m: float,
     probe_table: pd.DataFrame | None,
     out_dir: str,
 ) -> str:
     """
     One panel per epoch (max 8 shown).
-    Grey = full epoch footprint; colour = common rows kept by Step 1 trim.
+    Grey = full epoch footprint; colour = this epoch's own points that
+    fall within ``tolerance_m`` of a reference-grid cell EVERY epoch also
+    covers -- i.e. true spatial commonality across all ``n_surveys``
+    epochs, built with ``geometry_utils.match_epochs_to_reference_grid``,
+    the SAME coordinate-based matcher ``run_pipeline.py`` Step 1 now uses
+    to assemble ``models_clean``/``depths_clean`` ("spatial reference-grid
+    matching, not row trimming").
+
+    FIX ("common ≠ same row index"): this used to colour ``arr[:min_pts]``
+    -- the first ``min_pts`` rows of each epoch's raw CSV, purely by row
+    POSITION. Real GEM-2 epochs can differ both in point COUNT and in
+    walk ORDER (the rover need not retrace an identical path/sampling
+    rate each campaign), so "row i of epoch A" and "row i of epoch B" are
+    only the same physical location by coincidence -- with epochs of
+    different density this doesn't even hold loosely, since row index
+    isn't even a consistent fraction of distance travelled between
+    files. That trim is still used ONLY for the ensemble's dense-array
+    packing upstream (unrelated to this plot); it is no longer used here.
     Black crosses = TDR probe locations (if probe_table supplied).
     """
     n_surveys = len(raw_dfs)
@@ -297,6 +316,24 @@ def _plot_common_points(
     n_rows    = int(np.ceil(n_show / n_cols))
 
     colors = cm.tab10(np.linspace(0, 0.9, n_surveys))
+
+    # Union spatial reference grid + per-epoch matches, exactly like
+    # run_pipeline.py Step 1's _remap_combo_to_reference machinery.
+    epoch_xy = [
+        (df["x"].to_numpy(float), df["y"].to_numpy(float)) for df in raw_dfs
+    ]
+    ref_x, ref_y, matched_indices = geometry_utils.match_epochs_to_reference_grid(
+        epoch_xy, tolerance_m=tolerance_m,
+    )
+    n_ref = len(ref_x)
+
+    # A reference cell only counts as "common" if EVERY epoch has a point
+    # within tolerance_m of it (matched_indices[e][r] >= 0 for all e).
+    coverage_count = np.zeros(n_ref, dtype=int)
+    for idx_map in matched_indices:
+        coverage_count += (idx_map >= 0).astype(int)
+    common_ref_mask = coverage_count == n_surveys
+    n_common = int(common_ref_mask.sum())
 
     fig, axes = plt.subplots(
         n_rows, n_cols,
@@ -317,17 +354,27 @@ def _plot_common_points(
         y    = df["y"].to_numpy(float)
         n_pt = len(df)
 
+        # This epoch's own rows that map to a common reference cell.
+        idx_map = matched_indices[panel_idx]
+        common_rows = idx_map[common_ref_mask]
+        common_rows = common_rows[common_rows >= 0]
+        n_common_this_epoch = len(common_rows)
+
         # Full footprint
         ax.scatter(x, y, s=2, color="lightgrey", zorder=1, rasterized=True,
                    label=f"all ({n_pt})")
-        # Common rows
-        ax.scatter(x[:min_pts], y[:min_pts], s=3, color=colors[panel_idx],
-                   zorder=2, rasterized=True, label=f"common ({min_pts})")
+        # Spatially common rows
+        if n_common_this_epoch:
+            ax.scatter(x[common_rows], y[common_rows], s=3, color=colors[panel_idx],
+                       zorder=2, rasterized=True,
+                       label=f"common ({n_common_this_epoch})")
         # TDR probes
         _overlay_probes(ax, probe_table)
 
-        ax.set_title(f"{names[panel_idx]}\n{n_pt} pts total → {min_pts} kept",
-                     fontsize=8)
+        ax.set_title(
+            f"{names[panel_idx]}\n{n_pt} pts total → {n_common_this_epoch} spatially common",
+            fontsize=8,
+        )
         ax.set_xlabel("X / Easting", fontsize=7)
         ax.set_ylabel("Y / Northing", fontsize=7)
         ax.tick_params(labelsize=7)
@@ -337,11 +384,12 @@ def _plot_common_points(
     surplus = n_surveys - n_show
     subtitle = ""
     if surplus > 0:
-        subtitle = f"  (first {n_show} of {n_surveys} epochs shown; all share {min_pts} common rows)"
+        subtitle = f"  (first {n_show} of {n_surveys} epochs shown)"
 
     fig.suptitle(
         f"Common-point footprint — {n_surveys} GEM-2 survey epochs\n"
-        f"Step 1 row-count trim retains first {min_pts} rows per epoch{subtitle}",
+        f"Spatial reference-grid match (tolerance={tolerance_m} m): "
+        f"{n_common}/{n_ref} reference cell(s) covered by every epoch{subtitle}",
         fontsize=10,
     )
     plt.tight_layout(rect=[0, 0, 1, 0.95])

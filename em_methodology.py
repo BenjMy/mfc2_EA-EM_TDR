@@ -200,6 +200,14 @@ class SamplePositionResult:
         probe's location — so callers (reporting, plotting, QA gates)
         should distinguish it rather than treating every
         ``representative_index`` as equally trustworthy.
+    probe_id : str or None
+        Human-readable identifier for this probe (e.g. the real TDR
+        station name/``Unit`` from ``0_real_data_loader.load_tdr_dataframe``
+        for real-data runs, or a synthetic label like ``"P3"``). ``None``
+        when the caller didn't supply ``probe_ids`` to
+        ``extract_sample_positions_from_survey`` — diagnostic plots that
+        read this field should fall back to their existing unlabeled
+        behaviour in that case rather than erroring.
     """
     probe_x: float
     probe_y: float
@@ -211,6 +219,7 @@ class SamplePositionResult:
     probe_depth: float = float("nan")
     layer_index: int = -1
     used_fallback: bool = False
+    probe_id: str | None = None
 
 
 def layer_index_from_depth(probe_depth: float, depths0: Sequence[float]) -> int:
@@ -276,6 +285,7 @@ def extract_sample_positions_from_survey(
     probe_y_coords: Sequence[float] | None = None,  # cross-transect y; triggers XY distance automatically
     probe_depths: Sequence[float] | None = None,    # installation depth [m] of each TDR probe
     depths0: Sequence[float] | None = None,         # fixed layer interface depths [m]
+    probe_ids: Sequence[str] | None = None,         # human-readable ID per probe, same order
 ) -> list[SamplePositionResult]:
     """
     Match TDR probe field coordinates to EM measurement indices, applying a
@@ -338,6 +348,15 @@ def extract_sample_positions_from_survey(
         Fixed layer interface depths [m] (same array passed to ``setInit``).
         Required alongside ``probe_depths`` to compute ``layer_index``;
         ignored if ``probe_depths`` is not given.
+    probe_ids : sequence of str, optional
+        Human-readable identifier for each probe, same order/length as
+        ``probe_x_coords`` (e.g. real TDR station names from
+        ``probe_table['station_name']``, or synthetic ``PROBE_LABELS``).
+        Stored on each result's ``.probe_id`` so downstream diagnostic
+        plots (``plot_probe_matching``, ``plot_calibration_density_*``)
+        can label markers by sensor instead of by anonymous index. When
+        omitted, ``.probe_id`` is ``None`` for every result and those
+        plots fall back to their existing unlabeled behaviour.
 
     Returns
     -------
@@ -380,6 +399,17 @@ def extract_sample_positions_from_survey(
     else:
         probe_depths = [float("nan")] * len(probe_x_coords)
 
+    if probe_ids is not None:
+        probe_ids = list(probe_ids)
+        if len(probe_ids) != len(probe_x_coords):
+            raise ValueError(
+                f"probe_ids has {len(probe_ids)} entries but "
+                f"probe_x_coords has {len(probe_x_coords)}; each TDR probe "
+                "needs exactly one ID (or pass probe_ids=None to skip labeling)."
+            )
+    else:
+        probe_ids = [None] * len(probe_x_coords)
+
     # Use only the first ensemble member, first time step for diagnostic EC statistics.
     # For 4-D (time-lapse): models[0] is (n_time, num_measured_points, num_layers);
     # take time step 0 for the spatial window diagnostics.
@@ -391,7 +421,9 @@ def extract_sample_positions_from_survey(
     results: list[SamplePositionResult] = []
     _2d_logged = False
 
-    for x_probe, y_probe, depth_probe in zip(probe_x_coords, probe_y_coords, probe_depths):
+    for x_probe, y_probe, depth_probe, id_probe in zip(
+        probe_x_coords, probe_y_coords, probe_depths, probe_ids
+    ):
         dist, used_2d = _probe_distances(x_em, y_em, x_probe, y_probe)
         if used_2d and not _2d_logged:
             print("[METHODOLOGY] Non-zero Y coordinates detected — using XY Euclidean "
@@ -431,6 +463,7 @@ def extract_sample_positions_from_survey(
             probe_depth=float(depth_probe),
             layer_index=layer_idx,
             used_fallback=used_fallback,
+            probe_id=(str(id_probe) if id_probe is not None else None),
         ))
 
     return results

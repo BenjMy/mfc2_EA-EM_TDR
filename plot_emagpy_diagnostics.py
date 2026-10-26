@@ -52,12 +52,20 @@ Typical call from run_pipeline.py (Step 6b)
 from __future__ import annotations
 
 import os
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from typing import List, Optional, Any
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - tqdm is a hard dependency elsewhere
+    def tqdm(iterable, *args, **kwargs):
+        return iterable
 
 import em_methodology as EMmethod
 
@@ -236,6 +244,45 @@ def _inject_weighted_model(csv_path: str,
 
 
 # ---------------------------------------------------------------------------
+# Parallel worker — one (ens_idx, t_idx) pair per task
+# ---------------------------------------------------------------------------
+#
+# Must be a top-level, module-scope function: ProcessPoolExecutor with the
+# `spawn` start method pickles the callable by import path ("module.func"),
+# so a nested/local function or a lambda would fail to pickle. Each spawned
+# worker re-imports this module fresh (matplotlib.use("Agg") at the top of
+# the file runs again there too), which is the same "fresh interpreter, no
+# inherited half-initialised state" fix already used for Step 1's
+# _invert_single_worker in run_pipeline.py.
+def _per_realisation_worker(task: tuple):
+    (ens_idx, t_idx, csv_path, depths0, conds0_task, fixed_list,
+     inv_kwargs, em_unit, r_dir, n_layers) = task
+
+    t_dir = _ensure_dir(os.path.join(r_dir, f"t{t_idx:02d}"))
+    prefix = f"ens{ens_idx:03d}_t{t_idx:02d}"
+
+    try:
+        k = _build_problem_from_csv(
+            csv_path, depths0, list(conds0_task),
+            fixed_list, inv_kwargs, em_unit,
+        )
+    except Exception as e:
+        return (ens_idx, t_idx, False, f"Inversion failed: {type(e).__name__}: {e}")
+
+    try:
+        _individual_panels(k, n_layers, t_dir, prefix)
+        _summary_grid(
+            k, n_layers,
+            title=f"Realisation {ens_idx} — t={t_idx}",
+            out_path=os.path.join(t_dir, f"{prefix}_summary_grid.png"),
+        )
+    except Exception as e:
+        return (ens_idx, t_idx, False, f"Plotting failed: {type(e).__name__}: {e}")
+
+    return (ens_idx, t_idx, True, None)
+
+
+# ---------------------------------------------------------------------------
 # Public entry point 1 — per-realisation plots
 # ---------------------------------------------------------------------------
 
@@ -281,48 +328,69 @@ def run_emagpy_plots_per_realisation(
     step = max(1, ensemble_size // max_realisations)
     sample_ens = list(range(0, ensemble_size, step))[:max_realisations]
 
-    print(f"\n{'='*72}")
-    print(f" [EMAGPY DIAG] Per-realisation plots  ({len(sample_ens)} of {ensemble_size} realisations)")
-    print(f"   mode : {mode.upper()}  |  time steps : {n_time}")
-    print(f"{'='*72}\n")
-
     # Group tasks by (combo_idx × t_idx) — tasks list has n_combos*n_time entries
     # Each combo runs across all time steps sequentially in the tasks list
     n_combos = ensemble_size        # one kept combo per ensemble member
     n_tasks_per_combo = n_time
 
+    # --- Build the flat list of (ens_idx, t_idx) diagnostic jobs up front ---
+    # Each job re-inverts one survey CSV from scratch (this is the expensive
+    # part — the whole reason this step used to take as long as Step 1 while
+    # running on a single core). Building the list here, in the main process,
+    # keeps directory creation and task-metadata lookup single-threaded and
+    # side-effect-free; only the actual invert+plot work is farmed out.
+    diag_tasks = []
+    skipped = []
     for ens_idx in sample_ens:
         r_dir = _ensure_dir(os.path.join(diag_dir, f"realisation_{ens_idx:03d}"))
 
-        # Recover the task for this realisation (first time-step task of this combo)
         flat_task_idx = ens_idx * n_tasks_per_combo
         if flat_task_idx >= len(tasks):
-            print(f"  [WARN] task index {flat_task_idx} out of range — skipping ens {ens_idx}")
+            skipped.append(ens_idx)
             continue
 
         _, _, _depths0_task, conds0_task, fixed_list, inv_kwargs = tasks[flat_task_idx]
 
         for t_idx, csv_path in enumerate(csv_paths):
-            t_dir = _ensure_dir(os.path.join(r_dir, f"t{t_idx:02d}"))
-            prefix = f"ens{ens_idx:03d}_t{t_idx:02d}"
-            print(f"  ── ens={ens_idx}  t={t_idx}  {os.path.basename(csv_path)}")
+            diag_tasks.append((
+                ens_idx, t_idx, csv_path, depths0, conds0_task, fixed_list,
+                inv_kwargs, em_unit, r_dir, n_layers,
+            ))
 
-            try:
-                k = _build_problem_from_csv(
-                    csv_path, depths0, list(conds0_task),
-                    fixed_list, inv_kwargs, em_unit,
-                )
-            except Exception as e:
-                print(f"    [WARN] Inversion failed: {e}")
-                continue
+    print(f"\n{'='*72}")
+    print(f" [EMAGPY DIAG] Per-realisation plots  ({len(sample_ens)} of {ensemble_size} realisations,"
+          f" {len(diag_tasks)} inversion+plot jobs)")
+    print(f"   mode : {mode.upper()}  |  time steps : {n_time}")
+    print(f"{'='*72}\n")
+    for ens_idx in skipped:
+        print(f"  [WARN] task index {ens_idx * n_tasks_per_combo} out of range — skipping ens {ens_idx}")
 
-            _individual_panels(k, n_layers, t_dir, prefix)
-            _summary_grid(
-                k, n_layers,
-                title=f"Realisation {ens_idx} — t={t_idx}",
-                out_path=os.path.join(t_dir, f"{prefix}_summary_grid.png"),
-            )
+    if not diag_tasks:
+        print(f"\n[EMAGPY DIAG] Nothing to render — '{diag_dir}'")
+        return
 
+    # --- Dispatch across a process pool, same pattern as Step 1 ---
+    # `spawn` (not the Linux-default `fork`) so each worker starts as a clean
+    # interpreter and can't inherit half-initialised state (matplotlib
+    # backend, BLAS/OpenMP thread pools, open file handles, ...) from this
+    # parent process. Mirrors _invert_single_worker in run_pipeline.py.
+    failed = []
+    with ProcessPoolExecutor(mp_context=mp.get_context("spawn")) as executor:
+        results = tqdm(
+            executor.map(_per_realisation_worker, diag_tasks),
+            total=len(diag_tasks), desc="Diagnostic plots", unit="job",
+            ncols=90,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        )
+        for ens_idx, t_idx, ok, err in results:
+            if ok:
+                print(f"  ── ens={ens_idx}  t={t_idx}  done")
+            else:
+                print(f"  [WARN] ens={ens_idx}  t={t_idx}  {err}")
+                failed.append((ens_idx, t_idx, err))
+
+    if failed:
+        print(f"\n[EMAGPY DIAG] {len(failed)}/{len(diag_tasks)} jobs failed (see [WARN] lines above)")
     print(f"\n[EMAGPY DIAG] Per-realisation plots written to '{diag_dir}'")
 
 

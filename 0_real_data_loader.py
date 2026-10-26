@@ -138,24 +138,76 @@ def load_tdr_dataframe(tdr_dir: str, coord_file: str):
     return df_probes, target_depth_cols
 
 
-def filter_repeated_em_points(csv_path: str, tolerance: float = 0.2,
-                               unit: str = "ppt") -> str:
+def preprocess_em_survey(
+    csv_path: str,
+    tolerance: float = 0.2,
+    unit: str = "ppt",
+    range_vmin: float | None = 0.0,
+    range_vmax: float | None = None,
+    percentile_qmin: float | None = 5.0,
+    percentile_qmax: float | None = 95.0,
+    rolling_window: int | None = 10,
+    drop_coils=None,
+) -> tuple[str, dict]:
     """
-    Remove consecutive, near-duplicate spatial points (e.g. logger left
-    stationary, overlapping GPS fixes) from a processed, emagpy-ready EM
-    survey CSV, using emagpy's own ``Problem.filterRepeated`` so the result
-    matches exactly what every downstream consumer (inversion workers,
-    diagnostic plotting) would get if they re-filtered the same CSV
-    themselves. The CSV is overwritten in place when points are dropped.
+    Run the classic EMagPy raw-ECa cleaning chain on a processed,
+    emagpy-ready EM survey CSV, once per file at load time (mirrors the
+    original ``filter_repeated_em_points`` design -- see that function's
+    history below -- so every downstream consumer, inversion workers
+    included, sees identical already-cleaned data instead of redundantly
+    re-filtering the same CSV inside every one of the N parallel ensemble
+    tasks).
 
-    This used to be called once per parallel inversion task in
+    Chain, in order, each using emagpy's own ``Problem`` methods so results
+    match exactly what re-running the same call against the CSV would give:
+
+    0. ``drop_coils_from_problem(k, drop_coils)`` -- exclude any coil(s)
+       that will be dropped before inversion anyway. Deliberately BEFORE
+       filterRange: emagpy's ``Survey.filterRange`` checks
+       ``self.df[self.coils]`` -- i.e. every *currently loaded* coil, not
+       just the ones that survive to the inversion. A row is marked
+       out-of-range as soon as ANY loaded coil is outside
+       ``[vmin, vmax]``, so a channel that's about to be dropped anyway (a
+       known-noisy frequency is exactly the kind of channel likely to read
+       outside physical bounds) can veto an otherwise-good point on every
+       other coil. Dropping the coil first means filterRange only judges
+       points against the channels that will actually reach the inversion.
+       This step only removes the coil from the in-memory ``Problem``
+       (emagpy's ``removeCoil`` does not touch the underlying
+       dataframe/CSV columns), so the on-disk CSV still contains the raw
+       column, and the per-task inversion worker's own
+       ``drop_coils_from_problem`` call still runs and is still required.
+    1. ``filterRange(vmin=range_vmin, vmax=range_vmax)`` -- drop physically
+       impossible readings (e.g. negative ECa from a sensor glitch) BEFORE
+       anything else touches the data.
+    2. ``filterRepeated(tolerance=tolerance)`` -- drop consecutive,
+       near-duplicate spatial points (logger left stationary, overlapping
+       GPS fixes). Deliberately BEFORE rollingMean: an un-dropped duplicate
+       sitting inside a rolling window would over-weight that one reading
+       in the average.
+    3. ``filterPercentile(qmin=percentile_qmin, qmax=percentile_qmax)`` --
+       drop statistical outliers/spikes per coil. Deliberately BEFORE
+       rollingMean: a spike should be excluded outright, not smoothed into
+       its neighbours first.
+    4. ``rollingMean(window=rolling_window)`` -- smooth the now-cleaned,
+       deduplicated, outlier-free sequence. Does not change the row count,
+       only the coil values.
+
+    Each stage is individually optional: pass ``None`` for a stage's
+    threshold(s) (or ``rolling_window=None``/``<=1``) to skip it entirely.
+    Passing only ``tolerance`` and leaving the rest at ``None`` reproduces
+    the exact original ``filter_repeated_em_points`` behaviour.
+
+    History / rationale for doing this once here rather than per-worker:
+    this filtering used to be called once per parallel inversion task in
     ``run_pipeline.py`` as ``k.filterRepeated(index=0)``. That call passed
     an ``index`` keyword which ``Problem.filterRepeated`` has never
     accepted (its real signature is ``filterRepeated(self,
     tolerance=0.2)``), so every single inversion task raised
     ``TypeError: filterRepeated() got an unexpected keyword argument
-    'index'`` and failed. Filtering is now done once here, at load time,
-    with the correct keyword.
+    'index'`` and failed. Filtering was moved here, once, at load time,
+    with the correct keyword -- and the new range/percentile/rollingMean
+    steps follow the same one-shot-at-load-time pattern.
 
     Parameters
     ----------
@@ -163,16 +215,41 @@ def filter_repeated_em_points(csv_path: str, tolerance: float = 0.2,
         Path to an already emagpy-ready (comma-separated, correctly
         named coil columns) EM survey CSV. Modified in place.
     tolerance : float, optional
-        Minimum distance from the previous point required to be retained
-        (passed straight through to emagpy). Default 0.2.
+        ``filterRepeated`` distance tolerance. Default 0.2. Pass ``None``
+        to skip this stage.
     unit : str, optional
         Unit of the EM readings in the CSV (e.g. "ppt" or "ppm"), needed
         by emagpy to parse the survey correctly. Default "ppt".
+    range_vmin, range_vmax : float or None, optional
+        ``filterRange`` bounds. Default ``range_vmin=0.0, range_vmax=None``
+        (drop negative ECa, no upper cutoff). Pass both as ``None`` to
+        skip this stage entirely.
+    percentile_qmin, percentile_qmax : float or None, optional
+        ``filterPercentile`` bounds, in percent. Default ``(5.0, 95.0)``.
+        Pass both as ``None`` to skip this stage entirely.
+    rolling_window : int or None, optional
+        ``rollingMean`` window size. Default 5. Pass ``None`` or a value
+        ``<= 1`` to skip this stage entirely.
+    drop_coils : None, str, int, float, or sequence thereof, optional
+        Coil(s)/frequency channel(s) that will be excluded before
+        inversion -- same spec accepted by
+        ``em_methodology.drop_coils_from_problem`` (exact coil name,
+        frequency in Hz, or a unique substring). When given, this is
+        applied to the in-memory ``Problem`` immediately after
+        ``createSurvey`` and before ``filterRange``, so range-filtering
+        judges points only on the coils that will actually reach the
+        inversion. Default ``None`` (no coil dropped here).
 
     Returns
     -------
-    str
+    csv_path : str
         The same ``csv_path`` (for convenient call chaining).
+    stats : dict
+        Per-stage point counts and whether each stage ran, for logging:
+        ``{'file', 'n_initial', 'dropped_coils', 'n_after_range',
+        'n_after_repeated', 'n_after_percentile', 'n_final',
+        'range_removed', 'repeated_removed', 'percentile_removed',
+        'rolling_mean_applied', 'rolling_window'}``.
     """
     from emagpy import Problem
 
@@ -196,16 +273,112 @@ def filter_repeated_em_points(csv_path: str, tolerance: float = 0.2,
 
     k = Problem()
     k.createSurvey(csv_path, unit=unit)
-    n_before = len(k.surveys[0].df)
-    k.filterRepeated(tolerance=tolerance)
-    n_after = len(k.surveys[0].df)
+    n_initial = len(k.surveys[0].df)
 
-    if n_after < n_before:
+    # --- 0. drop_coils --------------------------------------------------
+    # Must run before filterRange: Survey.filterRange() checks
+    # self.df[self.coils] -- every currently-loaded coil -- so a channel
+    # that's about to be dropped anyway can still veto a point based on
+    # its own (possibly noisy/out-of-range) reading. Only mutates the
+    # in-memory Problem (k.coils/k.freqs); the CSV's raw columns are
+    # untouched, so the per-worker drop_coils_from_problem() call at
+    # inversion time is unaffected and still required.
+    dropped_coils: list[str] = []
+    if drop_coils is not None:
+        from em_methodology import drop_coils_from_problem
+        dropped_coils = drop_coils_from_problem(k, drop_coils)
+
+    # --- 1. filterRange -----------------------------------------------
+    n_after_range = n_initial
+    if range_vmin is not None or range_vmax is not None:
+        k.filterRange(vmin=range_vmin, vmax=range_vmax)
+        n_after_range = len(k.surveys[0].df)
+
+    # --- 2. filterRepeated ----------------------------------------------
+    n_after_repeated = n_after_range
+    if tolerance is not None:
+        k.filterRepeated(tolerance=tolerance)
+        n_after_repeated = len(k.surveys[0].df)
+
+    # --- 3. filterPercentile --------------------------------------------
+    n_after_percentile = n_after_repeated
+    if percentile_qmin is not None or percentile_qmax is not None:
+        k.filterPercentile(qmin=percentile_qmin, qmax=percentile_qmax)
+        n_after_percentile = len(k.surveys[0].df)
+
+    # --- 4. rollingMean ---------------------------------------------------
+    rolling_mean_applied = rolling_window is not None and rolling_window > 1
+    if rolling_mean_applied:
+        k.rollingMean(window=rolling_window)
+    n_final = len(k.surveys[0].df)
+
+    changed = (n_after_range != n_initial or n_after_repeated != n_after_range
+               or n_after_percentile != n_after_repeated or rolling_mean_applied)
+
+    if changed:
         k.surveys[0].df[original_columns].to_csv(csv_path, index=False)
-        print(f"[+] filterRepeated: {os.path.basename(csv_path)} "
-              f"{n_before} → {n_after} points (tolerance={tolerance})")
+        dropped_note = f"dropCoils{dropped_coils} | " if dropped_coils else ""
+        print(
+            f"[+] preprocess_em_survey: {os.path.basename(csv_path)} "
+            f"{dropped_note}"
+            f"filterRange[{range_vmin},{range_vmax}] {n_initial}→{n_after_range} | "
+            f"filterRepeated(tol={tolerance}) {n_after_range}→{n_after_repeated} | "
+            f"filterPercentile[{percentile_qmin},{percentile_qmax}] "
+            f"{n_after_repeated}→{n_after_percentile} | "
+            f"rollingMean(window={rolling_window if rolling_mean_applied else '—'}) "
+            f"applied={rolling_mean_applied} → final {n_final} pts"
+        )
 
-    return csv_path
+    stats = {
+        "file": os.path.basename(csv_path),
+        "n_initial": n_initial,
+        "dropped_coils": dropped_coils,
+        "n_after_range": n_after_range,
+        "n_after_repeated": n_after_repeated,
+        "n_after_percentile": n_after_percentile,
+        "n_final": n_final,
+        "range_removed": n_initial - n_after_range,
+        "repeated_removed": n_after_range - n_after_repeated,
+        "percentile_removed": n_after_repeated - n_after_percentile,
+        "rolling_mean_applied": rolling_mean_applied,
+        "rolling_window": rolling_window if rolling_mean_applied else None,
+    }
+
+    return csv_path, stats
+
+
+def filter_repeated_em_points(csv_path: str, tolerance: float = 0.2,
+                               unit: str = "ppt") -> str:
+    """
+    Backward-compatible thin wrapper around ``preprocess_em_survey`` that
+    reproduces the exact original behaviour (filterRepeated only, all
+    other stages skipped, returns just the path). Kept in case anything
+    outside ``run_pipeline.py`` still imports this name directly;
+    ``run_pipeline.py`` itself now calls ``preprocess_em_survey`` for the
+    full range/repeated/percentile/rollingMean chain.
+
+    Parameters
+    ----------
+    csv_path : str
+        Path to an already emagpy-ready EM survey CSV. Modified in place.
+    tolerance : float, optional
+        Minimum distance from the previous point required to be retained.
+        Default 0.2.
+    unit : str, optional
+        Unit of the EM readings in the CSV. Default "ppt".
+
+    Returns
+    -------
+    str
+        The same ``csv_path`` (for convenient call chaining).
+    """
+    path, _stats = preprocess_em_survey(
+        csv_path, tolerance=tolerance, unit=unit,
+        range_vmin=None, range_vmax=None,
+        percentile_qmin=None, percentile_qmax=None,
+        rolling_window=None,
+    )
+    return path
 
 
 def prepare_real_dataset(

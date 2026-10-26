@@ -105,6 +105,50 @@ def _add_hatching(
                 ax.add_patch(rect)
 
 
+def _hatch_low_coverage_xy(
+    ax: plt.Axes,
+    sparse_mask: np.ndarray,   # (ny, nx) bool -- True where pixel is sparse
+    extent: tuple[float, float, float, float],
+    hatch: str = "///",
+    edgecolor: str = "grey",
+    linewidth: float = 0.4,
+    alpha: float = 0.6,
+) -> None:
+    """
+    Overlay a coverage hatch on an XY ``imshow`` raster -- the plan-view
+    counterpart of ``_add_hatching`` used on the XZ cross-section.
+
+    ``_add_hatching`` draws one rectangle patch per flagged cell, which is
+    fine for a handful of XZ (n_x x n_layers) cells but far too slow for a
+    200x200+ XY raster. Instead this draws a single hatched ``contourf``
+    region over the pixels flagged in ``sparse_mask``, sampled at the same
+    pixel centers implied by ``extent`` (see ``_interpolate_to_grid``), so
+    the hatch lines up exactly with the ``ax.imshow(..., extent=extent)``
+    raster it overlays.
+    """
+    if not np.any(sparse_mask):
+        return
+    ny, nx = sparse_mask.shape
+    xmin, xmax, ymin, ymax = extent
+    dx = (xmax - xmin) / nx
+    dy = (ymax - ymin) / ny
+    x_centers = xmin + dx * (np.arange(nx) + 0.5)
+    y_centers = ymin + dy * (np.arange(ny) + 0.5)
+    mask_vals = np.where(sparse_mask, 1.0, 0.0)
+
+    cs = ax.contourf(
+        x_centers, y_centers, mask_vals,
+        levels=[0.5, 1.5], colors="none", hatches=[hatch], alpha=0.0,
+    )
+    # QuadContourSet.collections is deprecated (but still present) on newer
+    # matplotlib; fall back to treating cs itself as the single artist.
+    artists = getattr(cs, "collections", None) or [cs]
+    for artist in artists:
+        artist.set_edgecolor(edgecolor)
+        artist.set_linewidth(linewidth)
+        artist.set_alpha(alpha)
+
+
 def _extract_theta_calc(selected_output) -> np.ndarray:
     """
     Robustly pull the calculated volumetric water content array (m^3/m^3)
@@ -257,9 +301,20 @@ def _interpolate_to_grid(
     else:
         nx = ny = grid_resolution
 
+    # Sample at the pixel *centers* implied by the (xmin,xmax,ymin,ymax)
+    # extent that later gets passed to ax.imshow(..., extent=extent) for an
+    # (ny, nx) raster -- i.e. centers spaced (xmax-xmin)/nx apart. The old
+    # np.linspace(xmin, xmax, nx) spaced them (xmax-xmin)/(nx-1) apart and
+    # pinned the first/last centers to the extent edges, which silently
+    # mismatches how imshow actually renders those nx columns across the
+    # extent -- the raster comes out shifted/stretched by roughly half a
+    # pixel per axis. This keeps sample points and rendered pixels aligned,
+    # i.e. a genuinely regular grid.
+    dx = (xmax - xmin) / nx
+    dy = (ymax - ymin) / ny
     grid_x, grid_y = np.meshgrid(
-        np.linspace(xmin, xmax, nx),
-        np.linspace(ymin, ymax, ny),
+        xmin + dx * (np.arange(nx) + 0.5),
+        ymin + dy * (np.arange(ny) + 0.5),
     )
 
     points = np.column_stack([utm_x, utm_y])
@@ -271,6 +326,96 @@ def _interpolate_to_grid(
         grid_values[nan_mask] = fallback[nan_mask]
 
     return grid_values, (xmin, xmax, ymin, ymax)
+
+
+# Recognised per-pixel *aggregation* statistics -- as opposed to the
+# smoothing/interpolation methods ("linear", "nearest", "cubic") handled by
+# ``_interpolate_to_grid``. These never invent values outside the convex
+# hull or between sparse survey lines: a pixel that contains zero raw
+# points is left as NaN ("no coverage"), exactly mirroring how the XZ
+# section leaves an uncovered cell blank instead of hatching/inventing one.
+_AGG_STATS = ("mean", "min", "max", "median", "std", "count")
+
+
+def _bin_stats_to_grid(
+    utm_x: np.ndarray,
+    utm_y: np.ndarray,
+    values: np.ndarray,
+    stat: str = "mean",
+    grid_resolution: int = 200,
+    pixel_size_m: float | None = None,
+    min_grid_res: int = 20,
+    max_grid_res: int = 500,
+) -> tuple[np.ndarray, tuple[float, float, float, float], np.ndarray]:
+    """
+    Bin scattered (utm_x, utm_y, values) into a regular pixel grid and
+    aggregate whatever falls inside each pixel with ``stat`` -- NO
+    interpolation or smoothing. Unlike ``_interpolate_to_grid`` (which
+    fills the *entire* raster, including gaps between survey passes, by
+    guessing values via ``griddata``), a pixel that contains zero raw
+    points comes back as NaN so it renders as true "no data" -- this is
+    what you want for a real (as opposed to synthetic/dense) survey where
+    the raw scatter is a set of thin, overlapping paths and most of the
+    bounding box is genuinely unsurveyed.
+
+    stat : {"mean", "min", "max", "median", "std", "count"}
+        Per-pixel statistic computed over the raw points that fall inside
+        that pixel. "count" returns the number of raw points per pixel
+        (also useful on its own as a coverage/density map).
+
+    Returns
+    -------
+    grid_values : ndarray, shape (ny, nx)
+        Aggregated values, NaN where no points fall in the pixel. Oriented
+        for direct use with ``ax.imshow(grid_values, origin="lower", ...)``.
+    extent : (xmin, xmax, ymin, ymax)
+    counts : ndarray, shape (ny, nx)
+        Number of raw points per pixel (always returned, regardless of
+        ``stat``) -- handy for a companion coverage/density panel.
+    """
+    if stat not in _AGG_STATS:
+        raise ValueError(f"stat must be one of {_AGG_STATS}, got {stat!r}.")
+
+    from scipy.stats import binned_statistic_2d
+
+    utm_x = np.asarray(utm_x, dtype=float)
+    utm_y = np.asarray(utm_y, dtype=float)
+    values = np.asarray(values, dtype=float)
+
+    finite = np.isfinite(utm_x) & np.isfinite(utm_y) & np.isfinite(values)
+    utm_x, utm_y, values = utm_x[finite], utm_y[finite], values[finite]
+
+    xmin, xmax = float(np.min(utm_x)), float(np.max(utm_x))
+    ymin, ymax = float(np.min(utm_y)), float(np.max(utm_y))
+
+    if pixel_size_m is not None:
+        nx = _resolution_from_pixel_size(xmax - xmin, pixel_size_m, min_grid_res, max_grid_res)
+        ny = _resolution_from_pixel_size(ymax - ymin, pixel_size_m, min_grid_res, max_grid_res)
+    else:
+        nx = ny = grid_resolution
+
+    bin_range = [[xmin, xmax], [ymin, ymax]]
+
+    counts, _, _, _ = binned_statistic_2d(
+        utm_x, utm_y, values, statistic="count", bins=[nx, ny], range=bin_range,
+    )
+    if stat == "count":
+        grid_vals = counts.copy()
+    else:
+        grid_vals, _, _, _ = binned_statistic_2d(
+            utm_x, utm_y, values, statistic=stat, bins=[nx, ny], range=bin_range,
+        )
+
+    # binned_statistic_2d returns (nx, ny) with x as the first axis;
+    # imshow(..., origin="lower") wants (rows=y, cols=x) -> transpose.
+    grid_vals = grid_vals.T
+    counts = counts.T
+
+    empty = counts == 0
+    grid_vals = grid_vals.astype(float)
+    grid_vals[empty] = np.nan
+
+    return grid_vals, (xmin, xmax, ymin, ymax), counts
 
 
 def _plot_xy_panel(
@@ -292,50 +437,113 @@ def _plot_xy_panel(
     cbar_label: str = "θ (% vol.)",
     render_mode: str = "scatter",
     grid_resolution: int = 200,
-    interp_method: str = "linear",
+    interp_method: str = "mean",
     pixel_size_m: float | None = None,
     min_grid_res: int = 20,
     max_grid_res: int = 500,
+    nodata_color: str = "white",
     show_probes: bool = True,
     probe_indices: Sequence[int] | None = None,
     probe_marker: str = "v",
     probe_size: float = 50.0,
     probe_color: str = "black",
     probe_label: str = "Probe",
+    show_coverage_hatch: bool = True,
+    coverage_count_threshold: int = 3,
+    coverage_hatch: str = "///",
+    coverage_hatch_color: str = "grey",
+    coverage_hatch_alpha: float = 0.6,
 ) -> plt.cm.ScalarMappable:
     """
     Draw one XY plan-view panel on *ax*. Returns the ScalarMappable.
 
     render_mode : {"scatter", "imshow"}
-        "scatter" (default, unchanged behaviour) draws one square marker per
-        measurement point -- exact values, but gappy/blocky for sparse or
-        irregular grids. "imshow" interpolates the scattered points onto a
-        regular grid (see ``_interpolate_to_grid``) and renders a smooth
-        continuous raster; use ``pixel_size_m`` (preferred) or
-        ``grid_resolution``/``interp_method`` to control the interpolation.
+        "scatter" draws one square marker per measurement point -- exact
+        values, but gappy/blocky and, for a real dense-track survey (many
+        thousands of overlapping GPS-logged points), unreadable clutter.
+        "imshow" rasterises onto a regular pixel grid; how each pixel's
+        value is computed is controlled by ``interp_method``:
+
+        - ``"mean"`` (default), ``"min"``, ``"max"``, ``"median"``, ``"std"``,
+          ``"count"`` -- true per-pixel AGGREGATION of the raw points that
+          physically fall inside that pixel (see ``_bin_stats_to_grid``).
+          No smoothing, no guessing: a pixel with zero points inside it is
+          left as NaN and rendered in ``nodata_color`` -- exactly like an
+          uncovered cell in the XZ section. This is almost always what you
+          want for a real, sparse/path-shaped survey.
+        - ``"linear"``, ``"nearest"``, ``"cubic"`` -- smoothing
+          INTERPOLATION via ``scipy.interpolate.griddata`` (see
+          ``_interpolate_to_grid``): fills the whole convex hull, including
+          gaps between survey passes, by guessing values from neighbours.
+          Useful for a dense/synthetic grid; on a real sparse survey it
+          tends to smear thin tracks into a misleadingly continuous blob.
     pixel_size_m : float or None, optional
         Only used when ``render_mode="imshow"``. Physical pixel size [m];
         when given, overrides ``grid_resolution`` so pixels are sized in
-        real-world meters (see ``_interpolate_to_grid``) instead of a fixed
-        pixel count stretched over the survey footprint.
+        real-world meters instead of a fixed pixel count stretched over
+        the survey footprint. This is the key knob for the aggregation
+        methods above -- it sets how many raw points typically land in
+        each pixel.
+    nodata_color : str, optional
+        Fill colour for pixels with no data (aggregation methods only).
+        Defaults to white, matching the blank/uncovered look of the XZ
+        section.
     show_probes, probe_indices : control which/whether probe markers are
         drawn. ``probe_indices`` selects a subset of the probe_utm_x/y
         arrays (e.g. to declutter a dense probe layout); None (default)
         shows all of them.
+    show_coverage_hatch, coverage_count_threshold : optional, imshow only
+        The plan-view counterpart of the XZ section's coverage hatching.
+        Pixels with zero raw points already render in ``nodata_color``
+        (they carry no value at all); ``show_coverage_hatch=True`` (default)
+        additionally hatches pixels with *some* points but not more than
+        ``coverage_count_threshold`` (default 3) -- i.e. a value that's
+        technically defined but resting on very few raw measurements, the
+        same "poorly constrained" idea as the XZ ``coverage`` array, just
+        driven here by the per-pixel raw point count instead of a separate
+        coverage field. Applies to both aggregation (``interp_method`` in
+        ``_AGG_STATS``) and smoothing (``"linear"``/``"nearest"``/``"cubic"``)
+        rasters -- for the latter, counts are binned separately purely for
+        the hatch, since the smoothed raster itself has no such array.
     """
     norm     = plt.Normalize(vmin=theta_vmin, vmax=theta_vmax)
-    cmap_obj = plt.get_cmap(cmap)
+    cmap_obj = plt.get_cmap(cmap).copy()
 
     if render_mode == "imshow":
-        grid_values, extent = _interpolate_to_grid(
-            utm_x, utm_y, theta_layer_mean,
-            grid_resolution=grid_resolution, interp_method=interp_method,
-            pixel_size_m=pixel_size_m, min_grid_res=min_grid_res, max_grid_res=max_grid_res,
-        )
+        if interp_method in _AGG_STATS:
+            grid_values, extent, counts = _bin_stats_to_grid(
+                utm_x, utm_y, theta_layer_mean,
+                stat=interp_method, grid_resolution=grid_resolution,
+                pixel_size_m=pixel_size_m, min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+            )
+            cmap_obj.set_bad(nodata_color, alpha=1.0)
+            plot_values = np.ma.masked_invalid(grid_values)
+        else:
+            grid_values, extent = _interpolate_to_grid(
+                utm_x, utm_y, theta_layer_mean,
+                grid_resolution=grid_resolution, interp_method=interp_method,
+                pixel_size_m=pixel_size_m, min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+            )
+            plot_values = grid_values
+            # Smoothing interpolation hands back no point count of its own --
+            # bin the same raw points onto a grid of matching
+            # resolution/extent purely to get per-pixel counts for the hatch.
+            _, _, counts = _bin_stats_to_grid(
+                utm_x, utm_y, theta_layer_mean,
+                stat="count", grid_resolution=grid_resolution,
+                pixel_size_m=pixel_size_m, min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+            )
         sc = ax.imshow(
-            grid_values, extent=extent, origin="lower",
+            plot_values, extent=extent, origin="lower",
             cmap=cmap_obj, norm=norm, aspect="auto", interpolation="nearest",
         )
+        if show_coverage_hatch:
+            sparse = (counts > 0) & (counts <= coverage_count_threshold)
+            _hatch_low_coverage_xy(
+                ax, sparse, extent,
+                hatch=coverage_hatch, edgecolor=coverage_hatch_color,
+                alpha=coverage_hatch_alpha,
+            )
     elif render_mode == "scatter":
         sc = ax.scatter(
             utm_x, utm_y,
@@ -364,7 +572,7 @@ def _plot_xy_panel(
 
     ax.set_title(title, fontsize=8, pad=3)
     ax.tick_params(labelsize=7)
-    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_aspect("equal", adjustable="box")
 
     if show_colorbar and cbar_ax is not None:
         cbar = plt.colorbar(sc, cax=cbar_ax)
@@ -555,7 +763,7 @@ def plot_water_content_xy(
     probe_utm_y: Sequence[float] | None = None,
     render_mode: str = "scatter",
     grid_resolution: int = 200,
-    interp_method: str = "linear",
+    interp_method: str = "mean",
     pixel_size_m: float | None = None,
     bandwidth_m: float | None = None,
     window_m: float | None = None,
@@ -566,6 +774,11 @@ def plot_water_content_xy(
     probe_marker: str = "v",
     probe_size: float = 50.0,
     probe_color: str = "black",
+    show_coverage_hatch: bool = True,
+    coverage_count_threshold: int = 3,
+    coverage_hatch: str = "///",
+    coverage_hatch_color: str = "grey",
+    coverage_hatch_alpha: float = 0.6,
 ) -> plt.Figure:
     """
     Plot a plan-view XY map of θ at a chosen layer or averaged over all
@@ -610,6 +823,10 @@ def plot_water_content_xy(
     show_probes, probe_indices, probe_marker, probe_size, probe_color :
         Control which probe markers are drawn and how. ``probe_indices``
         (None = all) selects a subset of ``probe_utm_x``/``probe_utm_y``.
+    show_coverage_hatch, coverage_count_threshold : optional, imshow only
+        Hatch pixels that hold a value but rest on very few raw points --
+        see ``_plot_xy_panel`` for details. Only applies when
+        ``render_mode="imshow"``; no-op for ``"scatter"``.
     """
     if pixel_size_m is None:
         if bandwidth_m is not None:
@@ -645,12 +862,28 @@ def plot_water_content_xy(
         show_probes=show_probes,
         probe_indices=probe_indices, probe_marker=probe_marker,
         probe_size=probe_size, probe_color=probe_color,
+        show_coverage_hatch=show_coverage_hatch,
+        coverage_count_threshold=coverage_count_threshold,
+        coverage_hatch=coverage_hatch, coverage_hatch_color=coverage_hatch_color,
+        coverage_hatch_alpha=coverage_hatch_alpha,
     )
     # NOTE: pixel_size_m above is already fully resolved (pixel_size_m >
     # bandwidth_m > 2*window_m), so _plot_xy_panel only needs that one value.
 
+    legend_elements = []
+    if render_mode == "imshow" and show_coverage_hatch:
+        legend_elements.append(
+            mpatches.Patch(facecolor="none", edgecolor=coverage_hatch_color,
+                           hatch=coverage_hatch,
+                           label=f"\u2264{coverage_count_threshold} pts/pixel (sparse)")
+        )
     if probe_utm_x is not None and show_probes:
-        ax.legend(fontsize=7, loc="upper right")
+        legend_elements.append(
+            plt.Line2D([0], [0], marker=probe_marker, color="w",
+                       markerfacecolor=probe_color, markersize=6, label="Probe")
+        )
+    if legend_elements:
+        ax.legend(handles=legend_elements, fontsize=7, loc="upper right", framealpha=0.85)
 
     if output_path:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -681,7 +914,7 @@ def plot_water_content_xy_timelapse(
     probe_utm_y: Sequence[float] | None = None,
     render_mode: str = "scatter",
     grid_resolution: int = 200,
-    interp_method: str = "linear",
+    interp_method: str = "mean",
     pixel_size_m: float | None = None,
     bandwidth_m: float | None = None,
     window_m: float | None = None,
@@ -693,6 +926,11 @@ def plot_water_content_xy_timelapse(
     probe_size: float = 50.0,
     probe_color: str = "black",
     filename_suffix: str = "",
+    show_coverage_hatch: bool = True,
+    coverage_count_threshold: int = 3,
+    coverage_hatch: str = "///",
+    coverage_hatch_color: str = "grey",
+    coverage_hatch_alpha: float = 0.6,
 ) -> plt.Figure:
     """
     Grid of XY plan-view panels, one per survey time step (2-D mode).
@@ -704,6 +942,9 @@ def plot_water_content_xy_timelapse(
     show_probes, probe_indices, probe_marker, probe_size, probe_color :
         Control which probe markers are drawn (on the first panel only,
         as before) and how.
+    show_coverage_hatch, coverage_count_threshold : optional, imshow only
+        Hatch pixels that hold a value but rest on very few raw points, on
+        every panel -- see ``_plot_xy_panel`` for details.
     """
     if pixel_size_m is None:
         if bandwidth_m is not None:
@@ -760,6 +1001,10 @@ def plot_water_content_xy_timelapse(
             show_probes=show_probes,
             probe_indices=probe_indices, probe_marker=probe_marker,
             probe_size=probe_size, probe_color=probe_color,
+            show_coverage_hatch=show_coverage_hatch,
+            coverage_count_threshold=coverage_count_threshold,
+            coverage_hatch=coverage_hatch, coverage_hatch_color=coverage_hatch_color,
+            coverage_hatch_alpha=coverage_hatch_alpha,
         )
         sc_ref = sc
 
@@ -772,6 +1017,23 @@ def plot_water_content_xy_timelapse(
         cbar.set_label("θ (% vol.)", fontsize=9)
         cbar.ax.tick_params(labelsize=8)
 
+    legend_elements = []
+    if render_mode == "imshow" and show_coverage_hatch:
+        legend_elements.append(
+            mpatches.Patch(facecolor="none", edgecolor=coverage_hatch_color,
+                           hatch=coverage_hatch,
+                           label=f"\u2264{coverage_count_threshold} pts/pixel (sparse)")
+        )
+    if probe_utm_x is not None and show_probes:
+        legend_elements.append(
+            plt.Line2D([0], [0], marker=probe_marker, color="w",
+                       markerfacecolor=probe_color, markersize=6, label="Probe")
+        )
+    if legend_elements:
+        fig.legend(handles=legend_elements, loc="lower center",
+                   ncol=len(legend_elements), fontsize=7, framealpha=0.85,
+                   bbox_to_anchor=(0.5, 0.005))
+
     fig.suptitle(f"Soil Water Content (XY Plan View) — scenario: {scenario_name}",
                  fontsize=11, y=0.97)
 
@@ -780,6 +1042,168 @@ def plot_water_content_xy_timelapse(
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"[PLOT] Saved XY timelapse: {out_path}")
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Public: single-epoch XY mean / min / max (+coverage) binned-stats figure
+# ---------------------------------------------------------------------------
+
+def plot_water_content_xy_stats(
+    theta_calc: np.ndarray,   # (n_points, n_layers) or (n_points,) % vol.
+    utm_x: np.ndarray,
+    utm_y: np.ndarray,
+    layer_index: int | None = None,
+    theta_vmin: float = 0.0,
+    theta_vmax: float = 45.0,
+    cmap: str = "Blues",
+    title: str = "Soil Water Content — Plan View (XY)",
+    output_path: str | None = None,
+    dpi: int = 150,
+    probe_utm_x: Sequence[float] | None = None,
+    probe_utm_y: Sequence[float] | None = None,
+    pixel_size_m: float | None = None,
+    bandwidth_m: float | None = None,
+    window_m: float | None = None,
+    grid_resolution: int = 200,
+    min_grid_res: int = 20,
+    max_grid_res: int = 500,
+    stats: Sequence[str] = ("mean", "min", "max"),
+    show_count: bool = True,
+    count_cmap: str = "Greys",
+    nodata_color: str = "white",
+    show_probes: bool = True,
+    probe_indices: Sequence[int] | None = None,
+) -> plt.Figure:
+    """
+    Plan-view (XY) figure with one panel per per-pixel statistic (default
+    mean / min / max), plus an optional coverage/count panel -- the
+    dedicated "how much data actually falls in each pixel, and what does
+    it look like" view for a real (thin, overlapping-track) survey, where
+    a single ``render_mode="scatter"`` plot is just too many points to
+    read and ``render_mode="imshow", interp_method="linear"`` smears the
+    tracks into a misleading continuous blob.
+
+    Each stats panel bins the raw (utm_x, utm_y, θ) points into the SAME
+    regular pixel grid (size set by ``pixel_size_m``/``bandwidth_m``/
+    ``window_m``/``grid_resolution``, same precedence as
+    ``plot_water_content_xy``) and aggregates whatever lands in each pixel
+    -- no interpolation. A pixel with zero points is left blank
+    (``nodata_color``), same convention as the XZ section's uncovered
+    cells. See ``_bin_stats_to_grid`` for the aggregation itself.
+
+    Parameters
+    ----------
+    stats : sequence of {"mean", "min", "max", "median", "std"}
+        Which statistics to show, left-to-right, each its own panel,
+        sharing one colorbar/color scale (``theta_vmin``/``theta_vmax``).
+    show_count : bool, optional
+        If True (default), append one more panel showing the raw point
+        count per pixel (its own greyscale colour scale/colorbar,
+        ``count_cmap``) -- explains at a glance why a given pixel in the
+        stats panels is blank (0 points) vs. based on only 1-2 points
+        (noisy) vs. many (reliable).
+    pixel_size_m, bandwidth_m, window_m : see ``plot_water_content_xy`` for
+        the resolution order (``pixel_size_m`` > ``bandwidth_m`` >
+        ``2 * window_m``) and rationale.
+    """
+    if pixel_size_m is None:
+        if bandwidth_m is not None:
+            pixel_size_m = float(bandwidth_m)
+        elif window_m is not None:
+            pixel_size_m = 2.0 * float(window_m)
+
+    if theta_calc.ndim == 2:
+        if layer_index is not None:
+            theta_map = theta_calc[:, layer_index]
+            layer_str = f"Layer {layer_index}"
+        else:
+            theta_map = theta_calc.mean(axis=1)
+            layer_str = "mean over layers"
+    else:
+        theta_map = theta_calc
+        layer_str = ""
+
+    n_panels = len(stats) + (1 if show_count else 0)
+    fig_w = 5.0 * n_panels + 1.0
+    fig = plt.figure(figsize=(fig_w, 5.5))
+
+    # Column layout: [stat panel]*len(stats), theta colorbar, then --
+    # only if show_count -- [count panel, count colorbar].
+    width_ratios = [1.0] * len(stats) + [0.045]
+    if show_count:
+        width_ratios += [1.0, 0.045]
+    gs = fig.add_gridspec(
+        1, len(width_ratios),
+        width_ratios=width_ratios,
+        wspace=0.30, left=0.06, right=0.94, top=0.86, bottom=0.12,
+    )
+
+    theta_cmap_obj = plt.get_cmap(cmap).copy()
+    theta_cmap_obj.set_bad(nodata_color, alpha=1.0)
+    theta_norm = plt.Normalize(vmin=theta_vmin, vmax=theta_vmax)
+
+    sc_ref = None
+    for i, stat in enumerate(stats):
+        ax = fig.add_subplot(gs[0, i])
+        sc = _plot_xy_panel(
+            ax=ax, theta_layer_mean=theta_map,
+            utm_x=utm_x, utm_y=utm_y,
+            theta_vmin=theta_vmin, theta_vmax=theta_vmax,
+            cmap=cmap, title=stat.capitalize(),
+            show_xlabel=True, show_ylabel=(i == 0),
+            render_mode="imshow", interp_method=stat,
+            pixel_size_m=pixel_size_m, grid_resolution=grid_resolution,
+            min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+            nodata_color=nodata_color,
+            probe_utm_x=probe_utm_x if i == 0 else None,
+            probe_utm_y=probe_utm_y if i == 0 else None,
+            show_probes=show_probes, probe_indices=probe_indices,
+        )
+        sc_ref = sc
+
+    theta_cbar_ax = fig.add_subplot(gs[0, len(stats)])
+    if sc_ref is not None:
+        cbar = fig.colorbar(sc_ref, cax=theta_cbar_ax)
+        cbar.set_label("θ (% vol.)", fontsize=9)
+        cbar.ax.tick_params(labelsize=8)
+
+    if show_count:
+        _, extent, counts = _bin_stats_to_grid(
+            utm_x, utm_y, theta_map, stat="count",
+            pixel_size_m=pixel_size_m, grid_resolution=grid_resolution,
+            min_grid_res=min_grid_res, max_grid_res=max_grid_res,
+        )
+        counts_masked = np.ma.masked_equal(counts, 0)
+        count_cmap_obj = plt.get_cmap(count_cmap).copy()
+        count_cmap_obj.set_bad(nodata_color, alpha=1.0)
+
+        ax_cnt = fig.add_subplot(gs[0, len(stats) + 1])
+        cnt_img = ax_cnt.imshow(
+            counts_masked, extent=extent, origin="lower",
+            cmap=count_cmap_obj, aspect="auto", interpolation="nearest",
+        )
+        ax_cnt.set_title("Point count / pixel", fontsize=8, pad=3)
+        ax_cnt.set_xlabel("UTM Easting (m)", fontsize=8)
+        ax_cnt.tick_params(labelsize=7)
+        ax_cnt.set_aspect("equal", adjustable="box")
+
+        cnt_cbar_ax = fig.add_subplot(gs[0, len(stats) + 2])
+        cnt_cbar = fig.colorbar(cnt_img, cax=cnt_cbar_ax)
+        cnt_cbar.set_label("points", fontsize=9)
+        cnt_cbar.ax.tick_params(labelsize=8)
+
+    pix_str = f" — pixel {pixel_size_m:.2g} m" if pixel_size_m else ""
+    fig.suptitle(
+        f"{title}\n({layer_str}{pix_str})" if layer_str else f"{title}{pix_str}",
+        fontsize=11, y=0.97,
+    )
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[PLOT] Saved XY stats (mean/min/max) map: {output_path}")
     return fig
 
 

@@ -65,6 +65,7 @@ Typical call from run_pipeline.py (Step 6d/6e, right after Step 6b)
         x_transect       = x_transect,
         forward_model    = _base_inv_kwargs.get("forwardModel", "CS"),
         scenario_name    = cfg.name if cfg else "default",
+        matched_indices  = REAL_DATA_MATCHED_INDICES if (data_source == "real" and timelapse) else None,
     )
 """
 
@@ -287,6 +288,7 @@ def forward_simulate_eca_optimal(
     forward_model: str = "CS",
     scenario_name: str = "default",
     save_csv: bool = True,
+    matched_indices: Optional[Sequence[np.ndarray]] = None,
 ) -> List[str]:
     """
     Forward-simulate the apparent EC (ECa) that the pipeline's OPTIMAL
@@ -331,6 +333,30 @@ def forward_simulate_eca_optimal(
     forward_model : str
         emagpy forward-model code (e.g. "CS", "FSlin"). Should match the
         model used elsewhere in the pipeline for consistency.
+    matched_indices : sequence of np.ndarray, optional
+        Real-data, time-lapse runs ONLY (``INDEXING_AUDIT_REPORT.md``
+        finding #5). ``run_pipeline.py`` builds a union spatial reference
+        grid across survey epochs
+        (``geometry_utils.match_epochs_to_reference_grid``) and remaps
+        ``averaged_models`` onto it (``_remap_combo_to_reference``), so
+        ``avg_model_opt``'s spatial axis — and therefore ``n_pts`` here —
+        is that REFERENCE grid, not any one epoch's own raw-CSV row
+        order/count. ``matched_indices[t_idx]`` is that epoch's
+        row → reference-grid-index map (same array
+        ``geometry_utils.match_epochs_to_reference_grid`` returned, and
+        the same one ``_remap_combo_to_reference`` used to build
+        ``averaged_models`` itself): ``matched_indices[t_idx][j]`` is the
+        reference-grid index that epoch's raw row ``j`` was matched to, or
+        ``-1`` if unmatched. When supplied, ``eca_obs`` (and ``xpos``, if
+        not overridden by ``x_transect``) are gathered through this map —
+        reference-grid point ``i`` is filled from raw row
+        ``argwhere(matched_indices[t_idx] == i)`` when one exists, else
+        left ``NaN`` — so they stay row-aligned with ``eca_pred``, which
+        is computed directly from the (already reference-grid-ordered)
+        ``ec_slice``. When ``None`` (synthetic data, or a real-data
+        single-survey run with no remap), behaviour is unchanged: raw CSV
+        rows are read directly in their own order, which IS the model's
+        own order in that case.
 
     Returns
     -------
@@ -354,6 +380,9 @@ def forward_simulate_eca_optimal(
           f"(K={K_opt}, RMSE={selected_output.rmse:.5f})")
     print(f"   forwardModel : {forward_model}   coils : {coils_list}")
     print(f"   time steps   : {n_time}")
+    if matched_indices is not None:
+        print(f"   observed ECa : gathered via matched_indices "
+              f"(reference-grid order, real-data time-lapse)")
     print(f"{'='*72}\n")
 
     results = []
@@ -382,9 +411,34 @@ def forward_simulate_eca_optimal(
         eca_pred = np.asarray(res_forward[0].values)  # (n_pts, n_coils)
 
         obs_df = pd.read_csv(csv_path)
-        eca_obs = obs_df[coils_list].to_numpy(dtype=float)[:n_pts]
-        xpos = (np.asarray(x_transect[:n_pts], dtype=float) if x_transect is not None
-                else obs_df["x"].to_numpy(dtype=float)[:n_pts])
+
+        if matched_indices is not None and t_idx < len(matched_indices):
+            # Real-data time-lapse run: ec_slice/eca_pred/n_pts live on the
+            # shared spatial reference grid, NOT this epoch's own raw-CSV
+            # row order/count -- see the matched_indices docstring above.
+            # Gather eca_obs (and xpos, when not overridden by
+            # x_transect) into that same reference-grid order, NaN-filling
+            # any reference point this epoch didn't cover -- mirrors
+            # run_pipeline.py's _remap_combo_to_reference exactly, so
+            # eca_obs/eca_pred stay row-aligned even though this epoch may
+            # not have covered every reference-grid point.
+            idx_map = np.asarray(matched_indices[t_idx])
+            raw_eca = obs_df[coils_list].to_numpy(dtype=float)
+            raw_x = obs_df["x"].to_numpy(dtype=float)
+
+            eca_obs = np.full((n_pts, len(coils_list)), np.nan, dtype=float)
+            xpos_from_csv = np.full(n_pts, np.nan, dtype=float)
+            valid = idx_map >= 0
+            if np.any(valid):
+                eca_obs[valid] = raw_eca[idx_map[valid]]
+                xpos_from_csv[valid] = raw_x[idx_map[valid]]
+
+            xpos = (np.asarray(x_transect[:n_pts], dtype=float) if x_transect is not None
+                    else xpos_from_csv)
+        else:
+            eca_obs = obs_df[coils_list].to_numpy(dtype=float)[:n_pts]
+            xpos = (np.asarray(x_transect[:n_pts], dtype=float) if x_transect is not None
+                    else obs_df["x"].to_numpy(dtype=float)[:n_pts])
 
         # --- per-coil along-transect comparison ---------------------------
         n_coils = len(coils_list)
@@ -411,11 +465,15 @@ def forward_simulate_eca_optimal(
         _save(fig, os.path.join(sol_dir, f"eca_forward_vs_observed_t{t_idx:02d}.png"))
 
         # --- 1:1 scatter across all coils/points ---------------------------
+        # NOTE: eca_obs may now contain NaN entries (reference-grid points
+        # this epoch didn't cover, when matched_indices was supplied) --
+        # use nan-aware reductions throughout so a handful of gaps don't
+        # poison the whole plot's axis limits or the RMSE.
         rmse_eca = float(np.sqrt(np.nanmean((eca_obs - eca_pred) ** 2)))
         fig2, ax2 = plt.subplots(figsize=(5.5, 5.5))
         ax2.scatter(eca_obs.flatten(), eca_pred.flatten(), s=16, alpha=0.6, color="tab:blue")
-        lo = float(np.nanmin([eca_obs.min(), eca_pred.min()]))
-        hi = float(np.nanmax([eca_obs.max(), eca_pred.max()]))
+        lo = float(np.nanmin([np.nanmin(eca_obs), np.nanmin(eca_pred)]))
+        hi = float(np.nanmax([np.nanmax(eca_obs), np.nanmax(eca_pred)]))
         ax2.plot([lo, hi], [lo, hi], "k--", lw=1, label="1:1")
         ax2.set_xlabel("Observed ECa [mS/m]  (input survey)")
         ax2.set_ylabel("Forward-simulated ECa [mS/m]  (optimal model)")

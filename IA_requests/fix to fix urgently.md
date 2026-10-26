@@ -1,5 +1,93 @@
 
-# remove nosie in EC and TDR? in real data mode
+
+3. Preprocessing is dropping a lot of data
+
+filterRange alone removed 6276 + 4494 = 10,770 points before any other filter ran, and total preprocessing removed 14,506 of 34,329 raw points (~42%). Worth double-checking the range bounds aren't over-aggressive for this survey — that's a big chunk of the raw EM signal being discarded before it ever reaches the inversion.
+
+4. TDR noise weighting appears silently disabled despite being configured
+
+The scenario sets tdr_noise_std=0.01, but Step 2 logs: "TDR observation weighting: disabled (no positive tdr_noise_std available for this run)". That's a config value not making it through to where it's needed — likely a plumbing bug between the scenario loader and Step 2's weighting logic, worth tracing.
+
+
+
+Still open, need your input:
+
+forward_simulate_eca_optimal (real-data + time-lapse only) — needs matched_indices threaded through, a signature change I didn't want to make without your OK.
+station_to_spatial_idx[obs['probe_index']] — needs 0_real_data_loader.py to actually verify, still don't have that one.
+
+Everything's in the updated report and code. Want me to go ahead and fix #5 (forward_simulate_eca_optimal) now, or send over 0_real_data_loader.py for #6?
+
+
+
+
+# FOR the real dataset Localized (kernel-weighted) WS calibration failed
+
+STEP 2 LOCALIZED bandwidth sweep completed fine (c=20 recommended, LOO-CV RMSE 0.112, 0/39 folds fell back to prior at c=20 — good). But the follow-up localized diagnostic fit crashed:
+
+boolean index did not match indexed array along axis 0; size of axis is 39 but size of corresponding boolean axis is 71
+
+Looks like a horizon-filtered array (39 = Hz0 sensor-epoch pairs) being indexed with a mask built against the full 71-observation array. This burned 195.7 s before failing and produced no localized output — worth a quick look at the localized-calibration code path (probably in whatever step builds the boolean mask for valid folds vs. the full observation count).
+
+
+The error fires inside step2.run_petro_localized(...), called at run_pipeline.py:4232. That function lives in module 2_run_petro (step2 = importlib.import_module("2_run_petro") at line 75) — that file wasn't uploaded, only em_methodology.py (EMmethod).
+
+I checked the only candidate in em_methodology.py, calibrate_petrophysical_relationship_localized (line 2163) — it can't be the source of the 39 vs 71 mismatch: every boolean mask it builds (_finite, etc.) is sized against indices (the per-horizon subset, e.g. Hz0's 39 obs), never against the full 71-observation array. Same for sweep_localization_bandwidth, which is why the sweep step ran fine and only the follow-up run_petro_localized call failed.
+
+The one suspicious clue I can see from run_pipeline.py is this extra keyword at the call site:
+
+python
+fits_step2_localized = step2.run_petro_localized(
+    ...
+    theta_obs_std=_theta_obs_std_step2,
+    global_fit=fits_step2[0],   # <-- not a param of calibrate_petrophysical_relationship_localized
+)
+
+global_fit isn't accepted by the em_methodology function's signature at all, so 2_run_petro.run_petro_localized must be a wrapper that does its own per-horizon looping and, somewhere in there, builds a boolean mask against the full 71-length theta_obs/sample_positions array (matching fits_step2[0], i.e. global_fit, which does cover all 71 obs) and then applies it to an already-horizon-filtered 39-length array — that's exactly the size of axis is 39 but size of corresponding boolean axis is 71 shape mismatch.
+
+
+
+
+
+# performamnce with localisation activated
+
+
+how can I show the code performance when I use localisation? when there is no localisation its easy I plot the petrophysical R2 but with location if I put all on the same plot logically its spreads out. Maybe add a new plot and plotting result of the petro for each sensors would make the trick? 
+
+
+# check all indexing 
+
+for instance: 
+
+Your codebase explicitly notes (in _extract_ec_for_plots's docstring, 2_run_petro.py line ~897) that best_fit.observed_theta is not in the same order as the sample_positions you pass into run_petro. It gets re-routed/reordered by horizon via geometry_utils.route_ec_to_horizons(...). So if I naively zip your original sample_positions array against best_fit.observed_theta to color/facet by sensor, the sensor labels would silently line up with the wrong observations — a bug that wouldn't throw an error, just quietly mislabel points.
+
+
+# check all indexing as for files if needed
+- check indexing after localisation etc ... 
+- check indexing after gridding 
+- check indexing in the plots ...
+- write a report
+
+
+
+
+can you generate a scenario where waxman parms are varying in xy direction?
+
+
+# Create a new scenario file to test algoritm validity in "stupid" not realistic case such as:
+- no noise, homogeneous soiyesl in SMC and WS parms
+- scenario with fixed WS parms
+- ... (suggest other test cases)
+
+for each write should I oberved i.e. for instance (check if the estimated WS parms and p0 aligned etc ..
+
+by the way in which case (scenario) my estimated and p0 values of waxman parms should be aligned? also why sometimes the picked estimated parm is not the central value of the hist ditribution? 
+
+
+# quid case where I want to invert in 3d the WS parms? up to now its only 1D per horizon. How should I do? implement?
+
+
+
+# remove noise in EC and TDR? in real data mode + temperature correction
 
 
 # varying spatial Waxman parameters

@@ -19,8 +19,12 @@
 #         ./run_pipeline.sh -s 2d --ws-localized-bandwidth-sweep 1 2 5 10 15 20
 #       useful for scenarios that don't set either field in the JSON, or
 #       to try different candidate bandwidths without editing the JSON.
-#   - gamma only accepts ONE value per run_pipeline.sh call (it's a single
-#     float, not a list) -- sweeping it means one call per value.
+#   - gamma now accepts multiple values in ONE run_pipeline.sh call, same
+#     as beta -- space-separated, no brackets/commas: --gamma 0 5 10.
+#     Each gamma value is combined with every alpha/beta/method/
+#     forwardModel/starting-conductivity combo (N gammas = N x the
+#     ensemble tasks), and it's still a no-op on non-time-lapse
+#     (single-epoch) runs regardless of value.
 #   - beta DOES accept multiple values, but space-separated, no brackets/
 #     commas: --beta 0 0.5 1
 #
@@ -79,10 +83,19 @@ set -euo pipefail
 ./compare_scenarios.sh --ids 2d_random_xy_drying:1 2d_random_xy_drying:1 --position 5 0
 
 
-./run_pipeline.sh --mode 2d -s 2d_horizon_ws
 ./run_pipeline.sh --mode 1d -s 2d_horizon_ws
 
+./run_pipeline.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_2sensors.csv
+./run_pipeline.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_8sensors.csv
 
+
+
+./run_pipeline.sh -s 2d_xy_waxman --mode 2d \
+    --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 \
+    --probe-xyz ./data/coord_TDR_mode2d_8sensors.csv \
+
+    
+    
 
 
 # --- Beta sweep ---------------------------------------------------------------
@@ -91,18 +104,25 @@ set -euo pipefail
 #./run_pipeline.sh -s 2d_dense_tdr    --beta 0 0.5 1
 
 # --- Gamma sweep ---------------------------------------------------------------
-# gamma takes exactly one value per call -- loop over the sweep values.
-# (Also: gamma only affects time-lapse/multi-epoch inversions -- confirm
-# your synthetic setup actually has multiple epochs, otherwise this has
-# no effect regardless of value.)
-for scenario in 2d 2d_intermediate 2d_dense_tdr; do
-    for g in 0 10; do
-        ./run_pipeline.sh -s "${scenario}" --gamma "${g}"
-    done
-done
+# gamma now sweeps in a single call, same as beta -- no more looping one
+# call per value. (Still: gamma only affects time-lapse/multi-epoch
+# inversions -- confirm your synthetic setup actually has multiple
+# epochs, otherwise this has no effect regardless of value.)
+./run_pipeline.sh -s 2d              --gamma 0 10
+./run_pipeline.sh -s 2d_intermediate --gamma 0 10
+./run_pipeline.sh -s 2d_dense_tdr    --gamma 0 10
 
 ./compare_scenarios.sh --list
 # ./compare_scenarios.sh --ids <scenario:number> <scenario:number> <scenario:number> ...
+
+# --- Combined beta + gamma sweep -----------------------------------------------
+# beta and gamma can be swept together in the same call -- every beta
+# value gets crossed with every gamma value (plus alpha/method/
+# forwardModel/starting-conductivities), so this is
+# len(beta) x len(gamma) x ... ensemble tasks, not len(beta) + len(gamma).
+#./run_pipeline.sh -s 2d              --beta 0 0.5 1 --gamma 0 10
+#./run_pipeline.sh -s 2d_intermediate --beta 0 0.5 1 --gamma 0 10
+#./run_pipeline.sh -s 2d_dense_tdr    --beta 0 0.5 1 --gamma 0 10
 
 # --- train-val-split ------------------------------------
 #./run_pipeline.sh -s 2d --train-val-split alternate_sorted

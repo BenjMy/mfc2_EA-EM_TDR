@@ -270,7 +270,18 @@ def run_select_assess(
     if generate_plots:
         try:
             num_layers_opt = avg_model_opt.shape[-1]
-            ec_at_probes_opt = _extract_ec_at_probes(
+            # _extract_ec_at_probes now returns (ec_extracted, kept_indices):
+            # ec_at_probes_opt is horizon-routed AND NaN-dropped, so it lines
+            # up 1:1 with best_fit_opt.observed_theta -- but it can be
+            # SHORTER than len(sample_positions)/len(probe_layer_indices)
+            # whenever the NaN-drop removed anything (real-data time-lapse
+            # reference-grid gaps). probe_layer_indices below is still in
+            # plain per-observation order, so it must be gathered through
+            # kept_indices_opt before being used to mask ec_at_probes_opt /
+            # theta_obs inside plot_optimal_petrophysical_calibration --
+            # otherwise the mask and the values it's applied to disagree on
+            # both order and length (finding #2's bug, reproduced here).
+            ec_at_probes_opt, kept_indices_opt = _extract_ec_at_probes(
                 avg_model=avg_model_opt,
                 sample_positions=sample_positions,
                 sample_times=sample_times,
@@ -285,7 +296,8 @@ def run_select_assess(
                 rmse=min_rmse,
                 output_path=os.path.join(output_dir, "petro_calibration_optimal.png"),
                 probe_layer_indices=(
-                    np.asarray(probe_layer_indices) if probe_layer_indices is not None else None
+                    np.asarray(probe_layer_indices)[kept_indices_opt]
+                    if probe_layer_indices is not None else None
                 ),
             )
         except Exception as e:
@@ -420,7 +432,7 @@ def _extract_ec_at_probes(
     sample_times: list[int],
     probe_layer_indices: list[int] | None,
     num_layers: int,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Extract sigma_b (bulk EC) at each TDR probe location from an
     already-averaged (ensemble axis collapsed) EC model, routed to horizons
@@ -446,14 +458,24 @@ def _extract_ec_at_probes(
 
     Returns
     -------
-    np.ndarray
+    ec_extracted : np.ndarray
         Flat sigma_b values, concatenated per horizon in the same order as
-        ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta``. May
-        contain NaN entries for real-data time-lapse probe/epoch pairs
-        whose spatial reference-grid point wasn't covered by that epoch
-        (see geometry_utils.match_epochs_to_reference_grid); the caller
-        (``plot_optimal_petrophysical_calibration``) simply won't plot
-        those points (matplotlib scatter silently skips NaN).
+        ``PetroFit.observed_theta`` / ``PetroFit.predicted_theta``, with
+        the same NaN-observation drop
+        ``em_methodology.calibrate_petrophysical_relationship`` applies
+        (real-data time-lapse probe/epoch pairs whose spatial
+        reference-grid point wasn't covered by that epoch). Because those
+        entries are dropped rather than left as NaN, ``ec_extracted`` can be
+        SHORTER than ``len(sample_positions)``.
+    kept_indices : np.ndarray
+        For each element of ``ec_extracted`` (same order), the index into
+        the ORIGINAL length-``len(sample_positions)`` per-observation
+        arrays it came from. Callers must gather any other per-observation
+        array (notably ``probe_layer_indices`` itself) through this before
+        pairing it element-wise with ``ec_extracted`` /
+        ``best_fit_opt.observed_theta`` — see
+        ``geometry_utils.route_ec_to_horizons`` and finding #2 in
+        INDEXING_AUDIT_REPORT.md for the class of bug this prevents.
     """
     # Horizon routing now delegates to the single shared implementation in
     # geometry_utils.py (pipeline_improvement_report.md, section 6 / action
@@ -464,14 +486,23 @@ def _extract_ec_at_probes(
     # docstring's ``timelapse = avg_model.ndim == 3`` convention (no
     # ensemble axis) matches what ``geometry_utils.route_ec_to_horizons``
     # expects directly.
-    ec_extracted, _horizon_slices = geometry_utils.route_ec_to_horizons(
+    #
+    # route_ec_to_horizons now returns a THIRD value, kept_indices (see
+    # geometry_utils.py finding #3 / this file's regression noted in
+    # INDEXING_AUDIT_REPORT.md): it replicates calibrate_petrophysical_
+    # relationship's post-routing NaN-observation drop, so ec_extracted can
+    # come back shorter than len(sample_positions). Unpacking only two
+    # values here (as before) raises "too many values to unpack" on every
+    # call -- silently swallowed by run_select_assess's try/except, which
+    # kills petro_calibration_optimal.png without crashing the pipeline.
+    ec_extracted, _horizon_slices, kept_indices = geometry_utils.route_ec_to_horizons(
         ec_array=avg_model,
         sample_positions=sample_positions,
         sample_times=sample_times,
         probe_layer_indices=probe_layer_indices,
         num_layers=num_layers,
     )
-    return ec_extracted
+    return ec_extracted, kept_indices
 
 
 def plot_optimal_petrophysical_calibration(

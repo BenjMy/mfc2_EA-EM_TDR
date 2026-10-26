@@ -743,7 +743,7 @@ def _check_em_unit_sanity(csv_path: str, em_unit: str,
     csv_path : str
         Path to an already emagpy-ready (comma-separated, canonical coil
         column names) EM survey CSV -- i.e. the output of
-        ``_prepare_real_em_csv`` / ``filter_repeated_em_points``.
+        ``_prepare_real_em_csv`` / ``preprocess_em_survey``.
     em_unit : str
         The 'ppm' / 'ppt' value actually being used for this survey.
     expected_range_ms_m : (float, float), optional
@@ -905,7 +905,13 @@ def _extract_temperature_by_epoch(
 def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
                     time_tolerance_days: float = 1.0,
                     em_unit: str = "ppt",
-                    filter_repeated_tolerance: float = 1e-10):
+                    filter_repeated_tolerance: float = 1e-10,
+                    filter_range_vmin: float | None = 0.0,
+                    filter_range_vmax: float | None = None,
+                    filter_percentile_qmin: float | None = 5.0,
+                    filter_percentile_qmax: float | None = 95.0,
+                    rolling_mean_window: int | None = 5,
+                    drop_coils=None):
     """
     Load real EM and TDR field data.
 
@@ -915,12 +921,40 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
     as part of ``em_files``.  The processed files are written to a sub-directory
     ``<em_dir>/_emagpy_ready/`` so the originals are never modified.
 
-    Each processed CSV also has consecutive, near-duplicate spatial points
-    (e.g. logger left stationary, overlapping GPS fixes) removed in place via
-    ``filter_repeated_em_points`` — using emagpy's own
-    ``Problem.filterRepeated`` — so this happens exactly once per survey
-    here at load time, rather than redundantly inside every parallel
-    inversion worker.
+    Each processed CSV also has the classic EMagPy raw-ECa cleaning chain
+    applied in place via ``preprocess_em_survey`` — using emagpy's own
+    ``Problem.filterRange`` / ``filterRepeated`` / ``filterPercentile`` /
+    ``rollingMean`` — so this happens exactly once per survey here at load
+    time, rather than redundantly inside every parallel inversion worker.
+    Order: drop_coils (exclude channel(s) that will be excluded from
+    inversion anyway, so they can't veto points on filterRange) ->
+    filterRange (drop impossible negative ECa) -> filterRepeated (drop
+    stationary/duplicate GPS fixes) -> filterPercentile (drop statistical
+    outliers/spikes per coil) -> rollingMean (smooth the now-clean
+    sequence). Any stage can be disabled by passing ``None`` for its
+    threshold(s) (or ``rolling_mean_window=None``/``<=1``; ``drop_coils=None``).
+
+    Parameters (new)
+    -----------------
+    filter_range_vmin, filter_range_vmax : float or None, optional
+        ``filterRange`` bounds passed to ``preprocess_em_survey``. Default
+        ``(0.0, None)`` — drop negative ECa, no upper cutoff.
+    filter_percentile_qmin, filter_percentile_qmax : float or None, optional
+        ``filterPercentile`` bounds (percent) passed to
+        ``preprocess_em_survey``. Default ``(5.0, 95.0)``.
+    rolling_mean_window : int or None, optional
+        ``rollingMean`` window size passed to ``preprocess_em_survey``.
+        Default 5.
+    drop_coils : None, str, int, float, or sequence thereof, optional
+        Coil(s)/frequency channel(s) to exclude (same spec as
+        ``EMmethod.drop_coils_from_problem``), applied inside
+        ``preprocess_em_survey`` before ``filterRange`` runs, so a
+        soon-to-be-dropped channel's readings can't cause otherwise-good
+        points to be discarded. This is purely an in-memory exclusion for
+        the purpose of computing/applying the filter chain — it does not
+        remove the coil's column from the CSV, and does not replace the
+        per-task ``drop_coils_from_problem`` call still made before
+        inversion. Default ``None``.
 
     Returns:
         tuple: (em_files, observations, probe_table, em_dates, raw_em_files,
@@ -933,16 +967,18 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
                list of datetime objects (one per EM survey epoch, same
                order/length as em_files), raw_em_files contains the
                original, untouched GEM-2 CSV paths (pre-processing, pre-
-               filterRepeated) in the same order — kept around solely so
+               filtering) in the same order — kept around solely so
                diagnostic plotting (Step 1b) can show the full per-epoch
                footprint before the row-count trim, instead of the already
-               column-renamed and duplicate-filtered processed files —
+               column-renamed and filtered processed files —
                and real_data_diagnostics is a dict with keys
                'coord_kinds' (list of per-file {'file','coord_kind',
                'epsg_used'} dicts), 'em_unit_checks' (list of per-file
                _check_em_unit_sanity() result dicts), 'crs_consistency'
                (single {'level','message'} verdict vs. probe_table),
-               'n_geographic_reprojected' (int), and 'temp_by_epoch'
+               'n_geographic_reprojected' (int), 'filter_stats' (list of
+               per-file ``preprocess_em_survey`` stats dicts — see that
+               function's docstring for keys), and 'temp_by_epoch'
                (list[float|None], one measured soil temperature per
                em_dates entry, or None where no 'temp'-named TDR column /
                no matched reading was found -- feeds the temperature
@@ -957,11 +993,11 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
     # Import the real data loader
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
-        from l0_real_data_loader import prepare_real_dataset, filter_repeated_em_points, load_tdr_dataframe  # Adjust import as needed
+        from l0_real_data_loader import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe  # Adjust import as needed
     except ImportError:
         # Try alternate name
         try:
-            from _0_real_data_loader import prepare_real_dataset, filter_repeated_em_points, load_tdr_dataframe
+            from _0_real_data_loader import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe
         except ImportError:
             # Fallback: try from current script directory
             import importlib.util
@@ -975,7 +1011,7 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
             real_data_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(real_data_module)
             prepare_real_dataset = real_data_module.prepare_real_dataset
-            filter_repeated_em_points = real_data_module.filter_repeated_em_points
+            preprocess_em_survey = real_data_module.preprocess_em_survey
             load_tdr_dataframe = real_data_module.load_tdr_dataframe
 
     print(f"[REAL DATA] Loading from:")
@@ -1001,13 +1037,24 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
     em_files = []
     coord_kind_records: list[dict] = []
     em_unit_check_records: list[dict] = []
+    filter_stat_records: list[dict] = []
     for raw_path, survey_date in zip(raw_em_files, em_dates):
         try:
             proc_path, coord_kind, epsg_used = _prepare_real_em_csv(
                 raw_path, processed_dir, survey_date=survey_date,
             )
-            filter_repeated_em_points(proc_path, tolerance=filter_repeated_tolerance,
-                                       unit=em_unit)
+            proc_path, filt_stats = preprocess_em_survey(
+                proc_path,
+                tolerance=filter_repeated_tolerance,
+                unit=em_unit,
+                range_vmin=filter_range_vmin,
+                range_vmax=filter_range_vmax,
+                percentile_qmin=filter_percentile_qmin,
+                percentile_qmax=filter_percentile_qmax,
+                rolling_window=rolling_mean_window,
+                drop_coils=drop_coils,
+            )
+            filter_stat_records.append(filt_stats)
             em_unit_check_records.append(_check_em_unit_sanity(proc_path, em_unit))
             em_files.append(proc_path)
             coord_kind_records.append({
@@ -1102,6 +1149,7 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
         "em_unit_checks": em_unit_check_records,  # one dict per successfully-loaded EM file
         "crs_consistency": crs_consistency,       # single verdict vs. probe_table
         "n_geographic_reprojected": n_geo,
+        "filter_stats": filter_stat_records,      # one preprocess_em_survey() stats dict per file
         "temp_by_epoch": temp_by_epoch,           # list[float|None], one per em_dates entry
     }
 
@@ -1215,12 +1263,16 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
         # NOTE: repeated/duplicate-point filtering used to happen here
         # (`k.filterRepeated(index=0)`), once per parallel inversion task.
         # It has been moved upstream into the real-data loader
-        # (`0_real_data_loader.filter_repeated_em_points`), which runs once
-        # per EM CSV at load time in `_load_real_data`. That also fixes a
-        # bug: emagpy's `Problem.filterRepeated(self, tolerance=0.2)` has
-        # never accepted an `index` keyword, so every call here was raising
-        # `TypeError: filterRepeated() got an unexpected keyword argument
-        # 'index'` and silently failing every single inversion task.
+        # (`0_real_data_loader.preprocess_em_survey`), which runs the full
+        # filterRange -> filterRepeated -> filterPercentile -> rollingMean
+        # chain once per EM CSV at load time in `_load_real_data`, rather
+        # than redundantly (and, for filterRepeated, incorrectly) inside
+        # every parallel inversion task. That original per-task call also
+        # had a bug: emagpy's `Problem.filterRepeated(self, tolerance=0.2)`
+        # has never accepted an `index` keyword, so every call here was
+        # raising `TypeError: filterRepeated() got an unexpected keyword
+        # argument 'index'` and silently failing every single inversion
+        # task.
         drop_coils = invert_kwargs.get("drop_coils")
         if drop_coils is not None:
             EMmethod.drop_coils_from_problem(k, drop_coils)
@@ -1618,13 +1670,32 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         _cache_path_override = None
         EM_UNIT           = em_unit if em_unit is not None else "ppt"
 
+    # Ensure 'gamma' lives in PARAM_GRID (mirrors 'beta') so it can be swept
+    # like any other ensemble-grid parameter instead of being a single
+    # fixed scalar applied to every combo. Seed it from the scenario's
+    # scalar cfg.gamma (or the hardcoded default) if the scenario config
+    # doesn't already provide a 'gamma' param_grid entry of its own.
+    if "gamma" not in PARAM_GRID:
+        PARAM_GRID = dict(PARAM_GRID)
+        PARAM_GRID["gamma"] = [GAMMA]
+
     # --beta / --gamma CLI overrides (mirror the --window-m / --swc-depths
     # pattern: CLI value wins over whatever the scenario config set).
+    # Both are now list-valued param_grid entries -- gamma is no longer a
+    # single scalar applied uniformly to every ensemble combo; passing
+    # multiple values sweeps gamma across combos exactly like beta does
+    # (still only meaningful for time-lapse/multi-epoch inversions).
     if beta is not None:
         PARAM_GRID = dict(PARAM_GRID)
         PARAM_GRID["beta"] = list(beta)
     if gamma is not None:
-        GAMMA = gamma
+        PARAM_GRID = dict(PARAM_GRID)
+        PARAM_GRID["gamma"] = list(gamma)
+    # GAMMA is kept only as a legacy single-value fallback for call sites
+    # that still want "the" gamma (e.g. Step 6b's single "optimal model"
+    # reconstruction) -- always the first value of the (possibly swept)
+    # grid, same convention already used there for alpha/beta.
+    GAMMA = PARAM_GRID["gamma"][0]
 
     ECA_NOISE_LEVEL = getattr(cfg, "eca_noise_level", 0.0) if cfg is not None else 0.0
     TDR_NOISE_STD   = getattr(cfg, "tdr_noise_std",   0.01) if cfg is not None else 0.01
@@ -1687,6 +1758,18 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         random_xy_seed if random_xy_seed is not None
         else (getattr(cfg, "random_xy_seed", None) if cfg is not None else None)
     )
+
+    # Spatially-varying TRUTH Waxman-Smits params (ws_xy_variation). Unlike
+    # random_xy_field above (which perturbs theta), this perturbs the WS
+    # petrophysical params (a, m, sigma_w, sigma_s) themselves. Scenario-only
+    # (no CLI override), same pattern as WS_FIXED_PARAMS below.
+    WS_XY_VARIATION = getattr(cfg, "ws_xy_variation", False) if cfg is not None else False
+    WS_XY_PARAMS = getattr(cfg, "ws_xy_params", None) if cfg is not None else None
+    WS_XY_RANGES = getattr(cfg, "ws_xy_ranges", None) if cfg is not None else None
+    WS_XY_PATTERN = getattr(cfg, "ws_xy_pattern", "linear") if cfg is not None else "linear"
+    WS_XY_N_BLOBS = getattr(cfg, "ws_xy_n_blobs", 6) if cfg is not None else 6
+    WS_XY_CORRELATION_M = getattr(cfg, "ws_xy_correlation_m", None) if cfg is not None else None
+    WS_XY_SEED = getattr(cfg, "ws_xy_seed", None) if cfg is not None else None
 
     # TDR<->EM spatial-matching quality gate thresholds (report item 3.1).
     # largest-group-fraction = (probes sharing the single most-shared EM
@@ -1752,7 +1835,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         "tdr_noise_std":      f"{TDR_NOISE_STD*100:.1f}% vol",
         "realization_index":  REALIZATION_INDEX,
         "fixed_depths":       FIXED_DEPTHS,
-        "gamma":              GAMMA,
+        "gamma":              str(PARAM_GRID.get("gamma", [GAMMA])),
         "num_swc_positions":  getattr(cfg, "num_swc_positions", 4) if cfg is not None else 4,
         "swc_depths":         (
             f"{getattr(cfg, 'swc_depths', None)}  "
@@ -1785,10 +1868,27 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter.log(f"           Drop coils      : {DROP_COILS if DROP_COILS else '(none)'}")
 
             # Load real data
+            # Raw-ECa preprocessing chain config (see preprocess_em_survey()) --
+            # scenario-overridable, defined here so the same values can be
+            # reused below when logging the per-file results to the report.
+            FILTER_REPEATED_TOLERANCE = getattr(cfg, "filter_repeated_tolerance", 1e-10)
+            FILTER_RANGE_VMIN = getattr(cfg, "filter_range_vmin", 0.0)
+            FILTER_RANGE_VMAX = getattr(cfg, "filter_range_vmax", None)
+            FILTER_PERCENTILE_QMIN = getattr(cfg, "filter_percentile_qmin", 5.0)
+            FILTER_PERCENTILE_QMAX = getattr(cfg, "filter_percentile_qmax", 95.0)
+            ROLLING_MEAN_WINDOW = getattr(cfg, "rolling_mean_window", 5)
+
             EM_FNAMES, observations_list, probe_table, EM_DATES, RAW_EM_FNAMES, REAL_DATA_DIAG = _load_real_data(
                 em_dir, tdr_dir, coord_file,
                 time_tolerance_days=getattr(cfg, "time_tolerance_days", 1.0),
                 em_unit=EM_UNIT,
+                filter_repeated_tolerance=FILTER_REPEATED_TOLERANCE,
+                filter_range_vmin=FILTER_RANGE_VMIN,
+                filter_range_vmax=FILTER_RANGE_VMAX,
+                filter_percentile_qmin=FILTER_PERCENTILE_QMIN,
+                filter_percentile_qmax=FILTER_PERCENTILE_QMAX,
+                rolling_mean_window=ROLLING_MEAN_WINDOW,
+                drop_coils=DROP_COILS,
             )
 
             # -----------------------------------------------------------------------
@@ -1837,6 +1937,49 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     "See the table above."
                 )
 
+            # -----------------------------------------------------------------------
+            # Fold the raw-ECa preprocessing chain (filterRange -> filterRepeated ->
+            # filterPercentile -> rollingMean, see preprocess_em_survey()) into the
+            # Markdown run report -- same "return structured, don't just print"
+            # pattern as coord_kinds / em_unit_checks above, so the report shows
+            # exactly how many points each stage dropped per survey file.
+            # -----------------------------------------------------------------------
+            _filter_rows = [
+                [
+                    s["file"],
+                    ", ".join(s.get("dropped_coils") or []) or "—",
+                    f"{s['n_initial']} → {s['n_after_range']} (-{s['range_removed']})",
+                    f"{s['n_after_range']} → {s['n_after_repeated']} (-{s['repeated_removed']})",
+                    f"{s['n_after_repeated']} → {s['n_after_percentile']} (-{s['percentile_removed']})",
+                    f"window={s['rolling_window']}" if s["rolling_mean_applied"] else "skipped",
+                    s["n_final"],
+                ]
+                for s in REAL_DATA_DIAG["filter_stats"]
+            ]
+            reporter.table(
+                "Step 0 — EM raw-ECa preprocessing chain per file",
+                ["File", "Dropped coil(s)", "filterRange", "filterRepeated",
+                 "filterPercentile", "rollingMean", "Final pts"],
+                _filter_rows,
+                note=(
+                    f"drop_coils={DROP_COILS if DROP_COILS else '(none)'} -> "
+                    f"filterRange[{FILTER_RANGE_VMIN},{FILTER_RANGE_VMAX}] -> "
+                    f"filterRepeated(tol={FILTER_REPEATED_TOLERANCE}) -> "
+                    f"filterPercentile[{FILTER_PERCENTILE_QMIN},{FILTER_PERCENTILE_QMAX}] -> "
+                    f"rollingMean(window={ROLLING_MEAN_WINDOW}), applied once per file at "
+                    "load time (not redundantly inside every parallel inversion worker). "
+                    "Dropped coil(s) are excluded before filterRange runs, so a "
+                    "soon-to-be-dropped channel's own readings can't veto an otherwise-"
+                    "good point on the remaining coils; the CSV itself is untouched, and "
+                    "the per-worker drop before inversion still happens separately."
+                ),
+            )
+            _total_removed = sum(
+                s["range_removed"] + s["repeated_removed"] + s["percentile_removed"]
+                for s in REAL_DATA_DIAG["filter_stats"]
+            )
+            reporter.metric("Total EM points removed by preprocessing chain", _total_removed)
+
             _crs = REAL_DATA_DIAG["crs_consistency"]
             reporter.log(f"[STEP 0] CRS consistency check ({_crs['level']}): {_crs['message']}")
             reporter.metric("CRS consistency check (EM vs. TDR probes)", _crs["level"])
@@ -1850,7 +1993,19 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # Extract observations into dict structure for processing
             # observations_list contains: probe_index, time_index, depth, swc
             theta_true_realization = None  # Not used in real data mode
-            TDR_NOISE_STD = 0.0  # Real data has actual noise, not synthetic
+            # FIX ("TDR noise weighting silently disabled for real-data runs"):
+            # this used to unconditionally force TDR_NOISE_STD to 0.0 here,
+            # discarding whatever value cfg.tdr_noise_std resolved to just
+            # above (line ~1687) before it ever reached Step 2's
+            # theta_obs_std weighting. A scenario that explicitly sets
+            # tdr_noise_std (e.g. '2d_real': 0.01) now has that value flow
+            # through for real data exactly as it already does for
+            # synthetic data. A real-data scenario that does NOT set
+            # tdr_noise_std still falls back to the 0.01 default from line
+            # ~1687 (previously silently disabled instead) -- if that
+            # default doesn't reflect a real per-probe noise estimate for a
+            # given survey, set tdr_noise_std explicitly in that scenario
+            # (or to 0.0/null) to disable weighting on purpose.
 
             # Build synthetic_geometry placeholder (needed for layer_centers etc.
             # downstream). DEPTHS0 is already resolved above (from cfg.depths0,
@@ -1907,8 +2062,24 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 random_xy_n_blobs=RANDOM_XY_N_BLOBS,
                 random_xy_correlation_m=RANDOM_XY_CORRELATION_M,
                 random_xy_seed=RANDOM_XY_SEED,
+                ws_xy_variation=WS_XY_VARIATION,
+                ws_xy_params=WS_XY_PARAMS,
+                ws_xy_ranges=WS_XY_RANGES,
+                ws_xy_pattern=WS_XY_PATTERN,
+                ws_xy_n_blobs=WS_XY_N_BLOBS,
+                ws_xy_correlation_m=WS_XY_CORRELATION_M,
+                ws_xy_seed=WS_XY_SEED,
             )
             step0.plot_synthetic_results(output_dir=OUTPUT_DIR)
+            if WS_XY_VARIATION:
+                _ws_xy_map_path = os.path.join(OUTPUT_DIR, "synthetic_ws_truth_xy_maps.png")
+                reporter.log(
+                    f"[STEP 0] WS truth XY map(s) -> {_ws_xy_map_path}"
+                    if os.path.exists(_ws_xy_map_path) else
+                    "[STEP 0][WARN] ws_xy_variation is on but "
+                    "synthetic_ws_truth_xy_maps.png was not produced -- check "
+                    "plot_ws_truth_xy_maps for errors."
+                )
 
             # ------------------------------------------------------------
             # Detailed truth-generation report: how theta was built spatially/
@@ -1939,20 +2110,33 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     )
                 reporter.args_table(
                     "Step 0 — Synthetic ground-truth Waxman-Smits parameters "
-                    "(EC_bulk = theta^m / a * (sigma_w + sigma_s))",
+                    "(EC_bulk = theta^m / a * (sigma_w + sigma_s))"
+                    + ("  [layer baseline -- see note + XY map below]" if WS_XY_VARIATION else ""),
                     _truth_rows,
                 )
-                reporter.log(
-                    "[STEP 0]   " + (
-                        "Truth (a, m, sigma_w, sigma_s) are IDENTICAL across every layer, "
-                        "spatial position, ensemble member, and time step -- ONLY theta "
-                        "varies spatially/temporally (see theta generation mode above). "
-                        "There is currently no spatial or per-horizon heterogeneity in the "
-                        "truth petrophysics."
-                        if _same_everywhere else
-                        "Truth (a, m, sigma_w, sigma_s) DIFFER across layers -- see table above."
+                if WS_XY_VARIATION:
+                    _wsxy = synthetic_geometry.get("ws_xy_variation_params", {})
+                    reporter.log(
+                        "[STEP 0]   ws_xy_variation is ON: the table above is only the "
+                        f"per-layer BASELINE. {_wsxy.get('varying_params', '(?)')} actually "
+                        f"vary continuously in XY per point (pattern="
+                        f"'{_wsxy.get('pattern', '?')}', ranges={_wsxy.get('ranges', '?')}) -- "
+                        "the true per-point-per-layer values used are saved to "
+                        "synthetic_ws_truth_{a,m,sigma_w,sigma_s}.npy and mapped in "
+                        "synthetic_ws_truth_xy_maps.png, NOT summarized by this table."
                     )
-                )
+                else:
+                    reporter.log(
+                        "[STEP 0]   " + (
+                            "Truth (a, m, sigma_w, sigma_s) are IDENTICAL across every layer, "
+                            "spatial position, ensemble member, and time step -- ONLY theta "
+                            "varies spatially/temporally (see theta generation mode above). "
+                            "There is currently no spatial or per-horizon heterogeneity in the "
+                            "truth petrophysics."
+                            if _same_everywhere else
+                            "Truth (a, m, sigma_w, sigma_s) DIFFER across layers -- see table above."
+                        )
+                    )
                 # Flag mismatch against the calibration starting point (prior),
                 # since Step 2/4 calibrate against LAB_P0 / DEFAULT_WS_P0, not
                 # against these truth values.
@@ -1965,7 +2149,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 reporter.log(
                     f"[STEP 0]   Calibration prior/start (a, m, sigma_w, sigma_s) = "
                     f"({_prior0[0]:.2f}, {_prior0[1]:.2f}, {_prior0[2]:.1f} mS/m, "
-                    f"{_prior0[3]:.1f} mS/m) vs. TRUTH ({_truth0['a']:.2f}, "
+                    f"{_prior0[3]:.1f} mS/m) vs. "
+                    f"{'layer-baseline TRUTH (NOT the true spatial value -- see note above)' if WS_XY_VARIATION else 'TRUTH'} "
+                    f"({_truth0['a']:.2f}, "
                     f"{_truth0['m']:.2f}, {_truth0['sigma_w']:.1f} mS/m, "
                     f"{_truth0['sigma_s']:.1f} mS/m) "
                     f"{'-- MISMATCH: prior is far from truth, calibration must recover it via optimization' if tuple(round(x,2) for x in _prior0) != (round(_truth0['a'],2), round(_truth0['m'],2), round(_truth0['sigma_w'],2), round(_truth0['sigma_s'],2)) else '-- prior matches truth'}"
@@ -2002,6 +2188,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 _gen_meta_rows["Random XY field: n_blobs / correlation [m] / seed"] = (
                     f"{_rxy['n_blobs']} / {_rxy['correlation_m']:.2f} / {_rxy['seed']}"
                 )
+            if WS_XY_VARIATION and "ws_xy_variation_params" in synthetic_geometry:
+                _wsxy = synthetic_geometry["ws_xy_variation_params"]
+                _gen_meta_rows["WS xy variation: params / ranges / pattern"] = (
+                    f"{_wsxy['varying_params']} / {_wsxy['ranges']} / {_wsxy['pattern']}"
+                )
+                if _wsxy["pattern"] == "random":
+                    _gen_meta_rows["WS xy field: n_blobs / correlation [m] / seed"] = (
+                        f"{_wsxy['n_blobs']} / {_wsxy['correlation_m']:.2f} / {_wsxy['seed']}"
+                    )
             if "infiltration_params" in synthetic_geometry:
                 _inf = synthetic_geometry["infiltration_params"]
                 _gen_meta_rows["Wetting front z0 / speed / width [m]"] = (
@@ -2235,7 +2430,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             SPATIAL_MATCH_TOLERANCE_M if (data_source == "real" and timelapse) else None
         )
         current_fingerprint = _config_fingerprint(
-            DEPTHS0, FIXED_DEPTHS, PARAM_GRID, COND_RANGES, GAMMA, DROP_COILS,
+            DEPTHS0, FIXED_DEPTHS, PARAM_GRID, COND_RANGES,
+            sorted(PARAM_GRID.get("gamma", [GAMMA])), DROP_COILS,
             spatial_match_tolerance_m=_fingerprint_tolerance,
         )
 
@@ -2246,6 +2442,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # needed. Populated either from a cache hit below or freshly built
         # in the "no cache" branch further down.
         REAL_DATA_REFERENCE_XY = None
+        # Companion to REAL_DATA_REFERENCE_XY: per-epoch mapping from each
+        # epoch's own raw-CSV row order onto the reference-grid index
+        # (matched_indices[t_idx][j] = reference-grid index for that
+        # epoch's row j, or -1 if unmatched). Same lifetime/caching as
+        # REAL_DATA_REFERENCE_XY -- see geometry_utils.
+        # match_epochs_to_reference_grid. Threaded through to Step 6e
+        # (forward_simulate_eca_optimal) so raw per-epoch ECa observations
+        # can be gathered in reference-grid order for comparison against
+        # averaged_models[K-1], which lives on the reference grid --
+        # INDEXING_AUDIT_REPORT.md finding #5.
+        REAL_DATA_MATCHED_INDICES = None
 
         cache_hit = False
         # FIX: the ensemble cache is now used ONLY for real-data runs. It
@@ -2280,6 +2487,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 depths_clean   = cache_data.get("depths_clean")
                 pstds_clean    = cache_data.get("pstds_clean")
                 REAL_DATA_REFERENCE_XY = cache_data.get("reference_xy")
+                REAL_DATA_MATCHED_INDICES = cache_data.get("matched_indices")
                 if depths_clean is None:
                     print("[CACHE][WARN] Cache predates depth capture — re-run to update.")
                 if pstds_clean is None:
@@ -2298,6 +2506,18 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                         "Falling back to loading epoch-0 survey positions only "
                         "for probe placement -- delete this cache and re-run for "
                         "the full union-of-all-epochs reference grid."
+                    )
+                elif (data_source == "real" and timelapse
+                      and REAL_DATA_REFERENCE_XY is not None
+                      and REAL_DATA_MATCHED_INDICES is None):
+                    print(
+                        "[CACHE][WARN] Cache predates matched_indices capture "
+                        "(INDEXING_AUDIT_REPORT.md finding #5) and has no stored "
+                        "epoch->reference-grid mapping. Step 6e "
+                        "(forward_simulate_eca_optimal) will fall back to raw "
+                        "per-epoch CSV row order for observed ECa, which is only "
+                        "correct if that order already matches the reference "
+                        "grid -- delete this cache and re-run to populate it."
                     )
                 print(f"[CACHE] Loaded {models_clean.shape[0]} ensemble members "
                       f"(config fingerprint verified: {current_fingerprint}).")
@@ -2318,10 +2538,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
             alphas         = PARAM_GRID.get("alpha",        [0.03])
             betas          = PARAM_GRID.get("beta",         [0.0])
+            gammas         = PARAM_GRID.get("gamma",        [GAMMA])
             methods        = PARAM_GRID.get("method",       ["L-BFGS-B"])
             forward_models = PARAM_GRID.get("forwardModel", ["FSlin"])
-            combinations   = [(a, b, m, f) for a in alphas for b in betas
-                              for m in methods for f in forward_models]
+            combinations   = [(a, b, g, m, f) for a in alphas for b in betas
+                              for g in gammas for m in methods for f in forward_models]
+            if len(gammas) > 1 and not timelapse:
+                print(f"[WARN] Sweeping {len(gammas)} gamma values on a "
+                      f"non-time-lapse (single-epoch) run -- gamma only "
+                      f"affects time-lapse inversions, so these combos will "
+                      f"produce identical results and just waste compute.")
 
             # Full Cartesian-product expansion of per-layer starting conductivities
             # (was previously a zip-style pairing that only ever produced the
@@ -2344,18 +2570,18 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             print(f"[INFO] Inversion bnds (depths+conds, {len(bnds_list)} params): {bnds_list}")
 
             combo_list = []
-            for alpha, beta, method, f_model in combinations:
+            for alpha, beta, gamma_val, method, f_model in combinations:
                 for conds0 in cond_sets:
-                    combo_list.append((alpha, beta, method, f_model, list(conds0)))
+                    combo_list.append((alpha, beta, gamma_val, method, f_model, list(conds0)))
 
             files_to_process = EM_FNAMES if timelapse else [EM_FNAMES]
             tasks = []
             task_meta = {}          # task_idx -> dict describing the combo, for failure reporting
             global_task_idx = 0
-            for c_idx, (alpha, beta, method, f_model, conds0) in enumerate(combo_list):
+            for c_idx, (alpha, beta, gamma_val, method, f_model, conds0) in enumerate(combo_list):
                 for t_idx, file_path in enumerate(files_to_process):
                     invert_kwargs = {
-                        "alpha": alpha, "beta": beta, "gamma": GAMMA,
+                        "alpha": alpha, "beta": beta, "gamma": gamma_val,
                         "method": method,
                         "forwardModel": f_model, "targetProjection": None,
                         "em_unit": EM_UNIT, "drop_coils": DROP_COILS,
@@ -2365,7 +2591,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                                    fixed_depths_list, invert_kwargs))
                     task_meta[global_task_idx] = {
                         "combo_idx": c_idx, "t_idx": t_idx, "file": file_path,
-                        "alpha": alpha, "beta": beta, "method": method,
+                        "alpha": alpha, "beta": beta, "gamma": gamma_val,
+                        "method": method,
                         "forwardModel": f_model,
                         "conds0": conds0,
                     }
@@ -2413,7 +2640,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             valid_param_metadata = []
             discarded_combos = []   # combos dropped because >=1 of their timesteps failed
 
-            for c_idx, (alpha, beta, method, f_model, conds0) in enumerate(combo_list):
+            for c_idx, (alpha, beta, gamma_val, method, f_model, conds0) in enumerate(combo_list):
                 combo_models = []
                 combo_depths = []
                 combo_pstds = []
@@ -2434,13 +2661,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     packed_depths.append(combo_depths if timelapse else combo_depths[0])
                     packed_pstds.append(combo_pstds if timelapse else combo_pstds[0])
                     valid_param_metadata.append({
-                        "alpha": alpha, "beta": beta, "method": method,
+                        "alpha": alpha, "beta": beta, "gamma": gamma_val,
+                        "method": method,
                         "forwardModel": f_model, "conds0": conds0,
                     })
                 else:
                     discarded_combos.append({
                         "combo_idx": c_idx, "alpha": alpha, "beta": beta,
-                        "method": method,
+                        "gamma": gamma_val, "method": method,
                         "forwardModel": f_model, "conds0": conds0,
                         "failed_at_t_idx": fail_t_idx,
                     })
@@ -2620,6 +2848,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 packed_pstds  = [_remap_combo_to_reference(combo) for combo in packed_pstds]
 
                 REAL_DATA_REFERENCE_XY = (ref_x, ref_y)
+                REAL_DATA_MATCHED_INDICES = matched_indices
 
             models_clean   = np.array(packed_models)
             depths_clean   = np.array(packed_depths)
@@ -2661,6 +2890,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                         "pstds_clean": pstds_clean,
                         "config_fingerprint": current_fingerprint,
                         "reference_xy": REAL_DATA_REFERENCE_XY,
+                        "matched_indices": REAL_DATA_MATCHED_INDICES,
                     }, f)
 
         # -----------------------------------------------------------------------
@@ -2687,7 +2917,11 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 invert_kwargs_diag = {
                     "alpha": meta["alpha"],
                     "beta": meta.get("beta", 0.0),
-                    "gamma": GAMMA,
+                    # .get() fallback for caches written before gamma became
+                    # a per-combo swept value -- old param_metadata entries
+                    # won't have a "gamma" key, so fall back to the current
+                    # (first-value) GAMMA in that case.
+                    "gamma": meta.get("gamma", GAMMA),
                     "method": meta["method"],
                     "forwardModel": meta["forwardModel"],
                     "targetProjection": None,
@@ -2999,7 +3233,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 "axis 2 — n_layers": f"{_nlyr} soil horizons per profile"}),
             "param_grid α values": str(PARAM_GRID.get("alpha", [])),
             "param_grid β values (lateral smoothing)": str(PARAM_GRID.get("beta", [0.0])),
-            "gamma (temporal smoothing, TL only)": str(GAMMA),
+            "param_grid γ values (temporal smoothing, TL only)": str(PARAM_GRID.get("gamma", [GAMMA])),
             "param_grid methods": str(PARAM_GRID.get("method", [])),
             "param_grid forward models": str(PARAM_GRID.get("forwardModel", [])),
             "initial conductivity ranges": str(COND_RANGES),
@@ -3407,11 +3641,30 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             PROBE_X_COORDS_UTM = None
             PROBE_Y_COORDS_UTM = None
 
+        if data_source == "real" and probe_xyz_file is None:
+            # Real-data mode (no explicit --probe-xyz override): the
+            # placement above (PROBE_X_COORDS_UTM/PROBE_LABELS) is a
+            # synthetic-style subsample of the survey grid ("P0", "P1", ...
+            # at NUM_POSITIONS points along x_transect/y_transect) -- it
+            # was never a real TDR station location. Real station
+            # positions/IDs (probe_table['utm_x'/'utm_y'/'station_name'],
+            # built at import time in 0_real_data_loader.py) are the
+            # correct thing to plot on water_content_xy_{scenario}.png's
+            # probe markers, so swap them in here. This does NOT affect
+            # PROBE_X_COORDS_LOCAL/PROBE_Y_COORDS_LOCAL above (used only
+            # for the placeholder `position_results` spatial match below,
+            # which the real branch further down replaces with the
+            # correctly-matched `station_position_results` anyway).
+            PROBE_X_COORDS_UTM = probe_table['utm_x'].tolist()
+            PROBE_Y_COORDS_UTM = probe_table['utm_y'].tolist()
+            PROBE_LABELS = probe_table['station_name'].tolist()
+
         position_results = EMmethod.extract_sample_positions_from_survey(
             survey_df=survey_df, models=models_clean,
             probe_x_coords=PROBE_X_COORDS_LOCAL,
             probe_y_coords=PROBE_Y_COORDS_LOCAL,   # non-zero in 2D mode → XY distance auto-enabled
             probe_depths=PROBE_DEPTHS,        # <-- Z axis (unchanged)
+            probe_ids=PROBE_LABELS,           # sensor IDs -> plot_probe_matching / plot_calibration_density_* markers
             # Horizon routing uses EFFECTIVE_DEPTHS0 (== DEPTHS0 when fixed;
             # the ensemble-median FITTED interface depths otherwise -- see
             # "EFFECTIVE DEPTHS FOR TDR PROBE HORIZON ROUTING" above).
@@ -3419,6 +3672,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         )
         sample_positions    = EMmethod.sample_positions_from_results(position_results)
         probe_layer_indices = EMmethod.sample_layer_indices_from_results(position_results)
+        # Per-base-probe sensor ID (real station name / synthetic "P0",
+        # "P1", ... -- see PROBE_LABELS above), one entry per
+        # position_results/sample_positions element at this point (before
+        # any timelapse expansion below). Threaded to parity_validation_
+        # by_sensor.png / petro_calibration_localized_map_*.png so those
+        # plots group/label by real sensor identity instead of by the
+        # anonymous EM spatial index.
+        sample_sensor_ids = [r.probe_id for r in position_results]
 
         if data_source != "real":
             # Report the resolved x/y/z of every synthetic SWC/TDR probe.
@@ -3557,6 +3818,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             sample_positions    = [pos for pos in sample_positions for _ in range(n_time)]
             probe_layer_indices = [li  for li  in probe_layer_indices for _ in range(n_time)]
             sample_times        = [t for _ in range(n_probes_base) for t in range(n_time)]
+            sample_sensor_ids   = [pid for pid in sample_sensor_ids for _ in range(n_time)]
         else:
             sample_times = [0] * len(sample_positions)
 
@@ -3605,6 +3867,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 probe_x_coords=probe_table['utm_x'].tolist(),
                 probe_y_coords=probe_table['utm_y'].tolist(),
                 probe_depths=None, depths0=None, window_m=WINDOW_M,
+                # Real TDR station IDs (the logger 'Unit' column, captured
+                # at import time in 0_real_data_loader.py) -> labels the
+                # probe markers on probe_em_matching_real_stations.png,
+                # calibration_density_hard_real_stations.png, and
+                # calibration_density_kernel.png (via CALIB_POSITION_RESULTS
+                # below) with real station names instead of anonymous dots.
+                probe_ids=probe_table['station_name'].tolist(),
             )
             station_to_spatial_idx = EMmethod.sample_positions_from_results(station_position_results)
             reporter.log(
@@ -3699,6 +3968,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 station_to_spatial_idx[obs['probe_index']] for obs in observations_list
             ])
             sample_times = np.array([obs['time_index'] for obs in observations_list])
+            # Real TDR station name per observation, routed through the
+            # same 'probe_index' (station-ordinal index into probe_table)
+            # each observation already carries -- overwrites the
+            # synthetic-branch sample_sensor_ids above with real station
+            # identity for parity_validation_by_sensor.png /
+            # petro_calibration_localized_map_*.png.
+            _station_names = probe_table['station_name'].to_numpy()
+            sample_sensor_ids = [
+                _station_names[obs['probe_index']] for obs in observations_list
+            ]
 
             # Map each probe's installation depth to its 0-based soil-horizon
             # index using EFFECTIVE_DEPTHS0 (== DEPTHS0 when fixed; the
@@ -3814,6 +4093,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             theta_obs_val        = tvs.subset(np.asarray(theta_obs), split.val)
             probe_layer_val      = (tvs.subset(np.asarray(probe_layer_indices), split.val)
                                      if probe_layer_indices is not None else None)
+            sample_sensor_ids_val = tvs.subset(
+                np.asarray(sample_sensor_ids, dtype=object), split.val
+            )
 
             # Route ONLY the training subset into every downstream step
             # that currently drives fitting/selection (Step 2/3/4/5). This
@@ -3825,6 +4107,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             theta_obs           = tvs.subset(np.asarray(theta_obs), split.train)
             probe_layer_indices = (tvs.subset(np.asarray(probe_layer_indices), split.train)
                                     if probe_layer_indices is not None else None)
+            sample_sensor_ids   = tvs.subset(
+                np.asarray(sample_sensor_ids, dtype=object), split.train
+            )
 
         # -----------------------------------------------------------------------
         # STEP 2 — WAXMAN-SMITS PETROPHYSICAL CALIBRATION
@@ -3838,11 +4123,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
         # FIX ("TDR measurement uncertainty is collected but never used to
         # weight the calibration"): only pass a genuine positive std through
-        # -- TDR_NOISE_STD is deliberately forced to 0.0 for real-data runs
-        # (this pipeline has no real per-probe noise estimate there yet),
-        # and 1/0^2 weighting would be nonsensical/unstable. None disables
-        # weighting entirely inside calibrate_petrophysical_relationship,
-        # i.e. no behaviour change for real-data runs from before this fix.
+        # -- TDR_NOISE_STD is whatever cfg.tdr_noise_std resolved to at
+        # Step 0 (synthetic and real-data runs alike; see the FIX note
+        # there). None/0.0/negative disables weighting entirely inside
+        # calibrate_petrophysical_relationship -- 1/0^2 weighting would be
+        # nonsensical/unstable, so that case is passed through as None
+        # rather than as a literal 0.0.
         _theta_obs_std_step2 = TDR_NOISE_STD if TDR_NOISE_STD and TDR_NOISE_STD > 0 else None
         reporter.log(
             f"[STEP 2] TDR observation weighting: "
@@ -3861,6 +4147,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
             lab_p0=LAB_P0,
             theta_obs_std=_theta_obs_std_step2,
+            sensor_ids=sample_sensor_ids,
         )
 
         # ------------------------------------------------------------------
@@ -4069,6 +4356,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     lab_p0=LAB_P0,
                     theta_obs_std=_theta_obs_std_step2,
                     global_fit=fits_step2[0],
+                    sensor_ids=sample_sensor_ids,
                 )
                 reporter.log(
                     f"[STEP 2 LOCALIZED] Diagnostic complete -> "
@@ -4691,6 +4979,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # correct absolute-UTM counterparts computed earlier.
             probe_utm_x=PROBE_X_COORDS_UTM,
             probe_utm_y=PROBE_Y_COORDS_UTM,
+            # Real TDR station names in real-data mode (overridden above),
+            # synthetic "P0","P1",... labels otherwise.
+            probe_ids=PROBE_LABELS,
             xy_render_mode=xy_render_mode,
             # Auto-sizes the extra water_content_xy_{scenario}_imshow.png
             # raster's pixel size to 2 * window_m -- see plot_from_pipeline.
@@ -4721,6 +5012,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     # every probe marker the same way.
                     probe_utm_x=PROBE_X_COORDS_UTM,
                     probe_utm_y=PROBE_Y_COORDS_UTM,
+                    probe_ids=PROBE_LABELS,
                     xy_render_mode=xy_render_mode,
                     window_m=WINDOW_M,
                 )
@@ -4849,7 +5141,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         _base_inv_kwargs = {
             "alpha":        PARAM_GRID.get("alpha",        [0.03])[0],
             "beta":         PARAM_GRID.get("beta",         [0.0])[0],
-            "gamma":        GAMMA,
+            "gamma":        PARAM_GRID.get("gamma",        [GAMMA])[0],
             "method":       PARAM_GRID.get("method",       ["L-BFGS-B"])[0],
             "forwardModel": PARAM_GRID.get("forwardModel", ["FSlin"])[0],
             "bnds":         _build_inversion_bnds(DEPTHS0, _fixed_depths_list_6b, COND_RANGES),
@@ -4915,7 +5207,11 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             output_dir       = OUTPUT_DIR,
             fixed_depths     = _fixed_bool,
             mode             = mode,
-            max_realisations = 4,                # cap: 4 sample realisations rendered
+            max_realisations = 1,                # cap: 1 sample realisation rendered (was 4 —
+                                                   # each realisation re-inverts the full survey
+                                                   # from scratch per time step; with real-data
+                                                   # point counts of 20k-47k this was the main
+                                                   # source of multi-hour Step 6b runtimes)
             em_unit          = EM_UNIT,
         )
 
@@ -5007,6 +5303,22 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.log(" [PIPELINE] STEP 6e: FORWARD-SIMULATE ECa FROM OPTIMAL MODEL")
         reporter.log("=" * 80)
 
+        # INDEXING_AUDIT_REPORT.md finding #5: for real-data, time-lapse
+        # runs, averaged_models[K-1]'s spatial axis is the reference grid
+        # (geometry_utils.match_epochs_to_reference_grid), not any one
+        # epoch's own raw-CSV row order/count. forward_simulate_eca_optimal
+        # forward-simulates ECa from that reference-grid-ordered model, so
+        # the observed ECa it's compared against must be gathered in the
+        # SAME reference-grid order -- REAL_DATA_MATCHED_INDICES (built
+        # alongside REAL_DATA_REFERENCE_XY, see Step 1 above) is exactly
+        # that per-epoch row->reference-grid-index map, and
+        # plot_solution_diagnostics.forward_simulate_eca_optimal now
+        # accepts it and gathers eca_obs/xpos through it accordingly.
+        #
+        # None for synthetic data and for real single-survey (non-time-
+        # lapse) runs, where raw CSV order already IS the model's own
+        # order and no remap ever happened -- forward_simulate_eca_optimal
+        # keeps reading raw CSV rows directly in that case.
         eca_forward_results = psol.forward_simulate_eca_optimal(
             csv_paths       = EM_FNAMES,
             averaged_models = averaged_models,
@@ -5017,6 +5329,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             x_transect      = x_transect,
             forward_model   = _base_inv_kwargs.get("forwardModel", "CS"),
             scenario_name   = cfg.name if cfg else "default",
+            matched_indices = (
+                REAL_DATA_MATCHED_INDICES
+                if (data_source == "real" and timelapse) else None
+            ),
         )
         for _t_idx, _rmse_eca in eca_forward_results:
             reporter.metric(f"Forward ECa RMSE (optimal, t={_t_idx})", f"{_rmse_eca:.4f} mS/m")
@@ -5308,11 +5624,16 @@ if __name__ == "__main__":
              "file to resolve a run_id to its report automatically.",
     )
     parser.add_argument(
-        "--gamma", type=float, default=None, metavar="G",
-        help="Temporal regularisation between time steps (>= 0), only used "
-             "for time-lapse (multi-epoch) inversions. Overrides 'gamma' in "
-             "the scenario config when passed; falls back to the scenario "
-             "value (or 0.0) otherwise.",
+        "--gamma", nargs="+", type=float, default=None, metavar="G",
+        help="One or more temporal regularisation values [>= 0, time-lapse/"
+             "multi-epoch inversions only] to sweep, e.g. --gamma 0 5 10. "
+             "Each value gets combined with every alpha/beta/method/"
+             "forwardModel/starting-conductivity combo, same as --beta -- "
+             "so N gamma values means N x as many ensemble tasks. "
+             "Overrides the 'gamma' entry in the scenario's param_grid "
+             "when passed; falls back to the scenario value (or [0.0]) "
+             "otherwise. No effect on non-time-lapse (single-epoch) runs "
+             "regardless of value.",
     )
     parser.add_argument(
         "--ws-localized-bandwidth", type=float, default=None, metavar="C",

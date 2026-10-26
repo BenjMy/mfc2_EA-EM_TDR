@@ -279,6 +279,241 @@ def plot_one_to_one_validation(
     plt.close()
     print(f"[PLOT] Parity check graph exported to '{output_path}'")
 
+
+def plot_one_to_one_validation_by_sensor(
+    theta_obs: np.ndarray,
+    theta_pred: np.ndarray,
+    sample_positions: Sequence[int],
+    probe_x_coords: Sequence[float] | None = None,
+    probe_y_coords: Sequence[float] | None = None,
+    sensor_ids: Sequence[str] | None = None,
+    output_path: str = "mfc2_outputs/parity_validation_by_sensor.png",
+    min_points_per_sensor: int = 2,
+    max_labelled_sensors: int = 20,
+) -> None:
+    """
+    Per-sensor companion to ``plot_one_to_one_validation``.
+
+    The pooled parity plot mixes observations from every EM measurement
+    point into one scatter/R^2, which is fine with no localisation but
+    becomes misleading once ``sample_positions`` spans many spatial
+    locations: the pooled R^2 is really an average over N different
+    local relationships, and a location-specific bias (e.g. one probe
+    installed in a different soil unit) is invisible in the pooled cloud.
+
+    This renders two panels instead:
+      * left  -- the same parity scatter, coloured by sensor (spatial
+                 index), so clusters/outlying sensors are visible directly;
+      * right -- a horizontal bar chart of Pearson R^2 computed
+                 independently per sensor, sorted best-to-worst, with the
+                 pooled R^2 drawn as a reference line. Sensors with fewer
+                 than ``min_points_per_sensor`` observations are shown
+                 greyed-out / "n/a" (R^2 is not meaningful from 1 point).
+
+    Parameters
+    ----------
+    theta_obs, theta_pred : np.ndarray, shape (n_samples,)
+        Same arrays passed to ``plot_one_to_one_validation``
+        (``best_fit.observed_theta`` / ``best_fit.predicted_theta``).
+    sample_positions : sequence of int, length n_samples
+        Spatial index into the EM measurement-point axis for each
+        observation -- i.e. the same ``sample_positions`` already passed
+        into ``run_petro``/``calibrate_petrophysical_relationship``. Used
+        as the grouping key when ``sensor_ids`` is not given.
+    probe_x_coords, probe_y_coords : sequence of float, optional
+        Coordinates of each EM measurement point (length = number of
+        distinct measurement points, indexed by the values in
+        ``sample_positions``), e.g. ``point_x_coords``/``point_y_coords``
+        from ``run_petro_localized`` or the survey's ``utm_x``/``utm_y``.
+        When given (and ``sensor_ids`` is not), sensor labels in the bar
+        chart show the physical location instead of a bare integer index.
+        Purely cosmetic -- ignored once ``sensor_ids`` is given, since
+        real station IDs are a strictly better label.
+    sensor_ids : sequence of str, length n_samples, optional
+        Real TDR station ID (e.g. ``probe_table['station_name']``, or the
+        synthetic ``PROBE_LABELS``) for each individual observation --
+        same order/length as ``theta_obs``/``sample_positions``, i.e.
+        ``EMmethod.SamplePositionResult.probe_id`` expanded per
+        observation, NOT deduplicated per EM point. This is the key
+        upgrade over grouping by ``sample_positions`` alone: several TDR
+        stations can spatially collapse onto the SAME EM measurement
+        point (``extract_sample_positions_from_survey``'s
+        ``representative_index`` -- e.g. 11 of 20 stations onto one EM
+        point in a real-data run), and grouping by ``sample_positions``
+        would silently merge those distinct stations into one bar/color.
+        When given, grouping and labeling both switch to the real
+        per-station identity instead, so each physical sensor gets its
+        own bar even if it shares an EM point with others. ``None``
+        (default) falls back to the original ``sample_positions``-based
+        grouping, unchanged behaviour from before this argument existed.
+    output_path : str, optional
+        Where to save the figure.
+    min_points_per_sensor : int, optional
+        Minimum observations at a sensor to compute its own R^2. Default 2
+        (Pearson r needs >=2 non-degenerate pairs); sensors below this are
+        still shown in the bar chart, greyed out, so you can see coverage
+        gaps rather than have them silently disappear.
+    max_labelled_sensors : int, optional
+        Above this many distinct sensors, y-axis tick labels are dropped
+        from the bar chart (still one bar per sensor, sorted) to keep it
+        legible -- the scatter panel remains the way to inspect individual
+        points at that point.
+    """
+    from scipy.stats import pearsonr
+
+    theta_obs = np.asarray(theta_obs, dtype=float)
+    theta_pred = np.asarray(theta_pred, dtype=float)
+    sample_positions = np.asarray(sample_positions)
+
+    if len(theta_obs) != len(sample_positions):
+        print(
+            f"[WARN] plot_one_to_one_validation_by_sensor: theta_obs has "
+            f"{len(theta_obs)} entries but sample_positions has "
+            f"{len(sample_positions)} -- skipping (lengths must match, "
+            f"one entry per observation)."
+        )
+        return
+
+    use_sensor_ids = sensor_ids is not None
+    if use_sensor_ids:
+        sensor_ids = np.asarray(sensor_ids, dtype=object)
+        if len(sensor_ids) != len(theta_obs):
+            print(
+                f"[WARN] plot_one_to_one_validation_by_sensor: sensor_ids has "
+                f"{len(sensor_ids)} entries but theta_obs has {len(theta_obs)} "
+                f"-- falling back to sample_positions-based grouping."
+            )
+            use_sensor_ids = False
+        elif any(sid is None for sid in sensor_ids):
+            # Missing IDs for some observations (e.g. an older run's
+            # position_results without probe_ids attached) -- fall back to
+            # "#pos" for just those entries rather than losing the whole
+            # per-observation split.
+            sensor_ids = np.array(
+                [sid if sid is not None else f"#{pos}"
+                 for sid, pos in zip(sensor_ids, sample_positions)],
+                dtype=object,
+            )
+
+    group_key = sensor_ids if use_sensor_ids else sample_positions
+
+    uniq_groups = np.unique(group_key)
+    if len(uniq_groups) <= 1:
+        print(
+            "[PLOT] plot_one_to_one_validation_by_sensor: only one distinct "
+            "sensor position present -- nothing to facet, skipping "
+            "(the pooled parity_validation.png plot already covers this case)."
+        )
+        return
+
+    def _sensor_label(group) -> str:
+        if use_sensor_ids:
+            return str(group)
+        pos = group
+        if probe_x_coords is not None:
+            x = np.asarray(probe_x_coords)[pos]
+            if probe_y_coords is not None:
+                y = np.asarray(probe_y_coords)[pos]
+                return f"#{pos} (x={x:.1f}, y={y:.1f})"
+            return f"#{pos} (x={x:.1f})"
+        return f"#{pos}"
+
+    # Per-sensor R^2 (Pearson r^2), RMSE, and n.
+    rows = []
+    for group in uniq_groups:
+        mask = group_key == group
+        n = int(mask.sum())
+        obs_i, pred_i = theta_obs[mask], theta_pred[mask]
+        r2 = np.nan
+        if n >= min_points_per_sensor and np.std(obs_i) > 0 and np.std(pred_i) > 0:
+            try:
+                r_val, _ = pearsonr(obs_i, pred_i)
+                r2 = r_val ** 2
+            except Exception as e:
+                print(f"[WARN] Could not compute per-sensor R2 for sensor {group}: {e}")
+        rmse = float(np.sqrt(np.mean((obs_i - pred_i) ** 2))) if n > 0 else np.nan
+        rows.append({"pos": group, "n": n, "r2": r2, "rmse": rmse})
+
+    # Sorted best-to-worst by R^2 (NaNs -- insufficient coverage -- last).
+    rows_sorted = sorted(rows, key=lambda r: (-r["r2"] if not np.isnan(r["r2"]) else 1e9))
+
+    # Pooled R^2, for the reference line (same computation as
+    # plot_one_to_one_validation).
+    pooled_r2 = np.nan
+    if len(theta_obs) >= 2 and np.std(theta_obs) > 0 and np.std(theta_pred) > 0:
+        r_val, _ = pearsonr(theta_obs, theta_pred)
+        pooled_r2 = r_val ** 2
+
+    fig, (ax_scatter, ax_bar) = plt.subplots(
+        1, 2, figsize=(12, max(5, 0.32 * len(uniq_groups) + 2))
+    )
+
+    # --- Left: pooled scatter, coloured by sensor -------------------------
+    cmap = plt.get_cmap("tab20" if len(uniq_groups) <= 20 else "viridis")
+    color_norm = {group: i / max(1, len(uniq_groups) - 1)
+                  for i, group in enumerate(uniq_groups)}
+    colors = np.array([cmap(color_norm[g]) for g in group_key])
+
+    min_val = min(theta_obs.min(), theta_pred.min()) * 0.95
+    max_val = max(theta_obs.max(), theta_pred.max()) * 1.05
+    ax_scatter.plot([min_val, max_val], [min_val, max_val],
+                     color='red', linestyle='--', linewidth=1.2, zorder=2,
+                     label='1:1 Parity Line')
+    ax_scatter.scatter(theta_obs, theta_pred, c=colors, edgecolor='black',
+                        linewidth=0.4, s=60, zorder=3)
+    ax_scatter.set_xlim(min_val, max_val)
+    ax_scatter.set_ylim(min_val, max_val)
+    ax_scatter.set_xlabel("Observed TDR Soil Moisture [m$^3$/m$^3$]", fontsize=10)
+    ax_scatter.set_ylabel("Predicted Model Translation [m$^3$/m$^3$]", fontsize=10)
+    ax_scatter.set_title("Coloured by sensor location", fontsize=10)
+    ax_scatter.grid(True, linestyle=':', alpha=0.6)
+    ax_scatter.legend(loc='lower right', fontsize=8)
+
+    # --- Right: per-sensor R^2 bar chart -----------------------------------
+    labels = [_sensor_label(r["pos"]) for r in rows_sorted]
+    r2_vals = [r["r2"] for r in rows_sorted]
+    y_pos = np.arange(len(rows_sorted))
+    bar_colors = [cmap(color_norm[r["pos"]]) if not np.isnan(r["r2"]) else "lightgrey"
+                  for r in rows_sorted]
+    plot_vals = [0.0 if np.isnan(v) else v for v in r2_vals]
+
+    ax_bar.barh(y_pos, plot_vals, color=bar_colors, edgecolor='black', linewidth=0.4)
+    if not np.isnan(pooled_r2):
+        ax_bar.axvline(pooled_r2, color='red', linestyle='--', linewidth=1.2,
+                        label=f'Pooled R$^2$ = {pooled_r2:.3f}')
+    ax_bar.set_yticks(y_pos)
+    if len(rows_sorted) <= max_labelled_sensors:
+        ax_bar.set_yticklabels(labels, fontsize=7)
+    else:
+        ax_bar.set_yticklabels([])
+        ax_bar.set_ylabel(f"{len(rows_sorted)} sensors (sorted, best to worst)", fontsize=9)
+    ax_bar.invert_yaxis()  # best sensor at top
+    ax_bar.set_xlim(0, 1.0)
+    ax_bar.set_xlabel("Per-sensor R$^2$", fontsize=10)
+    ax_bar.set_title("Goodness-of-fit per sensor", fontsize=10)
+    ax_bar.grid(True, axis='x', linestyle=':', alpha=0.6)
+    ax_bar.legend(loc='lower right', fontsize=8)
+
+    # Annotate n and "n/a" for under-covered sensors directly on the bars.
+    for yi, r in zip(y_pos, rows_sorted):
+        label = "n/a" if np.isnan(r["r2"]) else f"n={r['n']}"
+        ax_bar.text(0.01, yi, label, va='center', ha='left', fontsize=6.5,
+                    color='dimgray')
+
+    fig.suptitle("Step 2 Quality Control: Per-Sensor Residual Fit", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(output_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+
+    n_covered = sum(1 for r in rows if not np.isnan(r["r2"]))
+    print(
+        f"[PLOT] Per-sensor parity check exported to '{output_path}' "
+        f"({n_covered}/{len(rows)} sensors had >= {min_points_per_sensor} "
+        f"observation(s); pooled R$^2$ = "
+        f"{'n/a' if np.isnan(pooled_r2) else f'{pooled_r2:.3f}'})"
+    )
+
+
 def plot_ws_parameter_histograms(fits, best_fit, depths0, lab_p0, output_path):
     """
     Plots histograms of the Waxman-Smits petrophysical parameters
@@ -688,7 +923,7 @@ def _extract_ec_for_plots(
     sample_positions: Sequence[int],
     sample_times: Sequence[int],
     probe_layer_indices: Sequence[int] | None,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Extract matched (σ_b, layer) pairs for the best ensemble member (index 0),
     mirroring the routing logic inside
@@ -707,6 +942,17 @@ def _extract_ec_for_plots(
     spatial_profile : np.ndarray, shape (num_measured_points, num_layers)
         Time-averaged (or single-time) EC for the best ensemble member —
         used for the dual-depth profile plot.
+    kept_indices : np.ndarray, shape (n_calibration_samples,)
+        Index into the ORIGINAL ``sample_positions``/``sample_times``/
+        ``probe_layer_indices`` (length = len(sample_positions)) that each
+        element of ``ec_extracted`` came from — includes both the horizon
+        routing AND the NaN-observation drop (real-data time-lapse
+        reference-grid gaps), so it's guaranteed to match
+        ``best_fit.observed_theta`` exactly. Use this — NOT
+        ``geometry_utils.route_array_to_horizons`` — to route any other
+        per-observation array (``sample_positions``, ``probe_layer_indices``,
+        per-probe coordinates) so it lines up with the fitted values:
+        ``routed = np.asarray(other_array)[kept_indices]``.
     """
     timelapse = models.ndim == 4
 
@@ -721,20 +967,20 @@ def _extract_ec_for_plots(
         spatial_profile = best_member
         num_layers = models.shape[2]
 
-    # Horizon routing now delegates to the single shared implementation in
-    # geometry_utils.py (pipeline_improvement_report.md, section 6 / action
-    # item 3) instead of an independently reimplemented copy of the same
-    # strided/modulo/explicit-index logic used by
-    # em_methodology.calibrate_petrophysical_relationship and by
+    # Horizon routing (+ NaN-observation drop) now delegates to the single
+    # shared implementation in geometry_utils.py (pipeline_improvement_
+    # report.md, section 6 / action item 3) instead of an independently
+    # reimplemented copy of the same strided/modulo/explicit-index logic
+    # used by em_methodology.calibrate_petrophysical_relationship and by
     # 4_run_select_assess.py::_extract_ec_at_probes.
-    ec_extracted, _horizon_slices = geometry_utils.route_ec_to_horizons(
+    ec_extracted, _horizon_slices, kept_indices = geometry_utils.route_ec_to_horizons(
         ec_array=best_member,
         sample_positions=sample_positions,
         sample_times=sample_times,
         probe_layer_indices=probe_layer_indices,
         num_layers=num_layers,
     )
-    return ec_extracted, spatial_profile
+    return ec_extracted, spatial_profile, kept_indices
 
 
 
@@ -879,7 +1125,7 @@ def run_petro(
         # Extract EC values and a spatial profile for plotting.
         # For 4D arrays: each probe's σ_b is read at its own survey time step,
         # and the depth profile uses the time-averaged EC of the best member.
-        ec_extracted, spatial_profile = _extract_ec_for_plots(
+        ec_extracted, spatial_profile, kept_indices = _extract_ec_for_plots(
             models=models,
             sample_positions=sample_positions,
             sample_times=sample_times,
@@ -907,6 +1153,28 @@ def run_petro(
             theta_obs=best_fit.observed_theta,
             theta_pred=best_fit.predicted_theta,
             output_path=os.path.join(output_dir, "parity_validation.png"),
+        )
+
+        # Per-sensor companion: only meaningful once observations actually
+        # come from more than one spatial location (i.e. --mode 2d / any
+        # localisation run with several probes). No-op (prints and returns)
+        # for the classic single-location / 1-D case, so this is safe to
+        # leave on unconditionally.
+        #
+        # IMPORTANT: best_fit.observed_theta/predicted_theta are routed to
+        # HORIZON order AND have any non-finite-EC observation dropped
+        # (see geometry_utils.route_ec_to_horizons) -- so sample_positions
+        # must be gathered via the SAME kept_indices _extract_ec_for_plots
+        # just computed above, not re-routed independently, or sensor
+        # labels could silently line up with the wrong observations (or,
+        # once any NaN-drop has happened, with the wrong COUNT of
+        # observations entirely).
+        routed_sample_positions = np.asarray(sample_positions)[kept_indices]
+        plot_one_to_one_validation_by_sensor(
+            theta_obs=best_fit.observed_theta,
+            theta_pred=best_fit.predicted_theta,
+            sample_positions=routed_sample_positions,
+            output_path=os.path.join(output_dir, "parity_validation_by_sensor.png"),
         )
 
     return fits
@@ -977,14 +1245,13 @@ def plot_petrophysical_calibration_localized_overlay(
 
     Notes
     -----
-    If ``probe_x_coords``/``probe_layer_indices`` and ``ec_values``/
-    ``theta_obs`` turn out NOT to be mutually aligned in your pipeline's
-    actual sample ordering (this function assumes the same convention
-    ``plot_petrophysical_calibration`` already relies on — it was not
-    possible to fully verify against ``geometry_utils.route_ec_to_horizons``,
-    which wasn't available when this was written), the symptom would be
-    scatter points and local curves that visibly don't correspond to the
-    same probes; check that first if the plot looks wrong.
+    ``probe_x_coords``/``probe_y_coords``/``probe_layer_indices`` MUST be
+    in the same horizon-routed order as ``ec_values``/``theta_obs`` (i.e.
+    already passed through ``geometry_utils.route_array_to_horizons`` with
+    the same ``probe_layer_indices``/``num_layers``, as ``run_petro_localized``
+    now does before calling this). If a future caller passes them in plain
+    per-observation order instead, the symptom is scatter points and local
+    curves that visibly don't correspond to the same probes.
     """
     num_horizons = len(petro_fit.horizon_fits)
     colors = plt.cm.viridis(np.linspace(0.15, 0.85, num_horizons))
@@ -1286,20 +1553,49 @@ def run_petro_localized(
                 )
 
         if global_fit is not None:
-            ec_extracted, _ = _extract_ec_for_plots(
+            ec_extracted, _, kept_indices = _extract_ec_for_plots(
                 models=models,
                 sample_positions=sample_positions,
                 sample_times=sample_times,
                 probe_layer_indices=probe_layer_indices,
+            )
+            # BUGFIX: ec_extracted/global_fit.observed_theta are routed to
+            # HORIZON order AND have any non-finite-EC observation dropped
+            # by _extract_ec_for_plots/route_ec_to_horizons (real-data
+            # time-lapse reference-grid gaps -- see
+            # geometry_utils.route_ec_to_horizons), i.e. concatenated
+            # per-horizon, NaN-dropped, rather than left in original
+            # per-observation order/count. probe_x_coords/probe_y_coords/
+            # probe_layer_indices above, however, are still in ORIGINAL
+            # per-observation order/count (built directly from
+            # sample_positions/probe_layer_indices, never routed). Passing
+            # them through as-is made
+            # plot_petrophysical_calibration_localized_overlay's internal
+            # `mask = probe_layer_indices == h_idx` select the wrong
+            # elements (or, once any NaN-drop occurred, a mask of the wrong
+            # LENGTH entirely -- a hard IndexError) out of the routed
+            # ec_values/theta_obs arrays. Gather all three with
+            # kept_indices -- NOT geometry_utils.route_array_to_horizons,
+            # which only replicates the routing, not the NaN-drop -- so
+            # every array passed in below shares one consistent,
+            # length-matched order with ec_extracted/global_fit.observed_theta.
+            probe_x_coords_routed = np.asarray(probe_x_coords)[kept_indices]
+            probe_y_coords_routed = (
+                np.asarray(probe_y_coords)[kept_indices]
+                if probe_y_coords is not None else None
+            )
+            probe_layer_indices_routed = (
+                np.asarray(probe_layer_indices)[kept_indices]
+                if probe_layer_indices is not None else None
             )
             plot_petrophysical_calibration_localized_overlay(
                 ec_values=ec_extracted,
                 theta_obs=global_fit.observed_theta,
                 petro_fit=global_fit,
                 localized_fit=best_fit,
-                probe_x_coords=probe_x_coords,
-                probe_y_coords=probe_y_coords,
-                probe_layer_indices=probe_layer_indices,
+                probe_x_coords=probe_x_coords_routed,
+                probe_y_coords=probe_y_coords_routed,
+                probe_layer_indices=probe_layer_indices_routed,
                 output_path=os.path.join(output_dir, "petro_calibration_localized_overlay.png"),
             )
         else:

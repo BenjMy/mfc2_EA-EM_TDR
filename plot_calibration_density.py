@@ -91,6 +91,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.patheffects as pe
 
 from em_methodology import gaspari_cohn
 # Reused rather than reimplemented so the WS-params XZ plot below uses the
@@ -119,6 +120,17 @@ def _probe_xy(position_results: Sequence[Any]) -> tuple[np.ndarray, np.ndarray]:
     return probe_x, probe_y
 
 
+def _probe_ids(position_results: Sequence[Any]) -> list[str] | None:
+    """
+    Extract each result's ``.probe_id`` (set when ``extract_sample_positions_
+    from_survey`` was called with ``probe_ids=...``). Returns None -- not a
+    list of Nones -- when no result carries an id, so callers can cheaply
+    skip annotation for older/unlabeled position_results.
+    """
+    ids = [getattr(r, "probe_id", None) for r in position_results]
+    return ids if any(i is not None for i in ids) else None
+
+
 def _render_density_map(
     x_em: np.ndarray,
     y_em: np.ndarray,
@@ -130,6 +142,7 @@ def _render_density_map(
     cbar_label: str,
     cmap: str,
     out_path: str,
+    probe_ids: Sequence[str] | None = None,
 ) -> str:
     fig, ax = plt.subplots(figsize=(8.5, 7.5))
 
@@ -154,6 +167,15 @@ def _render_density_map(
         probe_x, probe_y, marker="v", s=60, color="black",
         edgecolor="white", linewidth=0.6, zorder=3, label="TDR probe",
     )
+    if probe_ids is not None:
+        for px, py, pid in zip(probe_x, probe_y, probe_ids):
+            if pid is None:
+                continue
+            ax.annotate(
+                str(pid), (px, py), xytext=(4, 4), textcoords="offset points",
+                fontsize=6.5, color="black", zorder=4,
+                path_effects=[pe.withStroke(linewidth=1.5, foreground="white")],
+            )
 
     ax.set_xlabel("x [m]" if y_em.any() else "Distance along transect [m]", fontsize=10)
     ax.set_ylabel("y [m]", fontsize=10)
@@ -241,6 +263,7 @@ def plot_calibration_density_hard(
         title=title, subtitle=subtitle,
         cbar_label="TDR probes calibrating this EM point (hard count)",
         cmap=cmap, out_path=out_path,
+        probe_ids=_probe_ids(position_results),
     )
     print(f"[CALIB DENSITY] Saved hard-window density map -> {out_path}")
     return out_path
@@ -337,6 +360,7 @@ def plot_calibration_density_kernel(
         title=title, subtitle=subtitle,
         cbar_label="Effective TDR probes (Gaspari-Cohn-weighted)",
         cmap=cmap, out_path=out_path,
+        probe_ids=_probe_ids(position_results),
     )
     print(f"[CALIB DENSITY] Saved kernel-localized density map -> {out_path}")
     return out_path
