@@ -3,7 +3,8 @@
 """
 test_spatial_reference_grid.py
 ===============================
-Standalone verification (no pytest, no real `emagpy` install required) for
+pytest verification (no real `emagpy` install required: tests/conftest.py
+stubs it when absent) for
 the "spatial reference-grid matching, not row trimming" fix:
 
   1. geometry_utils.match_epochs_to_reference_grid — the core algorithm.
@@ -21,8 +22,7 @@ the "spatial reference-grid matching, not row trimming" fix:
          NaN-aware reductions and preserve NaN instead of miscoding it as
          a false "CV = 0.0 / zero uncertainty".
 
-Run with:  python3 test_spatial_reference_grid.py
-Exits non-zero (and prints which check failed) on any assertion failure.
+Run with:  python3 -m pytest tests/test_spatial_reference_grid.py -v
 """
 
 from __future__ import annotations
@@ -33,18 +33,9 @@ import numpy as np
 import geometry_utils
 
 
-PASS = 0
-FAIL = 0
-
-
 def check(name: str, condition: bool, detail: str = "") -> None:
-    global PASS, FAIL
-    if condition:
-        PASS += 1
-        print(f"  [PASS] {name}")
-    else:
-        FAIL += 1
-        print(f"  [FAIL] {name}  {detail}")
+    """Assertion with a readable message (pytest reports the failing check)."""
+    assert condition, f"{name}  {detail}"
 
 
 def section(title: str) -> None:
@@ -513,26 +504,3 @@ def test_scenario_loader_spatial_match_tolerance_field():
             field_default = f.default
     check("ScenarioConfig.spatial_match_tolerance_m default is 2.0",
           field_default == 2.0, f"got {field_default}")
-
-
-# ===========================================================================
-# MAIN
-# ===========================================================================
-
-if __name__ == "__main__":
-    test_reference_grid_basic_union()
-    test_reference_grid_overlap_dedup()
-    test_reference_grid_no_data_loss_matches_union_cardinality()
-    test_remap_preserves_values_and_nan_fills_gaps()
-    test_rmse_nanmean_vs_old_plain_mean()
-    test_rmse_all_nan_stack_is_reported_not_silently_wrong()
-    test_cv_map_preserves_nan_instead_of_false_zero()
-    test_calibrate_drops_nan_observations_not_whole_horizon()
-    test_calibrate_all_nan_horizon_becomes_uncalibrated_not_crash()
-    test_average_inverted_models_propagates_nan_correctly()
-    test_scenario_loader_spatial_match_tolerance_field()
-
-    print(f"\n{'='*72}")
-    print(f" RESULTS: {PASS} passed, {FAIL} failed")
-    print(f"{'='*72}")
-    sys.exit(1 if FAIL else 0)
