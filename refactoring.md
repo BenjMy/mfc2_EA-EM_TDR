@@ -13,14 +13,14 @@ Everything below is based on reading the repo at commit `10a4c9a`. Line numbers 
 | 0 Reproducible runs | **done, verified** | seeding was already in the branch; two identical `1d_surface_tdr` runs give bit-identical `theta_calc`, `ec_optimal`, `rmse`, `cv_map`, `K` (final_rmse 0.036118). New baseline recorded. |
 | 1 Hygiene | **done** | `__pycache__`, `comparison_output/`, `scoring.csv` untracked + ignored; `IA_requests/`, `backup/`, legacy `tests/*` moved to `archive/`; README exists. |
 | 2 Delete obsolete | **partly done** | removed `capture_synthetic_theta.py` (pipeline saves the arrays itself) and `apply_sensor_ids_fix.py` (already applied). **Open:** `run_and_score.py` / `score_against_truth.py` kept, see open question 1. |
-| 3 Importable modules | **done** | `0_generate_synthetic_data`->`data_synthetic`, `0_real_data_loader`->`data_real`, `1_..`->`step1_inversion`, `2_..`->`step2_petro`, `3_..`->`step3_average`, `4_..`->`step4_select`; importlib / fallback chains replaced by plain imports. `0_realEM_data_loader.py`, `0_realTDR_data_loader.py` are unreferenced standalone scripts: left in place (not touched), candidates for archive. |
+| 3 Importable modules | **done** | `0_generate_synthetic_data`->`data_synthetic`, `0_real_data_loader`->`data_real`, `1_..`->`step1_inversion`, `2_..`->`step2_petro`, `3_..`->`step3_average`, `4_..`->`step4_select`; importlib / fallback chains replaced by plain imports. `0_realEM_data_loader.py`, `0_realTDR_data_loader.py` were unreferenced (grep): moved to `archive/`. |
 | 4 Plot helpers | **done** | `plots/_common.py`; the 6 `_ensure_dir` + 2 `_save` copies are gone. |
 | 5 Split plotting out of core | open | `em_methodology.py` still imports matplotlib |
 | 6 Split `main()` | open | `main()` still ~4,400 lines |
 | 7 Data-source interface | open | |
-| 8 Scenario building | **partly done** | `"extends"` implemented + tested; sweep generator, `--list-scenarios`, unknown-key validation still open. The 8 new `hetero` scenarios use `extends`. |
+| 8 Scenario building | **mostly done** | `"extends"` implemented + tested; unknown-key validation (typo -> `ValueError` with "did you mean", `_`-prefixed keys = comments) and `python scenario_loader.py --list-scenarios [--config FILE]` (name + description) done and tested; all shipped scenarios (synthetic + real) still validate. **Open:** sweep generator (`sweeps.py`), old-vs-new config equality test. |
 | 9 Run manifest | open | |
-| 10 Tests | **started** | `tests/test_scenarios.py` (pytest, 34 tests, ~2 s): every scenario loads, `extends`, `ws_layer_params`. Not yet: WS round trip, reference-grid cases, end-to-end run. `test_spatial_reference_grid.py` not yet moved. |
+| 10 Tests | **started** | `pytest tests` -> 48 passed, 1 skipped (~1 s). `tests/test_scenarios.py` (loader, `extends`, `ws_layer_params`, unknown keys, listing) and `tests/test_spatial_reference_grid.py` (moved from root, now real pytest asserts; `tests/conftest.py` stubs `emagpy` when absent, the one test needing the real forward model is skipped then). Not yet: WS round trip, end-to-end seeded 1-D run. |
 
 Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20 saved arrays bit-identical to the pre-refactor reference. Phases 1-4 touched no scientific code.
 
