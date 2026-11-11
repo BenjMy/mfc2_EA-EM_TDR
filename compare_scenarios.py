@@ -66,7 +66,7 @@ Usage
 
     # point-level truth comparison (depth profile, spatial transect,
     # scatter/residual) -- needs each scenario's output_model/ directory,
-    # with theta_calc.npy captured via capture_synthetic_theta.py, plus
+    # with theta_calc.npy (written by run_pipeline.py at the end of every run), plus
     # the synthetic_*.npy truth arrays 0_generate_synthetic_data.py already
     # writes there. Enabled by passing --position; output_dirs default to
     # each report's own directory, or the run-log's output_dir column for
@@ -637,11 +637,9 @@ def plot_truth_scoring(scoring_paths: "OrderedDict[str, str]", out_dir: str):
 #   synthetic_depth_boundaries.npy   -- written by 0_generate_synthetic_data.py,
 #                                        already present for every synthetic run.
 #   theta_calc.npy                   -- the pipeline's final inverted model.
-#                                        NOT written by run_pipeline.py itself
-#                                        (Step 4/5's SelectionOutput is only
-#                                        ever plotted, never saved) -- run
-#                                        capture_synthetic_theta.py once per
-#                                        scenario to produce it.
+#                                        written by run_pipeline.py at the end
+#                                        of every run (runs made before that was
+#                                        added don't have it: re-run them).
 # A scenario missing output_model/ or the synthetic_*.npy truth arrays is
 # skipped with a warning (same "don't abort the whole comparison" style as
 # plot_truth_scoring above); a scenario missing just theta_calc.npy still
@@ -696,8 +694,8 @@ def load_truth_scenario(output_dir: str, label: str, realization: int) -> "dict 
             theta_calc = None
     else:
         print(f"[compare_scenarios] NOTE: '{label}' has no theta_calc.npy -- "
-              f"run capture_synthetic_theta.py for this scenario to get "
-              f"calc-vs-truth comparisons. Truth-only curve still included.")
+              f"re-run this scenario with the current run_pipeline.py (it saves "
+              f"theta_calc.npy) to get calc-vs-truth comparisons. Truth-only curve still included.")
 
     return dict(
         label=label, x=np.asarray(x_coords, dtype=float), y=np.asarray(y_coords, dtype=float),
@@ -965,8 +963,8 @@ def main() -> None:
                      help="(x, y) position for a depth-profile-vs-truth plot; nearest grid "
                           "point is used. Enables the point-level truth comparison plots "
                           "(depth profile, spatial transect, scatter/residual) -- needs each "
-                          "scenario's output_model/ (theta_calc.npy via "
-                          "capture_synthetic_theta.py + the synthetic_*.npy truth arrays).")
+                          "scenario's output_model/ (theta_calc.npy written by "
+                          "run_pipeline.py + the synthetic_*.npy truth arrays).")
     ap.add_argument("--transect-y", type=float, default=None,
                      help="y-value for the spatial transect plot. Default: median y of the "
                           "first scenario. Only used with --position.")

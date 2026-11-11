@@ -4775,11 +4775,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   Previously this array was only ever plotted, then discarded --
         #   compare_scenarios.py / plot_truth_comparison.py need it on disk
         #   as 'theta_calc.npy' next to the synthetic_*.npy truth arrays to
-        #   do calc-vs-truth comparisons, which otherwise required manually
-        #   re-running the whole pipeline through the separate
-        #   capture_synthetic_theta.py monkey-patch script. Saving it here
-        #   makes every run self-sufficient for that comparison, synthetic
-        #   or real, with no extra step.
+        #   do calc-vs-truth comparisons. Saving it here makes every run
+        #   self-sufficient for that comparison, synthetic or real, with no
+        #   extra step.
         # -----------------------------------------------------------------------
         _step5_capture = {
             "K": np.array(selected_output.K),
