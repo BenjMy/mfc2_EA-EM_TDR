@@ -1509,5 +1509,125 @@
     "ws_xy_correlation_m": 6.0,
     "ws_xy_seed": 21,
     "cache_tag": "1d_full_free4"
+  },
+  "1d_surface_hetero_free1": {
+    "extends": "1d_surface_free1",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=1 free WS parameter(s) (same calibration as '1d_surface_free1'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free1",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
+  },
+  "1d_surface_hetero_free2": {
+    "extends": "1d_surface_free2",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=2 free WS parameter(s) (same calibration as '1d_surface_free2'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free2",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
+  },
+  "1d_surface_hetero_free3": {
+    "extends": "1d_surface_free3",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=3 free WS parameter(s) (same calibration as '1d_surface_free3'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free3",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
+  },
+  "1d_surface_hetero_free4": {
+    "extends": "1d_surface_free4",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=4 free WS parameter(s) (same calibration as '1d_surface_free4'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free4",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
+  },
+  "1d_full_hetero_free1": {
+    "extends": "1d_full_free1",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=1 free WS parameter(s) (same calibration as '1d_full_free1'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free1",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
+  },
+  "1d_full_hetero_free2": {
+    "extends": "1d_full_free2",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=2 free WS parameter(s) (same calibration as '1d_full_free2'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free2",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
+  },
+  "1d_full_hetero_free3": {
+    "extends": "1d_full_free3",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=3 free WS parameter(s) (same calibration as '1d_full_free3'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free3",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
+  },
+  "1d_full_hetero_free4": {
+    "extends": "1d_full_free4",
+    "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=4 free WS parameter(s) (same calibration as '1d_full_free4'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free4",
+    "ws_layer_params": {
+      "2": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      },
+      "3": {
+        "a": 0.35,
+        "sigma_w": 700.0
+      }
+    }
   }
 }

@@ -1765,6 +1765,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     WS_XY_N_BLOBS = getattr(cfg, "ws_xy_n_blobs", 6) if cfg is not None else 6
     WS_XY_CORRELATION_M = getattr(cfg, "ws_xy_correlation_m", None) if cfg is not None else None
     WS_XY_SEED = getattr(cfg, "ws_xy_seed", None) if cfg is not None else None
+    WS_LAYER_PARAMS = getattr(cfg, "ws_layer_params", None) if cfg is not None else None
 
     # TDR<->EM spatial-matching quality gate thresholds (report item 3.1).
     # largest-group-fraction = (probes sharing the single most-shared EM
@@ -2064,6 +2065,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 ws_xy_n_blobs=WS_XY_N_BLOBS,
                 ws_xy_correlation_m=WS_XY_CORRELATION_M,
                 ws_xy_seed=WS_XY_SEED,
+                ws_layer_params=WS_LAYER_PARAMS,
             )
             step0.plot_synthetic_results(output_dir=OUTPUT_DIR)
             if WS_XY_VARIATION:

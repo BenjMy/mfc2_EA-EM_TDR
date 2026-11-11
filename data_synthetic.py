@@ -159,6 +159,7 @@ def generate_time_lapse_dataset(
     ws_xy_n_blobs: int = 6,
     ws_xy_correlation_m: float | None = None,
     ws_xy_seed: int | None = None,
+    ws_layer_params: dict | None = None,
 ):
     """
     Generate synthetic 4-D subsurface property matrices (EC_bulk, ECa, θ)
@@ -278,6 +279,13 @@ def generate_time_lapse_dataset(
         Only used when `ws_xy_pattern="random"`. Seeds the WS-parameter
         random field independently of both the global noise seed and
         `random_xy_seed`. `None` -> derived from 99.
+    ws_layer_params : dict or None, default None
+        Per-layer overrides of the TRUE Waxman-Smits parameters, e.g.
+        ``{2: {"a": 0.35, "sigma_w": 700.0}, 3: {...}}`` (layer index ->
+        subset of {a, m, sigma_w, sigma_s}). Layers not listed keep
+        `_WS_DEFAULTS`. Parameters in `ws_xy_params` are drawn from
+        `ws_xy_ranges` instead and take precedence. `None` -> same truth in
+        every layer (previous behaviour).
     """
 
     os.makedirs(output_dir, exist_ok=True)
@@ -313,6 +321,22 @@ def generate_time_lapse_dataset(
         l: _WS_DEFAULTS.get(l, _WS_DEFAULTS[3])
         for l in range(num_layers)
     }
+    # Optional per-layer overrides of the TRUE WS parameters (scenario field
+    # ``ws_layer_params``, e.g. a two-zone vertical heterogeneity).
+    if ws_layer_params:
+        for _l, _over in ws_layer_params.items():
+            _l = int(_l)
+            if _l not in layer_params:
+                raise ValueError(
+                    f"ws_layer_params: layer {_l} does not exist "
+                    f"(this run has {num_layers} layers, 0..{num_layers - 1})."
+                )
+            _unknown = set(_over) - {"a", "m", "sigma_w", "sigma_s"}
+            if _unknown:
+                raise ValueError(
+                    f"ws_layer_params[{_l}] has unknown parameter(s) {sorted(_unknown)}."
+                )
+            layer_params[_l] = {**layer_params[_l], **{k: float(v) for k, v in _over.items()}}
 
     # --- spatially-heterogeneous petrophysics (ws_xy_variation) ---------
     _WS_XY_DEFAULT_RANGES = {

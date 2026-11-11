@@ -16,7 +16,9 @@ Outputs go to `mfc2_outputs/<scenario output_dir>/<NNNN>_<scenario>/`; every run
 ./run_pipeline.sh --help                          # all options
 ```
 
-Scenarios are defined in `ensemble_scenarios.json` (synthetic) and `ensemble_scenarios_real.json` (real).
+Scenarios are defined in `ensemble_scenarios.json` (synthetic) and `ensemble_scenarios_real.json` (real). A scenario can start from another one with `"extends": "<name>"` (nested objects are merged, lists/scalars replaced); `ws_layer_params` sets per-layer true Waxman-Smits parameters for synthetic data.
+
+Tests: `pytest tests`.
 
 ## Compare runs
 
@@ -33,6 +35,7 @@ Writes `comparison_table.csv/.md` and the `fig_*.png` comparison figures into `-
 ```bash
 ./run_1d_surface_vs_full.sh            # 8 runs (K = 1..4 free WS params) + comparisons, ~20 min
 SKIP_RUNS=1 ./run_1d_surface_vs_full.sh   # redo only the comparisons
+VARIANT=hetero ./run_1d_surface_vs_full.sh   # same study, two-zone vertical truth (a, sigma_w change below horizon 1)
 ```
 
 Results: `comparison_output/1d_surface_vs_full_free{K}/` and `comparison_output/1d_surface_vs_full_all/`.

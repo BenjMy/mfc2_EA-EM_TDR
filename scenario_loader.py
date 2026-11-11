@@ -233,6 +233,17 @@ class ScenarioConfig:
     field independently of random_xy_seed. None (default) derives a
     seed from 99."""
 
+    ws_layer_params: dict | None       = None
+    """Synthetic data only. Per-layer overrides of the TRUE Waxman-Smits
+    parameters, e.g. {"2": {"a": 0.35, "sigma_w": 700.0}, "3": {...}}.
+    Keys are layer indices (0 = top; JSON keys are strings, stored here as
+    int), values map a subset of {a, m, sigma_w, sigma_s} to positive
+    numbers. Layers not listed keep the generator defaults (a=0.5, m=3.0,
+    sigma_w=500, sigma_s=100). Parameters listed in ws_xy_params are drawn
+    from ws_xy_ranges instead and take precedence over these values (the XY
+    range is the same for every layer). None (default) = identical truth in
+    every layer, unchanged from before this field existed."""
+
     # ------------------------------------------------------------------
     # Ensemble spread control
     # ------------------------------------------------------------------
@@ -1104,6 +1115,44 @@ def _validate(name: str, raw: dict) -> None:
                 f"{sorted(_valid_ws_xy_params)}."
             )
 
+    ws_layer_params = raw.get("ws_layer_params", None)
+    if ws_layer_params is not None:
+        _n_layers_lp = len(raw.get("depths0", [])) + 1
+        if not isinstance(ws_layer_params, dict) or not ws_layer_params:
+            raise ValueError(
+                f"Scenario '{name}': ws_layer_params must be null or a non-empty "
+                f"object mapping layer index -> {{param: value}}, got {ws_layer_params!r}."
+            )
+        for _lk, _lv in ws_layer_params.items():
+            try:
+                _li = int(_lk)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params key {_lk!r} is not a layer index."
+                ) from None
+            if not 0 <= _li < _n_layers_lp:
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params layer {_li} is outside "
+                    f"0..{_n_layers_lp - 1} (depths0 defines {_n_layers_lp} layers)."
+                )
+            if not isinstance(_lv, dict) or not _lv:
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params[{_lk!r}] must be a non-empty "
+                    f"object of Waxman-Smits parameters, got {_lv!r}."
+                )
+            _bad_lp = set(_lv) - _valid_ws_xy_params
+            if _bad_lp:
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params[{_lk!r}] has unknown "
+                    f"parameter(s) {sorted(_bad_lp)}. Valid: {sorted(_valid_ws_xy_params)}."
+                )
+            for _pn, _pv in _lv.items():
+                if isinstance(_pv, bool) or not isinstance(_pv, (int, float)) or _pv <= 0:
+                    raise ValueError(
+                        f"Scenario '{name}': ws_layer_params[{_lk!r}][{_pn!r}] must be a "
+                        f"positive number, got {_pv!r}."
+                    )
+
     ws_xy_ranges = raw.get("ws_xy_ranges", None)
     if ws_xy_ranges is not None:
         if not isinstance(ws_xy_ranges, dict):
@@ -1176,6 +1225,53 @@ def _validate(name: str, raw: dict) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _deep_merge(base: dict, over: dict) -> dict:
+    """Return ``base`` updated with ``over``; nested dicts are merged, anything else is replaced."""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _resolve_extends(scenarios: dict) -> dict:
+    """Resolve ``"extends": "<parent scenario>"`` entries.
+
+    A scenario with an ``extends`` key starts from a copy of its parent (itself
+    resolved first, so chains work) and applies its own keys on top: nested
+    objects are merged key by key, lists and scalars are replaced. The
+    ``extends`` key is removed from the result. Scenarios without ``extends``
+    are returned unchanged. Unknown parents and cycles raise ``ValueError``.
+    """
+    resolved: dict = {}
+
+    def _resolve(name: str, chain: tuple = ()) -> dict:
+        if name in resolved:
+            return resolved[name]
+        if name in chain:
+            raise ValueError(
+                f"Scenario 'extends' cycle: {' -> '.join(chain + (name,))}."
+            )
+        raw = scenarios[name]
+        parent = raw.get("extends")
+        if parent is None:
+            resolved[name] = raw
+            return raw
+        if parent not in scenarios:
+            raise ValueError(
+                f"Scenario '{name}': extends unknown scenario '{parent}'."
+            )
+        child = {k: v for k, v in raw.items() if k != "extends"}
+        resolved[name] = _deep_merge(_resolve(parent, chain + (name,)), child)
+        return resolved[name]
+
+    for _name in scenarios:
+        _resolve(_name)
+    return resolved
+
+
 def load_scenario(
     scenario_name: str = "default",
     config_path: str | None = None,
@@ -1223,6 +1319,7 @@ def load_scenario(
 
     # Strip meta-keys
     scenarios = {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    scenarios = _resolve_extends(scenarios)
 
     if scenario_name not in scenarios:
         available = sorted(scenarios.keys())
@@ -1314,6 +1411,11 @@ def load_scenario(
         ws_xy_seed        = (
             int(raw["ws_xy_seed"]) if raw.get("ws_xy_seed") is not None else None
         ),
+        ws_layer_params   = (
+            {int(k): {p: float(v) for p, v in d.items()}
+             for k, d in raw["ws_layer_params"].items()}
+            if raw.get("ws_layer_params") is not None else None
+        ),
         # Ensemble spread
         alpha_range_log   = alpha_range_log,
         # 2-D grid
@@ -1394,6 +1496,7 @@ def validate_all(config_path: str | None = None) -> None:
     with open(config_path, "r", encoding="utf-8") as fh:
         all_scenarios = json.load(fh)
     scenarios = {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    scenarios = _resolve_extends(scenarios)
     print(f"Validating {len(scenarios)} scenario(s) in '{config_path}':")
     all_ok = True
     for name, raw in scenarios.items():
