@@ -1239,6 +1239,13 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
     harmless all-zero array in that case -- no method-branching needed here.
     """
     task_idx, fname, depths0, conds0, fixed_depths_list, invert_kwargs = args
+    # Reproducibility: ROPE/MCMC-family inversions sample randomly, and a spawned
+    # worker starts with a fresh OS-entropy RNG. Seed per task (base seed + task
+    # index) so results do not depend on worker scheduling order.
+    import random as _random
+    _seed = (int(invert_kwargs.get("inversion_seed", 1234)) + int(task_idx)) % (2**32 - 1)
+    _random.seed(_seed)
+    np.random.seed(_seed)
     from emagpy import Problem
     import traceback
 
@@ -1288,7 +1295,7 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
                   fixedDepths=fixed_depths_list)
 
         clean_kwargs = {key: v for key, v in invert_kwargs.items()
-                        if key not in ("targetProjection", "em_unit", "drop_coils")}
+                        if key not in ("targetProjection", "em_unit", "drop_coils", "inversion_seed")}
         k.invert(**clean_kwargs)
         models_arr = np.asarray(k.models[0])
         depths_arr = np.asarray(k.depths[0])
@@ -4787,6 +4794,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             _step5_capture["is_calibrated"] = np.array(
                 [h.is_calibrated for h in selected_output.best_fit.horizon_fits]
             )
+        # Optimal RMSE-weighted bulk-EC model (n_time, n_pts, n_layers) -- needed
+        # by plot_validation_1to1.py for the per-horizon EC truth-vs-optimal 1:1.
+        try:
+            _step5_capture["ec_optimal"] = np.asarray(averaged_models[selected_output.K - 1])
+        except Exception as _e:
+            reporter.log(f"[STEP 5][WARN] could not capture ec_optimal: {_e}")
         for _key, _arr in _step5_capture.items():
             _path = os.path.join(OUTPUT_MODEL_DIR, f"{_key}.npy")
             np.save(_path, _arr)
