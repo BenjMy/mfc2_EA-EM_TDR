@@ -20,7 +20,7 @@ Three entry points, all writing under ``<output_dir>/solution/``:
   forward_simulate_eca_optimal(...)
       Forward-simulates the apparent EC (ECa) that the optimal EC_bulk
       solution *would* produce at the surface, using emagpy's forward
-      model (the same call pattern used in ``0_generate_synthetic_data.py``
+      model (the same call pattern used in ``data_synthetic.py``
       to build the synthetic ground truth, and the same "inject the
       weighted-average model" idea used in
       ``plot_emagpy_diagnostics.run_emagpy_plots_optimal``). The simulated
@@ -295,7 +295,7 @@ def forward_simulate_eca_optimal(
     bulk-EC solution — ``averaged_models[selected_output.K - 1]`` from
     Step 3 — would produce at the surface, using emagpy's forward model
     (same ``Problem.forward()`` call pattern as
-    ``0_generate_synthetic_data.forward_waxman_smits`` → ``Problem.forward``
+    ``data_synthetic.forward_waxman_smits`` → ``Problem.forward``
     and the model-injection idea from
     ``plot_emagpy_diagnostics.run_emagpy_plots_optimal``).
 

@@ -594,7 +594,7 @@ def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None
     ----------
     survey_date : datetime.datetime, optional
         The date of this EM survey (as already extracted from the raw
-        filename upstream by ``0_real_data_loader.extract_date_from_filename``).
+        filename upstream by ``data_real.extract_date_from_filename``).
         If given, every row of the processed CSV gets a constant ``date``
         column set to this value. emagpy's ``Survey.computeStat()`` (called
         internally by ``filterRepeated``) unconditionally looks for a
@@ -832,7 +832,7 @@ def _extract_temperature_by_epoch(
     or data source).
 
     Mirrors the same ``time_tolerance_days`` date-matching window
-    ``0_real_data_loader.prepare_real_dataset`` uses for SWC, but for
+    ``data_real.prepare_real_dataset`` uses for SWC, but for
     whichever column(s) look like a temperature reading (column name
     containing ``'temp'``, case-insensitive -- the same simple substring
     convention that module already uses for SWC column detection,
@@ -848,7 +848,7 @@ def _extract_temperature_by_epoch(
     Parameters
     ----------
     load_tdr_dataframe_fn : callable
-        The ``load_tdr_dataframe`` function from ``0_real_data_loader``,
+        The ``load_tdr_dataframe`` function from ``data_real``,
         already resolved by the caller (``_load_real_data``) via whichever
         import path succeeded there.
     tdr_dir, coord_file : str
@@ -1258,7 +1258,7 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
         # NOTE: repeated/duplicate-point filtering used to happen here
         # (`k.filterRepeated(index=0)`), once per parallel inversion task.
         # It has been moved upstream into the real-data loader
-        # (`0_real_data_loader.preprocess_em_survey`), which runs the full
+        # (`data_real.preprocess_em_survey`), which runs the full
         # filterRange -> filterRepeated -> filterPercentile -> rollingMean
         # chain once per EM CSV at load time in `_load_real_data`, rather
         # than redundantly (and, for filterRepeated, incorrectly) inside
@@ -1298,7 +1298,7 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
 # _layer_centers is now the single shared implementation in
 # geometry_utils.py (pipeline_improvement_report.md, section 6 / action
 # item 3) -- this used to be independently reimplemented here, in
-# 0_generate_synthetic_data.py (inline), and in run_pipeline_short.py, and
+# data_synthetic.py (inline), and in run_pipeline_short.py, and
 # a mismatch between those copies is exactly what caused the Step 6d
 # "x and y must have same first dimension" crash this function's old
 # docstring described. Kept as a thin alias so every existing call site
@@ -1556,7 +1556,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         Synthetic generation only (ignored when ``homogeneous`` is True).
         When True, the static XZ (depth) and XY (plan-view) initial-model
         gradients each span the full ``[theta_dry, theta_wet]`` range
-        independently (see ``0_generate_synthetic_data.generate_time_lapse_
+        independently (see ``data_synthetic.generate_time_lapse_
         dataset``), instead of the small fixed-amplitude default gradient.
         ``None`` (default) uses the scenario config's ``full_range_gradient``
         value (or False if unset).
@@ -1574,7 +1574,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         the deterministic linear XY ramp with a smooth, spatially-
         correlated RANDOM field (scattered wet/dry patches) instead of a
         single monotonic gradient direction -- see
-        ``0_generate_synthetic_data._generate_random_xy_field``. ``None``
+        ``data_synthetic._generate_random_xy_field``. ``None``
         (default) uses the scenario config's ``random_xy_field`` value (or
         False if unset).
     random_xy_n_blobs : int or None, optional
@@ -2768,7 +2768,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # cover a given reference point. No epoch's own points are ever
             # reordered, subsetted, or discarded; NaN-safe downstream
             # handling (Steps 2-5, see em_methodology.py /
-            # 4_run_select_assess.py) treats an unmatched cell as "no data"
+            # step4_select.py) treats an unmatched cell as "no data"
             # rather than silently pairing it with an unrelated location.
             #
             # FIX: previously synthetic data used a SEPARATE, hand-rolled
@@ -2789,7 +2789,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 _reference_grid_tolerance = (
                     SPATIAL_MATCH_TOLERANCE_M if data_source == "real"
                     # Synthetic coordinates are the same float array written
-                    # to every epoch's CSV (see 0_generate_synthetic_data.py
+                    # to every epoch's CSV (see data_synthetic.py
                     # export_eca_surveys_to_csv) -- only float round-trip
                     # noise, not real positional uncertainty, needs covering.
                     else 1e-6
@@ -3672,7 +3672,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # at NUM_POSITIONS points along x_transect/y_transect) -- it
             # was never a real TDR station location. Real station
             # positions/IDs (probe_table['utm_x'/'utm_y'/'station_name'],
-            # built at import time in 0_real_data_loader.py) are the
+            # built at import time in data_real.py) are the
             # correct thing to plot on water_content_xy_{scenario}.png's
             # probe markers, so swap them in here. This does NOT affect
             # PROBE_X_COORDS_LOCAL/PROBE_Y_COORDS_LOCAL above (used only
@@ -3836,7 +3836,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # (position x layer) is now expanded across all n_time epochs,
             # mirroring how real TDR data is aggregated across every
             # matched EM survey date in
-            # 0_real_data_loader.prepare_real_dataset (which gathers ALL
+            # data_real.prepare_real_dataset (which gathers ALL
             # historical readings per probe rather than one snapshot).
             n_probes_base       = len(sample_positions)
             sample_positions    = [pos for pos in sample_positions for _ in range(n_time)]
@@ -3867,7 +3867,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # was built from a synthetic placement, not real station
             # coordinates), and instead of treating
             # `obs['probe_index']` — the station's plain enumeration index
-            # (0..n_stations-1) assigned by 0_real_data_loader.py — as if
+            # (0..n_stations-1) assigned by data_real.py — as if
             # it were already a spatial index into the
             # `num_measured_points` axis of `models_clean`.
             #
@@ -3892,7 +3892,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 probe_y_coords=probe_table['utm_y'].tolist(),
                 probe_depths=None, depths0=None, window_m=WINDOW_M,
                 # Real TDR station IDs (the logger 'Unit' column, captured
-                # at import time in 0_real_data_loader.py) -> labels the
+                # at import time in data_real.py) -> labels the
                 # probe markers on probe_em_matching_real_stations.png,
                 # calibration_density_hard_real_stations.png, and
                 # calibration_density_kernel.png (via CALIB_POSITION_RESULTS
@@ -4581,7 +4581,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter.step("Step 5c", "EM footprint discrepancy (McNeill depth weighting)")
 
             # theta_calc is ALWAYS (n_time, num_measured_points, num_layers) --
-            # SelectionOutput guarantees this (4_run_select_assess.py
+            # SelectionOutput guarantees this (step4_select.py
             # normalises `if theta_calc.ndim == 2: theta_calc = theta_calc[np.newaxis, ...]`
             # right before returning), so t_idx = 0 covers the single-time
             # case directly -- no separate timelapse-conditional 2-D branch.
@@ -5321,7 +5321,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   Same "inject the weighted-average EC model" idea used by
         #   pediag.run_emagpy_plots_optimal() above, but here the injected
         #   model is forward-simulated (emagpy Problem.forward(), mirroring
-        #   0_generate_synthetic_data.py's ground-truth generation) to obtain
+        #   data_synthetic.py's ground-truth generation) to obtain
         #   predicted ECa, which is then compared against the raw survey ECa
         #   that was actually fed to the inversion. This is a direct
         #   forward-model check of the full pipeline's final output.

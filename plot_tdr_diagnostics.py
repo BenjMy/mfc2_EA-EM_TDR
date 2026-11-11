@@ -8,7 +8,7 @@ before any EM-date alignment or averaging.
 
 Why this exists
 ----------------
-``0_real_data_loader.py`` aligns every TDR reading to its nearest EM survey
+``data_real.py`` aligns every TDR reading to its nearest EM survey
 date and averages within the time-tolerance window before Step 2 ever sees
 the data. If something is wrong upstream (a stuck/flat-lined sensor, a
 parsing artefact that leaves a logger reporting raw % instead of fraction,
@@ -18,7 +18,7 @@ This module renders the raw per-station time series so those issues are
 visible *before* Step 2, and runs a few cheap automated checks.
 
 It deliberately reuses ``load_tdr_dataframe()`` from
-``0_real_data_loader.py`` (no re-implementation of the parsing logic) so the
+``data_real.py`` (no re-implementation of the parsing logic) so the
 diagnostic always reflects exactly what the pipeline itself loaded.
 """
 
@@ -123,7 +123,7 @@ def plot_tdr_diagnostics(
     Parameters
     ----------
     tdr_dir, coord_file : str
-        Same paths passed to ``0_real_data_loader.prepare_real_dataset``.
+        Same paths passed to ``data_real.prepare_real_dataset``.
     em_dates : sequence of datetime, optional
         EM survey dates to overlay as vertical reference lines (pass the
         ``em_dates`` returned by ``prepare_real_dataset`` /
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     parser.add_argument("--em-dir", default=None,
                          help="Optional EM directory to derive survey dates "
                               "for vertical reference lines (uses the same "
-                              "DDMMYY filename pattern as 0_real_data_loader.py).")
+                              "DDMMYY filename pattern as data_real.py).")
     parser.add_argument("--time-tolerance-days", type=float, default=1.0)
     parser.add_argument("--output-dir", default="mfc2_outputs")
     args = parser.parse_args()

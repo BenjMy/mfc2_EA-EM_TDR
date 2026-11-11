@@ -107,7 +107,7 @@ def plot_rmse_vs_k(
 def _r2_p_text(obs: np.ndarray, pred: np.ndarray) -> tuple[str, str]:
     """
     Guarded Pearson R^2 / p-value text, matching
-    ``2_run_petro.plot_one_to_one_validation``'s own fallback behaviour
+    ``step2_petro.plot_one_to_one_validation``'s own fallback behaviour
     (needs >=2 non-degenerate pairs and non-constant input; "n/a"
     otherwise rather than raising).
     """
@@ -136,7 +136,7 @@ def plot_parity_train_val(
     validation subsets, at the selected K, sharing one x/y range so the
     two panels are directly comparable at a glance.
 
-    Mirrors ``2_run_petro.plot_one_to_one_validation`` (same 1:1 line,
+    Mirrors ``step2_petro.plot_one_to_one_validation`` (same 1:1 line,
     same R^2/p annotation style), but split into two panels rather than
     one overlay: the validation subset is usually much smaller than
     train, and overlaying the two tends to bury the (more diagnostically

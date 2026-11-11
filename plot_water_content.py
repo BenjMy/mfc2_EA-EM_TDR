@@ -1648,7 +1648,7 @@ def plot_truth_from_pipeline(
     ----------
     theta_true : ndarray
         Volumetric water content in m^3/m^3 (as produced by
-        ``0_generate_synthetic_data.py`` / ``theta_true_realization``).
+        ``data_synthetic.py`` / ``theta_true_realization``).
         Converted to % vol. internally to match the inverted plots' units.
     theta_vmax : float or None
         Pass the SAME vmax used for the inverted plot (from
@@ -2460,7 +2460,7 @@ def _forward_model_single_point(
     Forward-model ONE conductivity profile (no inversion) through EMagPy
     to get the ECa it would produce on the given coil set -- the same
     ``Problem.forward(...)`` call pattern used by
-    ``0_generate_synthetic_data.py`` to build the synthetic truth ECa in
+    ``data_synthetic.py`` to build the synthetic truth ECa in
     the first place, so the two are directly comparable.
     """
     from emagpy import Problem
@@ -2498,7 +2498,7 @@ def plot_initial_eca_vs_true_eca(
     what the initial model's layer-MIN and layer-MAX guesses would
     forward-predict for the same coil set -- ECa isn't depth-resolved so
     this uses per-coil x-vs-ECa panels (à la
-    ``0_generate_synthetic_data.plot_synthetic_results``'s "Apparent EC"
+    ``data_synthetic.plot_synthetic_results``'s "Apparent EC"
     figure), not an XZ heatmap. Saved as
     ``initial_eca_vs_true_eca_{scenario_name}.png``.
 

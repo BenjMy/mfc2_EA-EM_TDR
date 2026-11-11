@@ -9,12 +9,12 @@ EA-EM pipeline (run_pipeline.py).
 Runs everything Step 0 / Step 1 does UP TO (but not including) the
 Step 1 ensemble inversion itself:
 
-  1. IMPORT           -- 0_real_data_loader.prepare_real_dataset()
+  1. IMPORT           -- data_real.prepare_real_dataset()
                           (EM file discovery + TDR<->EM date matching).
   2. PRE-PROCESSING    -- delimiter-detection + column-rename of each raw
                           GEM-2 CSV (mirrors run_pipeline.py::_prepare_real_em_csv).
   3. FILTERING         -- duplicate/repeated-point removal per epoch
-                          (0_real_data_loader.filter_repeated_em_points,
+                          (data_real.filter_repeated_em_points,
                           i.e. emagpy's own Problem.filterRepeated).
   4. SPATIAL MATCHING  -- cross-epoch spatial reference-grid construction
                           (geometry_utils.match_epochs_to_reference_grid),
@@ -83,7 +83,7 @@ import geometry_utils
 # and plot_em_diagnostics_real.py's own copy. Duplicated locally (rather
 # than imported from run_pipeline.py) so this diagnostic doesn't have to
 # pull in run_pipeline's full downstream dependency chain
-# (0_generate_synthetic_data / 2_run_petro / 3_run_average / plot_water_content
+# (data_synthetic / step2_petro / step3_average / plot_water_content
 # / etc.) just to reuse one small CSV-renaming helper -- this mirrors the
 # same duplication pattern already used across the pipeline's other
 # diagnostic modules (see plot_em_diagnostics_real.py's own _COLUMN_VARIANTS).

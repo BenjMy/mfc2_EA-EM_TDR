@@ -972,7 +972,7 @@ def _extract_ec_for_plots(
     # report.md, section 6 / action item 3) instead of an independently
     # reimplemented copy of the same strided/modulo/explicit-index logic
     # used by em_methodology.calibrate_petrophysical_relationship and by
-    # 4_run_select_assess.py::_extract_ec_at_probes.
+    # step4_select.py::_extract_ec_at_probes.
     ec_extracted, _horizon_slices, kept_indices = geometry_utils.route_ec_to_horizons(
         ec_array=best_member,
         sample_positions=sample_positions,

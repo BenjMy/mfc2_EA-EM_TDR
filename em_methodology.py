@@ -202,7 +202,7 @@ class SamplePositionResult:
         ``representative_index`` as equally trustworthy.
     probe_id : str or None
         Human-readable identifier for this probe (e.g. the real TDR
-        station name/``Unit`` from ``0_real_data_loader.load_tdr_dataframe``
+        station name/``Unit`` from ``data_real.load_tdr_dataframe``
         for real-data runs, or a synthetic label like ``"P3"``). ``None``
         when the caller didn't supply ``probe_ids`` to
         ``extract_sample_positions_from_survey`` — diagnostic plots that
@@ -3319,7 +3319,7 @@ def ec_to_water_content(
     Convert bulk EC values to volumetric water content θ using a fitted
     ``PetroFit`` object (Waxman-Smits model, per-horizon parameters).
 
-    This is the public convenience wrapper that ``4_run_select_assess.py``
+    This is the public convenience wrapper that ``step4_select.py``
     calls when converting EC predictions to θ for RMSE evaluation.  It
     applies each horizon's calibrated [a, m, σ_w, σ_s] parameters to the
     corresponding EC observations, routing them by horizon index.
@@ -3352,7 +3352,7 @@ def ec_to_water_content(
 
     Notes
     -----
-    FIX-9: this function was called in ``4_run_select_assess.py`` but did not
+    FIX-9: this function was called in ``step4_select.py`` but did not
     exist in ``em_methodology.py``.  The equivalent computation was buried
     inside ``calibrate_petrophysical_relationship`` with no public entry point.
 

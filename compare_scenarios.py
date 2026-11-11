@@ -67,7 +67,7 @@ Usage
     # point-level truth comparison (depth profile, spatial transect,
     # scatter/residual) -- needs each scenario's output_model/ directory,
     # with theta_calc.npy (written by run_pipeline.py at the end of every run), plus
-    # the synthetic_*.npy truth arrays 0_generate_synthetic_data.py already
+    # the synthetic_*.npy truth arrays data_synthetic.py already
     # writes there. Enabled by passing --position; output_dirs default to
     # each report's own directory, or the run-log's output_dir column for
     # --ids entries -- override with --output-dirs if reports don't live
@@ -634,7 +634,7 @@ def plot_truth_scoring(scoring_paths: "OrderedDict[str, str]", out_dir: str):
 # <output_dir>/output_model/ directory:
 #   synthetic_time_lapse_theta.npy / synthetic_x_coords.npy /
 #   synthetic_y_coords.npy / synthetic_layer_centers.npy /
-#   synthetic_depth_boundaries.npy   -- written by 0_generate_synthetic_data.py,
+#   synthetic_depth_boundaries.npy   -- written by data_synthetic.py,
 #                                        already present for every synthetic run.
 #   theta_calc.npy                   -- the pipeline's final inverted model.
 #                                        written by run_pipeline.py at the end

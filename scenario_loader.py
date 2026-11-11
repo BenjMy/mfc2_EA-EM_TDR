@@ -155,7 +155,7 @@ class ScenarioConfig:
     True, the static XZ (depth) and XY (plan-view) initial-model gradients
     each span the full [theta_dry, theta_wet] range independently, instead
     of the small fixed-amplitude default gradient -- see
-    0_generate_synthetic_data.generate_time_lapse_dataset. Combined via
+    data_synthetic.generate_time_lapse_dataset. Combined via
     xy_z_blend below. Default False (small default gradient, unchanged)."""
 
     xy_z_blend: float                  = 0.5
@@ -175,7 +175,7 @@ class ScenarioConfig:
     deterministic linear XY ramp with a smooth, spatially-correlated RANDOM
     field (scattered wet/dry patches, generated as a sum of random Gaussian
     blobs) instead of a single monotonic gradient direction -- see
-    0_generate_synthetic_data._generate_random_xy_field. One field is drawn
+    data_synthetic._generate_random_xy_field. One field is drawn
     per ensemble member and held fixed across all timesteps/layers within
     that member; only the (still spatially-uniform) depth trend and small
     temporal/noise terms continue to vary. Default False (linear ramp,
@@ -804,7 +804,7 @@ def _validate(name: str, raw: dict) -> None:
                 f"number, got {ttd!r}."
             )
         # FIX (em_unit defaults to 'ppt' but real GEM-2 data is 'ppm'):
-        # this pipeline's real-data branch (0_real_data_loader.py's
+        # this pipeline's real-data branch (data_real.py's
         # EM_HEADER_MAP / run_pipeline.py's _COLUMN_VARIANTS) only ever
         # ingests GEM-2 multi-frequency quadrature exports
         # (Q_425Hz, Q_1525Hz, ...) -- a 'ppm' instrument. Nothing enforced

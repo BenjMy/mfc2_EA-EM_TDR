@@ -15,7 +15,7 @@ Consolidated here:
       horizons, INCLUDING the terminal half-space layer below the last
       fixed interface. Previously duplicated (with a real bug in one copy
       -- the "layer_centers KeyError" / off-by-one-layer incident) across
-      ``0_generate_synthetic_data.py`` (inline), ``run_pipeline.py::_layer_centers``,
+      ``data_synthetic.py`` (inline), ``run_pipeline.py::_layer_centers``,
       and ``run_pipeline_short.py::_layer_centers``.
 
   build_inversion_bnds(depths0, fixed_depths_list, cond_ranges)
@@ -24,7 +24,7 @@ Consolidated here:
       but substituting the scenario's ``cond_ranges`` for the conductivity
       bounds instead of EMagPy's hardcoded (2, 100) mS/m default. Previously
       duplicated across ``run_pipeline.py::_build_inversion_bnds`` and
-      ``1_run_model_generation.py::_build_inversion_bnds``.
+      ``step1_inversion.py::_build_inversion_bnds``.
 
   route_ec_to_horizons(ec_array, sample_positions, sample_times,
                         probe_layer_indices, num_layers)
@@ -45,8 +45,8 @@ Consolidated here:
       ``arr[kept_indices]``, to stay aligned.
 
       Previously duplicated (independently, with parallel but subtly
-      different code) across ``2_run_petro.py::_extract_ec_for_plots`` and
-      ``4_run_select_assess.py::_extract_ec_at_probes`` -- the latter
+      different code) across ``step2_petro.py::_extract_ec_for_plots`` and
+      ``step4_select.py::_extract_ec_at_probes`` -- the latter
       wasn't available to check against when this consolidation happened;
       worth confirming it replicates the NaN-drop too, or routes through
       this function instead.

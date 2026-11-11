@@ -262,7 +262,7 @@ def run_select_assess(
 
     # -----------------------------------------------------------------------
     # Petrophysical calibration cross-plot for the OPTIMAL ensemble model.
-    # Mirrors 2_run_petro.plot_petrophysical_calibration, but plots EC from
+    # Mirrors step2_petro.plot_petrophysical_calibration, but plots EC from
     # the single RMSE-weighted K-averaged model (avg_model_opt) against
     # theta_obs, using the final Step 4 recalibrated parameters
     # (best_fit_opt) rather than a raw per-ensemble-member fit.
@@ -482,7 +482,7 @@ def _extract_ec_at_probes(
     # item 3) instead of an independently reimplemented copy of the same
     # strided/modulo/explicit-index logic used by
     # em_methodology.calibrate_petrophysical_relationship and by
-    # 2_run_petro.py::_extract_ec_for_plots. Note: this function's own
+    # step2_petro.py::_extract_ec_for_plots. Note: this function's own
     # docstring's ``timelapse = avg_model.ndim == 3`` convention (no
     # ensemble axis) matches what ``geometry_utils.route_ec_to_horizons``
     # expects directly.
@@ -521,7 +521,7 @@ def plot_optimal_petrophysical_calibration(
     recalibrated Waxman-Smits parameters (``best_fit_opt`` /
     ``petro_fit``). Points and fit curves are colored by soil horizon.
 
-    Mirrors ``2_run_petro.plot_petrophysical_calibration`` (the Step 2
+    Mirrors ``step2_petro.plot_petrophysical_calibration`` (the Step 2
     per-raw-ensemble-member version), but here there is exactly ONE EC
     value per probe (from the single averaged model) instead of one per
     raw ensemble member, and the overlaid Waxman-Smits curves are the

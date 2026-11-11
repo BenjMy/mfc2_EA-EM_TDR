@@ -400,7 +400,7 @@ def run_emagpy_plots_per_realisation(
 
 def run_emagpy_plots_optimal(
     csv_paths: List[str],
-    selected_output: Any,          # SelectionOutput from 4_run_select_assess.py
+    selected_output: Any,          # SelectionOutput from step4_select.py
     averaged_models: list,
     depths0: list,
     output_dir: str,

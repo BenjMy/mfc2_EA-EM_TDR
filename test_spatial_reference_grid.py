@@ -17,7 +17,7 @@ the "spatial reference-grid matching, not row trimming" fix:
          observations instead of poisoning a whole horizon's fit.
        - em_methodology.average_inverted_models / plot_step1_ensemble_
          single_file tolerate NaN cells.
-       - 4_run_select_assess.py's rmse_by_k / cv_map computations use
+       - step4_select.py's rmse_by_k / cv_map computations use
          NaN-aware reductions and preserve NaN instead of miscoding it as
          a false "CV = 0.0 / zero uncertainty".
 
@@ -238,11 +238,11 @@ def test_remap_preserves_values_and_nan_fills_gaps():
 
 # ===========================================================================
 # 3. NaN-safety follow-on fixes: RMSE and CV-map reductions
-#    (reproduces the exact expressions used in 4_run_select_assess.py)
+#    (reproduces the exact expressions used in step4_select.py)
 # ===========================================================================
 
 def test_rmse_nanmean_vs_old_plain_mean():
-    section("4_run_select_assess.py fix: nanmean RMSE vs. the old plain-mean bug")
+    section("step4_select.py fix: nanmean RMSE vs. the old plain-mean bug")
 
     theta_obs  = np.array([0.20, 0.25, 0.30, 0.22])
     theta_pred = np.array([0.21, np.nan, 0.29, 0.20])   # probe 1 unmatched at its epoch
@@ -272,7 +272,7 @@ def test_rmse_nanmean_vs_old_plain_mean():
 
 
 def test_rmse_all_nan_stack_is_reported_not_silently_wrong():
-    section("4_run_select_assess.py fix: an all-NaN stack depth is flagged, "
+    section("step4_select.py fix: an all-NaN stack depth is flagged, "
             "not silently coerced to a fake number")
 
     theta_obs  = np.array([0.20, 0.25])
@@ -289,7 +289,7 @@ def test_rmse_all_nan_stack_is_reported_not_silently_wrong():
 
 
 def test_cv_map_preserves_nan_instead_of_false_zero():
-    section("4_run_select_assess.py / em_methodology.py fix: CV map NaN "
+    section("step4_select.py / em_methodology.py fix: CV map NaN "
             "handling (no more false 'CV=0.0' for genuinely empty cells)")
 
     # subset_mean has: a normal cell, a near-zero (but finite) cell, and a
