@@ -10,6 +10,7 @@
     "  2d_dense_tdr  Same as '2d' but 10 SWC positions (40 probes) for denser TDR coverage.",
     "  1d_surface_tdr  1-D transect (--mode 1d), truth m/sigma_s vary along x; TDR ONLY at 0.2 m so only horizon 0 is calibrated.",
     "  1d_full_depth_ref  Same as 1d_surface_tdr but probes in all 4 horizons (reference for the comparison).",
+    "  1d_{surface,full}_free{K}  (K=1..4) Surface-only vs full-depth TDR with K free WS params (order sigma_s, m, sigma_w, a); used by run_1d_surface_vs_full.sh.",
     "  2d_random_xy_drying  Same '2d' family, but a RANDOM (patchy) plan-view",
     "           moisture pattern instead of a linear ramp, blended with a",
     "           spatially-uniform depth trend that dries out with depth.",
@@ -832,5 +833,681 @@
     "ws_xy_correlation_m": 6.0,
     "ws_xy_seed": 21,
     "cache_tag": "1d_full_depth_ref"
+  },
+  "1d_surface_free1": {
+    "description": "Surface-vs-full study, K=1 free Waxman-Smits parameter(s): sigma_s (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free1' vs '1d_full_free1' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_free1",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": [
+      0.2
+    ],
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_surface_free1",
+    "allow_uncovered_horizons": true
+  },
+  "1d_full_free1": {
+    "description": "Surface-vs-full study, K=1 free Waxman-Smits parameter(s): sigma_s (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free1' vs '1d_full_free1' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_free1",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_full_free1"
+  },
+  "1d_surface_free2": {
+    "description": "Surface-vs-full study, K=2 free Waxman-Smits parameter(s): sigma_s, m (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free2' vs '1d_full_free2' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_free2",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": false,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": [
+      0.2
+    ],
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_surface_free2",
+    "allow_uncovered_horizons": true
+  },
+  "1d_full_free2": {
+    "description": "Surface-vs-full study, K=2 free Waxman-Smits parameter(s): sigma_s, m (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free2' vs '1d_full_free2' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_free2",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": false,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_full_free2"
+  },
+  "1d_surface_free3": {
+    "description": "Surface-vs-full study, K=3 free Waxman-Smits parameter(s): sigma_s, m, sigma_w (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free3' vs '1d_full_free3' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_free3",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": false,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": [
+      0.2
+    ],
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_surface_free3",
+    "allow_uncovered_horizons": true
+  },
+  "1d_full_free3": {
+    "description": "Surface-vs-full study, K=3 free Waxman-Smits parameter(s): sigma_s, m, sigma_w (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free3' vs '1d_full_free3' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_free3",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": false,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_full_free3"
+  },
+  "1d_surface_free4": {
+    "description": "Surface-vs-full study, K=4 free Waxman-Smits parameter(s): sigma_s, m, sigma_w, a (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free4' vs '1d_full_free4' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_free4",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": false,
+      "m": false,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": [
+      0.2
+    ],
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_surface_free4",
+    "allow_uncovered_horizons": true
+  },
+  "1d_full_free4": {
+    "description": "Surface-vs-full study, K=4 free Waxman-Smits parameter(s): sigma_s, m, sigma_w, a (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free4' vs '1d_full_free4' via run_1d_surface_vs_full.sh.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_free4",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": false,
+      "m": false,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_full_free4"
   }
 }
