@@ -1,0 +1,5 @@
+- do refactoring.md
+- what is free1 2 3? does it means that free 1 has 1 freedom WS param for instance?
+- looking at fig_ec_1to1_by_horizon looks like initial range of EC model are too small (increase ECmin ECmax)
+- repeat run_1d_surface_vs_full.sh but with calibration of each horizon (no only the first one!)
+- repeat run_1d_surface_vs_full.sh but with heteregeneous (2 layers, H0-2, H2-4 WS parameters change) 

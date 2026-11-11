@@ -1,0 +1,29 @@
+# Scenario comparison
+
+| Metric                                 | surface_free2                                                                        | full_free2                                                                           |
+|:---------------------------------------|:-------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------|
+| Scenario name                          | 1d_surface_free2                                                                     | 1d_full_free2                                                                        |
+| Data source                            | SYNTHETIC                                                                            | SYNTHETIC                                                                            |
+| Mode                                   | 1D                                                                                   | 1D                                                                                   |
+| Result                                 | **⚠️ SUCCESS WITH QUALITY-GATE WARNINGS** — pipeline finished at 2026-11-11 12:12:39 | **⚠️ SUCCESS WITH QUALITY-GATE WARNINGS** — pipeline finished at 2026-11-11 12:15:19 |
+| Quality gate                           | WARN                                                                                 | WARN                                                                                 |
+| Final RMSE (Step 5) [m3/m3]            | 0.032023                                                                             | 0.036092                                                                             |
+| CV map mean                            | 0.0                                                                                  | 0.3637                                                                               |
+| CV map max                             | 0.0                                                                                  | 1.0477                                                                               |
+| theta_calc mean [m3/m3]                | 0.2423                                                                               | 0.2293                                                                               |
+| Ensemble size                          | 96.0                                                                                 | 96.0                                                                                 |
+| Optimal stack depth K                  | 1.0                                                                                  | 13.0                                                                                 |
+| MCMC posterior std mean [mS/m]         | 0.9865                                                                               | 0.9865                                                                               |
+| MCMC posterior std median [mS/m]       | 0.2072                                                                               | 0.2072                                                                               |
+| Number of SWC probes                   | 5.0                                                                                  | 20.0                                                                                 |
+| SWC spatial positions                  | 5.0                                                                                  | 5.0                                                                                  |
+| SWC sensor observations                | 15.0                                                                                 | 60.0                                                                                 |
+| Matching: distinct EM points used      | 5.0                                                                                  | 5.0                                                                                  |
+| Matching: largest group fraction [%]   | 20.0                                                                                 | 20.0                                                                                 |
+| Inversion tasks failed                 | 0.0                                                                                  | 0.0                                                                                  |
+| Ensemble combos dropped                | 0.0                                                                                  | 0.0                                                                                  |
+| Water content MAE vs truth, XZ [%VWC]  | 4.784                                                                                | 3.063                                                                                |
+| Water content RMSE vs truth, XZ [%VWC] | 6.026                                                                                | 3.811                                                                                |
+| Water content MAE vs truth, XY [%VWC]  | nan                                                                                  | nan                                                                                  |
+| Water content RMSE vs truth, XY [%VWC] | nan                                                                                  | nan                                                                                  |
+| Total runtime [s]                      | 148.0                                                                                | 157.6                                                                                |
