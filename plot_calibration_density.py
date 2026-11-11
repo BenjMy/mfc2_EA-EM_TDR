@@ -100,11 +100,7 @@ from em_methodology import gaspari_cohn
 # guarantees the two figure families stay pixel-grid-compatible if
 # plot_water_content.py's bound logic ever changes.
 from plot_water_content import _z_bounds, _x_edges, _add_hatching, _interpolate_to_grid
-
-
-def _ensure_dir(path: str) -> str:
-    os.makedirs(path, exist_ok=True)
-    return path
+from plots._common import ensure_dir as _ensure_dir
 
 
 def _survey_xy(survey_df) -> tuple[np.ndarray, np.ndarray]:

@@ -68,22 +68,14 @@ except ImportError:  # pragma: no cover - tqdm is a hard dependency elsewhere
         return iterable
 
 import em_methodology as EMmethod
+from functools import partial as _partial
+from plots._common import ensure_dir as _ensure_dir, save_fig as _save_fig
+_save = _partial(_save_fig, tag="DIAG")
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _ensure_dir(path: str) -> str:
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def _save(fig: plt.Figure, path: str, dpi: int = 180) -> None:
-    fig.savefig(path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-    print(f"    [DIAG] saved → {os.path.relpath(path)}")
-
 
 def _safe_call(ax, fn, label: str) -> None:
     """Call fn(ax) and show a red error note on failure instead of crashing."""

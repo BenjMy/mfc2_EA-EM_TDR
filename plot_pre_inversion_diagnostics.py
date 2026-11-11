@@ -76,6 +76,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 
 import geometry_utils
+from plots._common import ensure_dir as _ensure_dir
 
 
 # ---------------------------------------------------------------------------
@@ -185,11 +186,6 @@ def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None
         out_df["date"] = pd.Timestamp(survey_date).strftime("%Y-%m-%d")
     out_df.to_csv(out_path, index=False)
     return out_path, coord_kind, epsg_used
-
-
-def _ensure_dir(path: str) -> str:
-    os.makedirs(path, exist_ok=True)
-    return path
 
 
 # ===========================================================================
