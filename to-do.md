@@ -1,5 +1,7 @@
 # To-do (status checked 2026-11-11, branch `refactor/readability`)
 
+Update 2026-11-11 (evening): refactoring phases 8 (unknown-key validation, `--list-scenarios`) and 10 (pytest: 48 passed, 1 skipped without `emagpy`) advanced, loaders archived; see `refactoring.md`. The two open items below still need a decision (item 4) or a ~40 min run on a machine with `emagpy` (hetero study).
+
 - [x] do refactoring.md — phases 0-4 done, 5-10 open; see the status table at the top of `refactoring.md`
 - [x] what is free1 2 3? — answered: `K` in `1d_*_free{K}` = number of FREE Waxman-Smits parameters in the calibration; freed in the order sigma_s (K=1), +m (K=2), +sigma_w (K=3), +a (K=4); the others stay fixed at `lab_p0`. So yes, free1 = one free WS parameter (sigma_s).
 - [x] fig_ec_1to1_by_horizon: initial EC range too small — upper bound of `cond_ranges` raised 60 -> 300 mS/m in the ten `1d_*` scenarios (commit `fee56d0`). Saturation at ~55 mS/m is gone, but see the caveat below: errors went UP, not down.
