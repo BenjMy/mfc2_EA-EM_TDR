@@ -680,8 +680,33 @@ def _check_swc_depth_horizon_coverage(name: str, depths0: list[float],
         )
 
 
+def _known_keys() -> set[str]:
+    """Keys a scenario entry may contain: ScenarioConfig fields (``name`` is the
+    JSON key itself). Keys starting with ``_`` are free-form comments."""
+    import dataclasses
+    return {f.name for f in dataclasses.fields(ScenarioConfig)} - {"name"}
+
+
+def _check_unknown_keys(name: str, raw: dict) -> None:
+    """Fail loudly on misspelled / unsupported keys (they were silently ignored)."""
+    import difflib
+    known = _known_keys()
+    unknown = sorted(k for k in raw if k not in known and not k.startswith("_"))
+    if not unknown:
+        return
+    hints = []
+    for k in unknown:
+        close = difflib.get_close_matches(k, sorted(known), n=1)
+        hints.append(f"'{k}'" + (f" (did you mean '{close[0]}'?)" if close else ""))
+    raise ValueError(
+        f"Scenario '{name}': unknown key(s) {', '.join(hints)}. "
+        "Prefix a key with '_' to keep it as a comment."
+    )
+
+
 def _validate(name: str, raw: dict) -> None:
     """Raise ValueError with a descriptive message on any schema violation."""
+    _check_unknown_keys(name, raw)
     missing = _REQUIRED - raw.keys()
     if missing:
         raise ValueError(
@@ -1516,13 +1541,36 @@ def validate_all(config_path: str | None = None) -> None:
 # CLI entry point — python scenario_loader.py [scenario_name]
 # ---------------------------------------------------------------------------
 
+def describe_scenarios(config_path: str | None = None) -> list[tuple[str, str]]:
+    """Return ``(name, description)`` for every scenario (``extends`` resolved)."""
+    if config_path is None:
+        config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "ensemble_scenarios.json"
+        )
+    with open(config_path, "r", encoding="utf-8") as fh:
+        all_scenarios = json.load(fh)
+    scenarios = _resolve_extends(
+        {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    )
+    return [(n, str(v.get("description", ""))) for n, v in scenarios.items()]
+
+
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) == 1:
-        validate_all()
-    elif sys.argv[1] == "--list":
-        for name in list_scenarios():
-            print(name)
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Validate scenarios, list them, or print one scenario summary."
+    )
+    ap.add_argument("scenario", nargs="?", help="scenario name to summarise")
+    ap.add_argument("--list-scenarios", "--list", dest="list_", action="store_true",
+                    help="list scenario names with their description")
+    ap.add_argument("--config", default=None,
+                    help="scenario JSON (default: ensemble_scenarios.json)")
+    args = ap.parse_args()
+    if args.list_:
+        for _n, _d in describe_scenarios(args.config):
+            print(f"{_n}\t{_d}" if _d else _n)
+    elif args.scenario:
+        print(load_scenario(args.scenario, config_path=args.config).summary())
     else:
-        cfg = load_scenario(sys.argv[1])
-        print(cfg.summary())
+        validate_all(args.config)

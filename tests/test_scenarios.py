@@ -84,6 +84,12 @@ def test_ws_layer_params_validation(tmp_path, bad, msg):
         sl.load_scenario("s", config_path=_write(tmp_path, {"s": s}))
 
 
+def _emagpy_is_stub():
+    import emagpy
+    return getattr(emagpy, "__is_stub__", False)
+
+
+@pytest.mark.skipif(_emagpy_is_stub(), reason="needs the real emagpy forward model")
 def test_generator_applies_ws_layer_params(tmp_path):
     import data_synthetic as gen
     kw = dict(output_dir=str(tmp_path), mode="1d", depths0=[0.3, 0.6, 1.0])
@@ -94,3 +100,19 @@ def test_generator_applies_ws_layer_params(tmp_path):
     sw = np.load(tmp_path / "synthetic_ws_truth_sigma_w.npy")
     assert np.allclose(a[..., :2], 0.5) and np.allclose(a[..., 2:], 0.35)
     assert np.allclose(sw[..., :2], 500.0) and np.allclose(sw[..., 2:], 700.0)
+
+
+def test_unknown_key_is_rejected_with_hint(tmp_path):
+    s = _base(); s["ws_fixed_paramz"] = {"a": 1.0}
+    with pytest.raises(ValueError, match="unknown key.*ws_fixed_paramz"):
+        sl.load_scenario("s", config_path=_write(tmp_path, {"s": s}))
+
+
+def test_underscore_keys_are_comments(tmp_path):
+    s = _base(); s["_note"] = "free text"
+    sl.load_scenario("s", config_path=_write(tmp_path, {"s": s}))
+
+
+@pytest.mark.parametrize("path", [SYNTH_JSON, os.path.join(ROOT, "ensemble_scenarios_real.json")])
+def test_describe_scenarios_matches_names(path):
+    assert [n for n, _ in sl.describe_scenarios(path)] == _names(path)
