@@ -131,3 +131,22 @@ set -euo pipefail
 
 #./compare_scenarios.sh --list
 #./compare_scenarios.sh --ids 2d:3 2d_intermediate:3 2d_dense_tdr:3
+
+
+# --- Surface-only TDR test (1-D transect) ------------------------------------
+# Hypothesis: with TDR only at 0.2 m (horizon 0 calibrated, horizons 1-3 on the
+# lab_p0 prior), does the inversion -- and theta at depth -- still improve?
+# 1d_surface_tdr    : probes only at 0.2 m (allow_uncovered_horizons=true)
+# 1d_full_depth_ref : identical setup, probes in all 4 horizons (reference)
+# Truth m/sigma_s vary along x, identically at every depth. Probe count is swept
+# with --num-swc-positions; probes are spread along the 18 m transect.
+for N in 2 3 5 10; do
+    ./run_pipeline.sh -s 1d_surface_tdr    --mode 1d --num-swc-positions "$N"
+    ./run_pipeline.sh -s 1d_full_depth_ref --mode 1d --num-swc-positions "$N"
+done
+
+./compare_scenarios.sh --list
+# Run numbers follow the loop order: <scenario>:1 -> N=2, :2 -> N=3, :3 -> N=5, :4 -> N=10
+# Example: N=5, surface-only vs full-depth, truth point at x=8 m
+#./compare_scenarios.sh --ids 1d_surface_tdr:3 1d_full_depth_ref:3 \
+#    --labels surface_only full_depth --position 8 0

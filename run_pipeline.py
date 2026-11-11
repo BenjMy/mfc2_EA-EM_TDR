@@ -30,6 +30,7 @@ import importlib
 import pickle
 import platform
 import re
+import shutil
 import sys
 import numpy as np
 
@@ -1043,6 +1044,13 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
             proc_path, coord_kind, epsg_used = _prepare_real_em_csv(
                 raw_path, processed_dir, survey_date=survey_date,
             )
+            # Snapshot the pre-filter processed CSV (regenerated from the raw
+            # file on every run, so this is always genuinely pre-filter) for
+            # the before/after overlay in filtered_eca_transect.png.
+            _prefilter_dir = os.path.join(processed_dir, "_prefilter")
+            os.makedirs(_prefilter_dir, exist_ok=True)
+            shutil.copy2(proc_path,
+                         os.path.join(_prefilter_dir, os.path.basename(proc_path)))
             proc_path, filt_stats = preprocess_em_survey(
                 proc_path,
                 tolerance=filter_repeated_tolerance,
@@ -2526,15 +2534,44 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         if not cache_hit:
             print("[CACHE] No valid cache found. Running parallel inversion tasks...")
 
+            # Pre-filter snapshot written by _load_real_data (real data only;
+            # synthetic EM files have none -> None).
+            def _prefilter_path(_f):
+                _p = os.path.join(os.path.dirname(_f), "_prefilter", os.path.basename(_f))
+                return _p if os.path.exists(_p) else None
+
+            # RAW plot: genuinely pre-filter signal when a snapshot exists
+            # (EM_FNAMES themselves are already filtered in place), with
+            # dropped coils flagged in red rather than hidden.
             if timelapse:
                 for t_idx, fname in enumerate(EM_FNAMES):
                     EMmethod.plot_raw_apparent_conductivity(
-                        fname, os.path.join(OUTPUT_DIR, f"t{t_idx:02d}"),
-                        em_unit=EM_UNIT,
+                        _prefilter_path(fname) or fname,
+                        os.path.join(OUTPUT_DIR, f"t{t_idx:02d}"),
+                        em_unit=EM_UNIT, drop_coils=DROP_COILS,
                     )
             else:
-                EMmethod.plot_raw_apparent_conductivity(EM_FNAMES, OUTPUT_DIR,
-                                                        em_unit=EM_UNIT)
+                EMmethod.plot_raw_apparent_conductivity(
+                    _prefilter_path(EM_FNAMES) or EM_FNAMES, OUTPUT_DIR,
+                    em_unit=EM_UNIT, drop_coils=DROP_COILS,
+                )
+
+            # Same transect view AFTER the load-time filter chain, with
+            # dropped coils removed and the pre-filter signal in grey.
+
+            if timelapse:
+                for t_idx, fname in enumerate(EM_FNAMES):
+                    EMmethod.plot_filtered_apparent_conductivity(
+                        fname, os.path.join(OUTPUT_DIR, f"t{t_idx:02d}"),
+                        em_unit=EM_UNIT, drop_coils=DROP_COILS,
+                        prefilter_fname=_prefilter_path(fname),
+                    )
+            else:
+                EMmethod.plot_filtered_apparent_conductivity(
+                    EM_FNAMES, OUTPUT_DIR, em_unit=EM_UNIT,
+                    drop_coils=DROP_COILS,
+                    prefilter_fname=_prefilter_path(EM_FNAMES),
+                )
 
             alphas         = PARAM_GRID.get("alpha",        [0.03])
             betas          = PARAM_GRID.get("beta",         [0.0])

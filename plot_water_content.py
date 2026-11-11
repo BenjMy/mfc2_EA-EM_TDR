@@ -1377,6 +1377,7 @@ def plot_from_pipeline(
     bandwidth_m: float | None = None,
     window_m: float | None = None,
     xy_imshow_extra: bool = True,
+    probe_ids: Sequence[str] | None = None,
 ) -> None:
     """
     Render all water-content figures from pipeline output.
@@ -1621,6 +1622,7 @@ def plot_truth_from_pipeline(
     bandwidth_m: float | None = None,
     window_m: float | None = None,
     xy_imshow_extra: bool = True,
+    probe_ids: Sequence[str] | None = None,
 ) -> None:
     """
     Render the ground-truth counterpart of ``plot_from_pipeline``'s XZ (and,

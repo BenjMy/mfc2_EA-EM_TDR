@@ -8,6 +8,8 @@
     "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "  2d       Synthetic 2-D UTM grid run (data_source omitted -> synthetic).",
     "  2d_dense_tdr  Same as '2d' but 10 SWC positions (40 probes) for denser TDR coverage.",
+    "  1d_surface_tdr  1-D transect (--mode 1d), truth m/sigma_s vary along x; TDR ONLY at 0.2 m so only horizon 0 is calibrated.",
+    "  1d_full_depth_ref  Same as 1d_surface_tdr but probes in all 4 horizons (reference for the comparison).",
     "  2d_random_xy_drying  Same '2d' family, but a RANDOM (patchy) plan-view",
     "           moisture pattern instead of a linear ramp, blended with a",
     "           spatially-uniform depth trend that dries out with depth.",
@@ -231,7 +233,8 @@
       "ws_fixed_params",
       "lab_p0",
       "ws_localized_bandwidth",
-      "ws_localized_bandwidth_sweep"
+      "ws_localized_bandwidth_sweep",
+      "allow_uncovered_horizons"
     ]
   },
   "2d": {
@@ -660,5 +663,174 @@
     "ws_xy_n_blobs": 6,
     "ws_xy_correlation_m": 4.0,
     "ws_xy_seed": 21
+  },
+  "1d_surface_tdr": {
+    "description": "1-D transect test of surface-only TDR (run with --mode 1d): 10 survey points along x (2 m spacing, y=0), truth m and sigma_s vary smoothly along x (same field at every depth), ECa noise 1%, TDR noise 0.01. TDR probes ONLY at 0.2 m (horizon 0 of depths0=[0.3,0.6,1.0]); horizons 1-3 are deliberately uncalibrated (prior lab_p0). Sweep the probe count with --num-swc-positions N (probes are spread along x). Reference: '1d_full_depth_ref' (identical except probes in all 4 horizons).",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_tdr",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": false,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": [
+      0.2
+    ],
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_surface_tdr",
+    "allow_uncovered_horizons": true
+  },
+  "1d_full_depth_ref": {
+    "description": "Reference for '1d_surface_tdr' (run with --mode 1d): identical truth, noise and inversion settings, but one probe per layer centre at every probe position (all 4 horizons calibrated). Use the same --num-swc-positions N as the surface-only run.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_depth_ref",
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": false,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "alpha": [
+        0.03,
+        0.1,
+        0.3
+      ],
+      "method": [
+        "ROPE"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "cond_ranges": [
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ],
+      [
+        0.01,
+        60.0
+      ]
+    ],
+    "forward_model": "CS",
+    "gamma": 0.0,
+    "num_swc_positions": 5,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "tdr_noise_std": 0.01,
+    "eca_noise_level": 0.01,
+    "alpha_range_log": null,
+    "ws_xy_variation": true,
+    "ws_xy_params": [
+      "m",
+      "sigma_s"
+    ],
+    "ws_xy_ranges": {
+      "m": [
+        2.0,
+        4.0
+      ],
+      "sigma_s": [
+        50.0,
+        200.0
+      ]
+    },
+    "ws_xy_pattern": "random",
+    "ws_xy_n_blobs": 6,
+    "ws_xy_correlation_m": 6.0,
+    "ws_xy_seed": 21,
+    "cache_tag": "1d_full_depth_ref"
   }
 }

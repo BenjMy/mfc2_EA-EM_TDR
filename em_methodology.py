@@ -3740,15 +3740,16 @@ def plot_raw_apparent_conductivity(fname: str, output_dir: str = "mfc2_outputs",
             return
 
         n_cols = len(signal_cols)
-        n_rows = int(np.ceil(n_cols / 3))
-        fig, axes = plt.subplots(n_rows, min(n_cols, 3),
-                                 figsize=(5 * min(n_cols, 3), 3.5 * n_rows),
+        ncols_grid = min(n_cols, 3)
+        n_rows = int(np.ceil(n_cols / ncols_grid))
+        fig, axes = plt.subplots(n_rows, ncols_grid,
+                                 figsize=(5 * ncols_grid, 3.5 * n_rows),
                                  squeeze=False)
 
         x_vals = df[x_col].to_numpy(dtype=float) if x_col else np.arange(len(df))
 
         for idx, col in enumerate(signal_cols):
-            r, c = divmod(idx, 3)
+            r, c = divmod(idx, ncols_grid)
             ax = axes[r][c]
             is_dropped = _is_dropped(col)
             ax.plot(x_vals, df[col].to_numpy(dtype=float),
@@ -3774,8 +3775,8 @@ def plot_raw_apparent_conductivity(fname: str, output_dir: str = "mfc2_outputs",
                 )
 
         # Hide unused panels
-        for idx in range(n_cols, n_rows * 3):
-            r, c = divmod(idx, 3)
+        for idx in range(n_cols, n_rows * ncols_grid):
+            r, c = divmod(idx, ncols_grid)
             axes[r][c].set_visible(False)
 
         fig.suptitle(
@@ -3793,6 +3794,132 @@ def plot_raw_apparent_conductivity(fname: str, output_dir: str = "mfc2_outputs",
         plt.close("all")
         print(f"[PLOT][WARN] Direct CSV plot also failed: {e2}. "
               "Raw ECa plot skipped.")
+
+
+def plot_filtered_apparent_conductivity(fname: str, output_dir: str = "mfc2_outputs",
+                                        em_unit: str = "ppt", drop_coils=None,
+                                        prefilter_fname: str | None = None) -> None:
+    """
+    Plot the survey signal AFTER the load-time cleaning chain
+    (``preprocess_em_survey``: drop_coils -> filterRange -> filterRepeated ->
+    filterPercentile -> rollingMean). Companion to
+    ``plot_raw_apparent_conductivity``; writes ``filtered_eca_transect.png``.
+
+    Differences from the raw plot
+    -----------------------------
+    * Coils excluded via ``drop_coils`` are REMOVED from the figure (the
+      raw plot keeps them and flags them in red), so the panels shown here
+      are exactly the channels that feed the inversion.
+    * If ``prefilter_fname`` is given and exists (the pre-filter snapshot
+      written by ``_load_real_data``), its signal is drawn in light grey
+      behind each filtered line, so the effect of the range / repeated /
+      percentile / rolling-mean stages is visible panel by panel. Point
+      counts before -> after are shown in each panel.
+
+    Parameters
+    ----------
+    fname : str
+        Filtered, emagpy-ready survey CSV (comma-separated, ``x``/``y``/
+        ``elevation`` + coil columns).
+    drop_coils : None, str, int, float, or sequence thereof, optional
+        Same spec as ``drop_coils_from_problem``; matching coil columns are
+        omitted from the plot.
+    prefilter_fname : str or None, optional
+        Same-format CSV captured before filtering, used for the grey
+        overlay. ``None`` (or a missing file) plots the filtered data only.
+    """
+    import pandas as pd
+
+    os.makedirs(output_dir, exist_ok=True)
+    plot_path = os.path.join(output_dir, "filtered_eca_transect.png")
+
+    dropped_coil_names: list[str] = []
+    if drop_coils is not None:
+        try:
+            _k_probe = Problem()
+            _k_probe.createSurvey(fname, unit=em_unit)
+            dropped_coil_names = drop_coils_from_problem(_k_probe, drop_coils, dry_run=True)
+        except Exception as _e:
+            print(f"[PLOT][WARN] Could not resolve drop_coils for filtered plot "
+                  f"({_e}); dropped channels will NOT be hidden.")
+
+    def _is_dropped(label: str) -> bool:
+        label_l = label.lower()
+        return any(name.lower() in label_l for name in dropped_coil_names)
+
+    try:
+        df = pd.read_csv(fname)
+        df.columns = df.columns.str.strip()
+
+        df_pre = None
+        if prefilter_fname and os.path.exists(prefilter_fname):
+            df_pre = pd.read_csv(prefilter_fname)
+            df_pre.columns = df_pre.columns.str.strip()
+
+        x_col = next((c for c in df.columns if c.lower() in ("x", "dist", "distance")), None)
+        skip = {"x", "y", "utm_x", "utm_y", "elevation", "gpsd", "alt",
+                "lat", "lon", "latitude", "longitude"}
+        signal_cols = [
+            c for c in df.columns
+            if c.lower() not in skip
+            and pd.api.types.is_numeric_dtype(df[c])
+            and c != x_col
+            and not _is_dropped(c)
+        ]
+        if not signal_cols:
+            print(f"[PLOT][WARN] No plottable signal columns left in '{fname}' "
+                  "after dropping coils. Filtered ECa plot skipped.")
+            return
+
+        n_cols = len(signal_cols)
+        ncols_grid = min(n_cols, 3)
+        n_rows = int(np.ceil(n_cols / ncols_grid))
+        fig, axes = plt.subplots(n_rows, ncols_grid,
+                                 figsize=(5 * ncols_grid, 3.5 * n_rows),
+                                 squeeze=False)
+
+        x_vals = df[x_col].to_numpy(dtype=float) if x_col else np.arange(len(df))
+        x_pre = None
+        if df_pre is not None:
+            x_pre = (df_pre[x_col].to_numpy(dtype=float)
+                     if x_col and x_col in df_pre.columns else np.arange(len(df_pre)))
+
+        for idx, col in enumerate(signal_cols):
+            r, c = divmod(idx, ncols_grid)
+            ax = axes[r][c]
+            n_pre_txt = ""
+            if df_pre is not None and col in df_pre.columns:
+                ax.plot(x_pre, df_pre[col].to_numpy(dtype=float), linewidth=0.8,
+                        color="0.7", alpha=0.9, label="before filtering", zorder=1)
+                n_pre_txt = f"{len(df_pre)} → "
+            ax.plot(x_vals, df[col].to_numpy(dtype=float), linewidth=1.1,
+                    color=f"C{idx % 10}", alpha=0.95, label="after filtering", zorder=2)
+            ax.set_title(f"{col}  ({n_pre_txt}{len(df)} pts)", fontsize=8)
+            ax.set_xlabel("Distance [m]" if x_col else "Index", fontsize=8)
+            ax.set_ylabel("Signal", fontsize=8)
+            ax.grid(True, linestyle=":", alpha=0.5)
+            ax.tick_params(labelsize=7)
+            if idx == 0 and df_pre is not None:
+                ax.legend(fontsize=7, loc="best")
+
+        for idx in range(n_cols, n_rows * ncols_grid):
+            r, c = divmod(idx, ncols_grid)
+            axes[r][c].set_visible(False)
+
+        fig.suptitle(
+            f"Filtered Survey Signal — {os.path.basename(fname)}"
+            + (f"  (dropped, not shown: {', '.join(dropped_coil_names)})"
+               if dropped_coil_names else ""),
+            fontsize=10, fontweight="bold",
+        )
+        plt.tight_layout()
+        fig.savefig(plot_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[PLOT] Filtered survey signals → '{plot_path}'")
+
+    except Exception as e:
+        plt.close("all")
+        print(f"[PLOT][WARN] Filtered ECa plot failed: {e}. Skipped.")
 
 
 def _flag_dropped_axes(axes, dropped_coil_names: list[str], is_dropped_fn) -> None:

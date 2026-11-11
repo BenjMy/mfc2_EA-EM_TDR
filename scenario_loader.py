@@ -331,6 +331,13 @@ class ScenarioConfig:
     (default) skips the localized diagnostic entirely, unchanged from
     before this field existed."""
 
+    allow_uncovered_horizons: bool = False
+    """Opt-in (default False). When True, swc_depths is allowed to leave one
+    or more horizons implied by depths0 without any sensor (e.g. a surface-
+    only TDR experiment with swc_depths=[0.2]); those horizons then run as
+    uncalibrated (prior Waxman-Smits only) instead of failing validation.
+    The Step 0b early-coverage check still reports them as a WARN."""
+
     ws_localized_bandwidth_sweep: list[float] | None = None
     """Optional sequence of candidate Gaspari-Cohn bandwidths (same units
     as ws_localized_bandwidth) to evaluate via leave-one-probe-out CV
@@ -981,7 +988,13 @@ def _validate(name: str, raw: dict) -> None:
     # Cross-field check (report item 6 / section 8): swc_depths must reach
     # every horizon implied by depths0, or that horizon can never be
     # calibrated no matter how the ensemble inversion runs.
-    if swc_depths is not None:
+    allow_uncovered = raw.get("allow_uncovered_horizons", False)
+    if not isinstance(allow_uncovered, bool):
+        raise ValueError(
+            f"Scenario '{name}': allow_uncovered_horizons must be a bool, "
+            f"got {allow_uncovered!r}."
+        )
+    if swc_depths is not None and not allow_uncovered:
         _check_swc_depth_horizon_coverage(name, depths0, swc_depths)
 
     window_m = raw.get("window_m", 1.0)
@@ -1342,6 +1355,7 @@ def load_scenario(
             if raw.get("ws_localized_bandwidth_sweep") is not None else None
         ),
         train_val_split   = str(raw.get("train_val_split", "off")),
+        allow_uncovered_horizons = bool(raw.get("allow_uncovered_horizons", False)),
     )
 
 

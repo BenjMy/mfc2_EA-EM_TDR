@@ -90,7 +90,8 @@
       "ws_fixed_params",
       "lab_p0",
       "window_m",
-      "ws_localized_bandwidth_sweep"
+      "ws_localized_bandwidth_sweep",
+      "drop_coils"
     ]
   },
   "real_single_base": {
@@ -156,6 +157,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_single_base"
   },
   "real_single_fslin": {
@@ -220,6 +222,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_single_fslin"
   },
   "real_single_cs": {
@@ -284,6 +287,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_single_cs"
   },
   "real_single_depth_free": {
@@ -349,6 +353,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_single_depth_free"
   },
   "real_single_ws_all_fixed": {
@@ -414,6 +419,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_single_ws_all_fixed"
   },
   "real_single_ws_free_sigmaw": {
@@ -479,6 +485,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_single_ws_free_sigmaw"
   },
   "real_single_ws_free_sigmas": {
@@ -544,6 +551,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_single_ws_free_sigmas"
   },
   "real_multi_base": {
@@ -619,6 +627,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_multi_base"
   },
   "real_multi_fslin": {
@@ -693,6 +702,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_multi_fslin"
   },
   "real_multi_cs": {
@@ -767,6 +777,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_multi_cs"
   },
   "real_multi_depth_free": {
@@ -842,6 +853,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_multi_depth_free"
   },
   "real_multi_ws_all_fixed": {
@@ -917,6 +929,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_multi_ws_all_fixed"
   },
   "real_multi_ws_free_sigmaw": {
@@ -992,6 +1005,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_multi_ws_free_sigmaw"
   },
   "real_multi_ws_free_sigmas": {
@@ -1067,6 +1081,7 @@
       12,
       20
     ],
+    "drop_coils": [425],
     "cache_tag": "real_multi_ws_free_sigmas"
   }
 }

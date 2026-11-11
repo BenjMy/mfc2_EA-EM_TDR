@@ -998,6 +998,7 @@ def run_petro(
     probe_depths_reflect_fitted_interfaces: bool = False,
     lab_p0: np.ndarray | list | None = None,
     theta_obs_std: float | Sequence[float] | None = None,
+    sensor_ids: Sequence[str] | None = None,
 ) -> list[EMmethod.PetroFit]:
     """
     Run STEP 2: Calibrate petrophysical function using Option A spatial layouts.
@@ -1170,10 +1171,15 @@ def run_petro(
         # once any NaN-drop has happened, with the wrong COUNT of
         # observations entirely).
         routed_sample_positions = np.asarray(sample_positions)[kept_indices]
+        routed_sensor_ids = (
+            np.asarray(sensor_ids, dtype=object)[kept_indices]
+            if sensor_ids is not None else None
+        )
         plot_one_to_one_validation_by_sensor(
             theta_obs=best_fit.observed_theta,
             theta_pred=best_fit.predicted_theta,
             sample_positions=routed_sample_positions,
+            sensor_ids=routed_sensor_ids,
             output_path=os.path.join(output_dir, "parity_validation_by_sensor.png"),
         )
 
@@ -1374,6 +1380,7 @@ def run_petro_localized(
     lab_p0: np.ndarray | list | None = None,
     theta_obs_std: float | Sequence[float] | None = None,
     global_fit: "EMmethod.PetroFit | None" = None,
+    sensor_ids: Sequence[str] | None = None,
 ) -> list["EMmethod.LocalizedPetroFit"]:
     """
     Step 2, kernel-localized variant (spatial_calibration_alternatives.md
