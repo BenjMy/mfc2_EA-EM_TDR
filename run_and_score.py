@@ -123,7 +123,7 @@ def main() -> None:
     #     BEFORE run_pipeline imports either, so the cached sys.modules
     #     entries run_pipeline picks up already carry the patched
     #     functions. -----------------------------------------------------
-    step3 = importlib.import_module("3_run_average")
+    step3 = importlib.import_module("step3_average")
     captured: dict = {}
     _orig_run_average = step3.run_average
 
@@ -136,7 +136,7 @@ def main() -> None:
 
     step3.run_average = _capturing_run_average
 
-    step4_5 = importlib.import_module("4_run_select_assess")
+    step4_5 = importlib.import_module("step4_select")
     _orig_run_select_assess = step4_5.run_select_assess
 
     def _capturing_run_select_assess(*a, **kw):

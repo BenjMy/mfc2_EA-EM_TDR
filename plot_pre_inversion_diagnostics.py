@@ -102,22 +102,9 @@ _COLUMN_VARIANTS: dict[str, list[str]] = {
 
 
 def _import_real_data_loader():
-    """Import 0_real_data_loader.py (leading-digit filename can't be
-    `import`-ed directly). Mirrors run_pipeline.py::_load_real_data's own
-    fallback-import logic."""
-    try:
-        return importlib.import_module("0_real_data_loader")
-    except ImportError:
-        loader_script = Path(__file__).parent / "0_real_data_loader.py"
-        if not loader_script.exists():
-            raise ImportError(
-                f"0_real_data_loader.py not found next to this script "
-                f"(looked in {loader_script.parent})."
-            )
-        spec = importlib.util.spec_from_file_location("real_data_loader", loader_script)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
+    """Import the real-data loader module (data_real.py, next to this script)."""
+    import data_real
+    return data_real
 
 
 def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None

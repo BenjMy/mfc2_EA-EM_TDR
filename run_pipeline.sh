@@ -109,7 +109,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
 SCENARIO_LOADER="${SCRIPT_DIR}/scenario_loader.py"
 SCENARIO_JSON="${SCRIPT_DIR}/ensemble_scenarios.json"
-REAL_DATA_LOADER="${SCRIPT_DIR}/0_real_data_loader.py"
+REAL_DATA_LOADER="${SCRIPT_DIR}/data_real.py"
 
 # ---------------------------------------------------------------------------
 # Helpers

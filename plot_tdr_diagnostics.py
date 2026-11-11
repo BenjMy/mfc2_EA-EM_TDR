@@ -36,31 +36,11 @@ import matplotlib.dates as mdates
 
 
 # --------------------------------------------------------------------------
-# Import load_tdr_dataframe from 0_real_data_loader.py without renaming the
-# source file (its name starts with a digit, so a plain `import` won't work).
+# Import load_tdr_dataframe from data_real.py (next to this script).
 # --------------------------------------------------------------------------
 def _import_real_data_loader():
-    try:
-        from l0_real_data_loader import load_tdr_dataframe  # if ever renamed
-        return load_tdr_dataframe
-    except ImportError:
-        pass
-    try:
-        from _0_real_data_loader import load_tdr_dataframe
-        return load_tdr_dataframe
-    except ImportError:
-        pass
-    loader_path = Path(__file__).parent / "0_real_data_loader.py"
-    if not loader_path.exists():
-        raise ImportError(
-            f"Could not locate 0_real_data_loader.py next to {__file__}; "
-            "place plot_tdr_diagnostics.py in the same directory as the "
-            "pipeline scripts."
-        )
-    spec = importlib.util.spec_from_file_location("real_data_loader", loader_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.load_tdr_dataframe
+    from data_real import load_tdr_dataframe
+    return load_tdr_dataframe
 
 
 load_tdr_dataframe = _import_real_data_loader()
@@ -302,10 +282,7 @@ if __name__ == "__main__":
     em_dates = None
     if args.em_dir:
         import glob as _glob
-        loader_path = Path(__file__).parent / "0_real_data_loader.py"
-        spec = importlib.util.spec_from_file_location("real_data_loader", loader_path)
-        rdl = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(rdl)
+        import data_real as rdl
         em_dates = sorted(
             d for f in _glob.glob(os.path.join(args.em_dir, "*.csv"))
             if (d := rdl.extract_date_from_filename(f)) is not None

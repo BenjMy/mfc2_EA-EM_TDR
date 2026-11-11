@@ -72,10 +72,10 @@ import plot_em_footprint as pef
 import plot_pre_inversion_diagnostics as preinvdiag
 import plot_train_val_diagnostics as ptv
 
-step0   = importlib.import_module("0_generate_synthetic_data")
-step2   = importlib.import_module("2_run_petro")
-step3   = importlib.import_module("3_run_average")
-step4_5 = importlib.import_module("4_run_select_assess")
+import data_synthetic as step0
+import step2_petro as step2
+import step3_average as step3
+import step4_select as step4_5
 
 
 # ===========================================================================
@@ -991,29 +991,9 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
     """
     from pathlib import Path
 
-    # Import the real data loader
+    # Import the real data loader (data_real.py, next to this script)
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    try:
-        from l0_real_data_loader import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe  # Adjust import as needed
-    except ImportError:
-        # Try alternate name
-        try:
-            from _0_real_data_loader import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe
-        except ImportError:
-            # Fallback: try from current script directory
-            import importlib.util
-            loader_script = Path(__file__).parent / "0_real_data_loader.py"
-            if not loader_script.exists():
-                raise ImportError(
-                    f"Real data loader not found. Expected: {loader_script}\n"
-                    "Ensure 0_real_data_loader.py is in the pipeline directory."
-                )
-            spec = importlib.util.spec_from_file_location("real_data_loader", loader_script)
-            real_data_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(real_data_module)
-            prepare_real_dataset = real_data_module.prepare_real_dataset
-            preprocess_em_survey = real_data_module.preprocess_em_survey
-            load_tdr_dataframe = real_data_module.load_tdr_dataframe
+    from data_real import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe
 
     print(f"[REAL DATA] Loading from:")
     print(f"  EM directory  : {em_dir}")
