@@ -71,7 +71,7 @@ import em_sensitivity as emsens
 import plot_em_footprint as pef
 import plot_pre_inversion_diagnostics as preinvdiag
 import plot_train_val_diagnostics as ptv
-from plots import pre_inversion
+from plots import pre_inversion, ws_distribution
 
 import data_synthetic as step0
 import step2_petro as step2
@@ -2069,6 +2069,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 ws_layer_params=WS_LAYER_PARAMS,
             )
             step0.plot_synthetic_results(output_dir=OUTPUT_DIR)
+            # Truth vs initial WS parameters per horizon (never aborts the run).
+            try:
+                _ws_fig = ws_distribution.plot_ws_truth_vs_initial(
+                    OUTPUT_DIR, lab_p0=LAB_P0, ws_fixed_params=WS_FIXED_PARAMS,
+                    ws_truth_params=synthetic_geometry.get("ws_truth_params"),
+                )
+                reporter.log(f"[STEP 0] WS truth vs initial per horizon -> {_ws_fig}")
+            except Exception as _exc:  # plotting only
+                reporter.log(f"[STEP 0][WARN] ws_distribution plot failed: {_exc!r}")
             if WS_XY_VARIATION:
                 _ws_xy_map_path = os.path.join(OUTPUT_DIR, "synthetic_ws_truth_xy_maps.png")
                 reporter.log(

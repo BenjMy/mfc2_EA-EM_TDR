@@ -52,6 +52,7 @@ python plot_validation_1to1.py --ids <surface_run_id> <full_run_id> \
 | Plot | Where |
 |---|---|
 | ECa observed vs forward-simulated optimal (1:1 and per coil) | `<run>/solution/eca_forward_optimal/eca_forward_1to1_t??.png`, `eca_forward_vs_observed_t??.png` |
+| WS parameters (a, m, sigma_w, sigma_s) truth vs calibration initial value, per horizon (synthetic runs) | `<run>/synthetic_ws_truth_vs_initial.png` (`plots/ws_distribution.py`) |
 | Optimal EC_bulk profiles vs truth | `<run>/solution/solution_ec_bulk_profiles.png` |
 | Optimal water content (θ) profiles vs truth | `<run>/solution/solution_swc_profiles.png` |
 | Cross-run RMSE/CV, θ error, depth profile, transect, scatter vs truth | `comparison_output/<name>/fig_*.png` |
