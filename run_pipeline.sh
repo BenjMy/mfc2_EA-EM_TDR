@@ -106,6 +106,8 @@ WS_LOCALIZED_BANDWIDTH_SWEEP=()
 EM_FOOTPRINT_DIAGNOSTIC=false
 QUICK=false
 QUICK_EPOCHS=""
+STAGE=""
+CALIBRATION=""
 TRAIN_VAL_SPLIT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
@@ -245,6 +247,19 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           to '<seq>_<scenario>_quick' and its own
                           '*_quick*.pkl' cache, so a full-run cache is
                           never overwritten.
+      --stage S           Real data only. full (default): one run does
+                          everything. calibrate: EM points restricted to
+                          the probe neighbourhoods, FULL ensemble, Steps
+                          0-5, writes stage_calibration.json (selected K,
+                          members, WS parameters, localized bandwidth) and
+                          stops before the maps. map: inverts ONLY the
+                          members the calibration selected, on the
+                          scenario's EM points (all or grid-thinned), runs
+                          Steps 2-6 and reports drift vs the calibration.
+                          Each stage has its own run folder and cache file.
+      --calibration PATH  With --stage map: stage_calibration.json or the
+                          '*_calibrate' run folder. Default: newest
+                          '*_calibrate' run under the scenario's output_dir.
       --quick-epochs N    With --quick (real data only): also keep only
                           N evenly spaced survey epochs (first and last
                           always included), e.g. 3 of 7 -> 12 tasks.
@@ -619,6 +634,12 @@ while [[ $# -gt 0 ]]; do
         --homogeneous) HOMOGENEOUS=true; shift ;;
         --em-footprint-diagnostic) EM_FOOTPRINT_DIAGNOSTIC=true; shift ;;
         --quick) QUICK=true; shift ;;
+        --stage)
+            STAGE="${2:?'--stage requires one of: full calibrate map'}"
+            case "${STAGE}" in full|calibrate|map) ;; *) die "--stage must be full, calibrate or map, got '${STAGE}'" ;; esac
+            shift 2 ;;
+        --calibration)
+            CALIBRATION="${2:?'--calibration requires a path'}"; shift 2 ;;
         --quick-epochs)
             QUICK_EPOCHS="${2:?'--quick-epochs requires a positive integer'}"
             [[ "${QUICK_EPOCHS}" =~ ^[1-9][0-9]*$ ]] \
@@ -956,6 +977,16 @@ if ${QUICK}; then
     [[ -n "${QUICK_EPOCHS}" ]] && QUICK_ARGS+=(--quick-epochs "${QUICK_EPOCHS}")
 fi
 
+if [[ -n "${CALIBRATION}" && "${STAGE}" != "map" ]]; then
+    die "--calibration requires --stage map"
+fi
+if [[ "${STAGE}" == "map" ]] && ${QUICK}; then
+    die "--stage map cannot be combined with --quick"
+fi
+STAGE_ARGS=()
+[[ -n "${STAGE}" ]] && STAGE_ARGS+=(--stage "${STAGE}")
+[[ -n "${CALIBRATION}" ]] && STAGE_ARGS+=(--calibration "${CALIBRATION}")
+
 EM_FOOTPRINT_ARGS=()
 if ${EM_FOOTPRINT_DIAGNOSTIC}; then
     EM_FOOTPRINT_ARGS=(--em-footprint-diagnostic)
@@ -1037,6 +1068,7 @@ cat >> "${HEADER_TMP}" << MDEOF
 | train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |
 | em-footprint-diagnostic | \`${EM_FOOTPRINT_DIAGNOSTIC}\` |
 | quick | \`${QUICK}${QUICK_EPOCHS:+ (epochs=${QUICK_EPOCHS})}\` |
+| stage | \`${STAGE:-full}${CALIBRATION:+ (calibration=${CALIBRATION})}\` |
 | env | \`${VENV_PATH:-none}\` |
 | python | \`${PYTHON}\` |
 
@@ -1065,6 +1097,7 @@ set +e
     "${TRAIN_VAL_ARGS[@]+"${TRAIN_VAL_ARGS[@]}"}" \
     "${EM_FOOTPRINT_ARGS[@]+"${EM_FOOTPRINT_ARGS[@]}"}" \
     "${QUICK_ARGS[@]+"${QUICK_ARGS[@]}"}" \
+    "${STAGE_ARGS[@]+"${STAGE_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
     2>&1 | tee "${RUN_LOG_TMP}"
 EXIT_CODE=${PIPESTATUS[0]}

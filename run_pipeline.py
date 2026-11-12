@@ -59,6 +59,7 @@ import em_methodology as EMmethod
 import em_subsample
 import geometry_utils
 import quick_preset
+import stage_split
 import train_val_split as tvs
 from scenario_loader import load_scenario, ScenarioConfig
 import plot_water_content as pwc
@@ -1187,7 +1188,7 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
 def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
                           drop_coils=None, spatial_match_tolerance_m=None,
                           pin_layers=None, pin_source=None,
-                          em_subsample=None, epochs=None) -> str:
+                          em_subsample=None, epochs=None, members=None) -> str:
     """
     Stable content hash of everything that determines the inversion outputs
     cached in Step 1 (ensemble_cache_*.pkl). Used to auto-invalidate a cache
@@ -1224,6 +1225,10 @@ def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
     if epochs is not None:
         # Only added for a --quick-epochs subset, so every existing cache keeps its hash.
         payload["epochs"] = list(epochs)
+    if members is not None:
+        # --stage map: only the calibration-selected members are inverted, so the
+        # member set must be part of the key (param_grid alone describes the full grid).
+        payload["members"] = [list(m) for m in members]
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -1541,9 +1546,22 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          ws_localized_bandwidth_sweep: list[float] | None = None,
          em_footprint_diagnostic: bool = False,
          quick: bool = False,
-         quick_epochs: int | None = None):
+         quick_epochs: int | None = None,
+         stage: str = "full",
+         calibration: str | None = None):
     """
     Run the full EA-EM pipeline.
+
+    ``stage`` : ``"full"`` (default, one run does everything), ``"calibrate"`` or
+    ``"map"`` (real data only; see stage_split.py). ``calibrate`` thins the EM
+    survey to the probe neighbourhoods, inverts the FULL ensemble, runs Steps
+    0-5 and writes ``stage_calibration.json`` (selected K + members + WS
+    parameters + localized bandwidth) into the run folder, then stops before
+    the map rendering. ``map`` reads that file (``calibration`` = file / run
+    folder, default: newest ``*_calibrate`` run of the scenario), inverts ONLY
+    the K selected members on the scenario's EM points (all, or grid-thinned),
+    runs Steps 2-6 and reports how far K and the WS parameters drifted from the
+    calibration. Own run folder suffix and cache file per stage.
 
     ``quick`` : smoke-test preset (see quick_preset.py): ONE alpha and ONE
     forward model out of the scenario's grid; with ``quick_epochs=k`` also
@@ -1712,7 +1730,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # own fresh, numbered subfolder inside it (see next_run_output_dir)
         # instead of writing directly into -- and overwriting -- it.
         OUTPUT_DIR        = next_run_output_dir(
-            cfg.output_dir, _scenario_name + ("_quick" if quick else ""))
+            cfg.output_dir,
+            _scenario_name + ("_quick" if quick else "") + stage_split.stage_label(stage))
         OUTPUT_MODEL_DIR  = os.path.join(OUTPUT_DIR, "output_model")
         os.makedirs(OUTPUT_MODEL_DIR, exist_ok=True)
         REALIZATION_INDEX = cfg.realization_index
@@ -1891,6 +1910,34 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # Optional thinning of the real EM surveys (em_subsample.py); None = off.
     EM_SUBSAMPLE = getattr(cfg, "em_subsample", None) if cfg is not None else None
 
+    # --stage calibrate / map (see stage_split.py)
+    STAGE = stage or "full"
+    CALIBRATION = None
+    CALIBRATION_PATH = None
+    if STAGE != "full":
+        if data_source != "real":
+            raise ValueError("--stage calibrate/map is for real-data runs only "
+                             "(there is no probe<->EM thinning to split on synthetic data).")
+        print(f"[STAGE] --stage {STAGE}")
+    if STAGE == "calibrate":
+        EM_SUBSAMPLE, _sub_replaced = stage_split.calibrate_em_subsample(EM_SUBSAMPLE)
+        print(f"[STAGE] calibrate: EM points restricted to the probe neighbourhoods "
+              f"({EM_SUBSAMPLE})" + (" -- replaces the scenario's em_subsample." if _sub_replaced else "."))
+        print("[STAGE] calibrate: FULL ensemble; Steps 0-5, then stage_calibration.json; "
+              "no map rendering (Step 6).")
+    elif STAGE == "map":
+        CALIBRATION_PATH = stage_split.resolve_calibration_path(
+            calibration, cfg.output_dir if cfg is not None else None)
+        CALIBRATION = stage_split.read_calibration(CALIBRATION_PATH)
+        print(f"[STAGE] map: calibration '{CALIBRATION_PATH}' (scenario "
+              f"'{CALIBRATION.get('scenario')}', created {CALIBRATION.get('created')}): "
+              f"K={CALIBRATION['selected_K']} member(s) of {CALIBRATION.get('n_ensemble_total')} "
+              f"will be inverted.")
+        if EM_SUBSAMPLE and str(EM_SUBSAMPLE.get("mode", "off")).lower() == "probes":
+            print("[STAGE][WARN] map stage with em_subsample.mode='probes': only the probe "
+                  "neighbourhoods will be mapped. Use a scenario with no em_subsample (all "
+                  "points) or mode 'grid' for the maps.")
+
     # Train/validation split (see train_val_split.py and Loiseau et al.,
     # 2026 Secs. 2.3/2.6). "off" preserves the legacy behaviour of fitting
     # and selecting K on the full observation set. Resolved here (CLI >
@@ -1955,6 +2002,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             f"ON -- SMOKE TEST (alpha/forwardModel reduced: {QUICK_INFO or 'n/a'}; "
             f"epochs: {quick_epochs if quick_epochs else 'all'})"
             if quick else "(off)"
+        ),
+        "stage": (
+            STAGE if STAGE == "full" else
+            f"{STAGE}" + (f" (calibration: {CALIBRATION_PATH})" if CALIBRATION_PATH else "")
         ),
     })
 
@@ -2538,6 +2589,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # Own cache file: never clobber (or be mistaken for) the full-run cache.
             cache_path = quick_preset.quick_cache_path(cache_path, quick_epochs)
             print(f"[QUICK] Using separate cache file: '{cache_path}'")
+        if STAGE != "full":
+            cache_path = stage_split.stage_cache_path(cache_path, STAGE)
+            print(f"[STAGE] Using separate cache file: '{cache_path}'")
 
         # Content fingerprint of everything that determines Step 1's output.
         # Guards against a stale cache_tag: if depths0/fixed_depths/param_grid/
@@ -2562,7 +2616,20 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     and REAL_DATA_DIAG is not None)
                 else None
             ),
+            members=(stage_split.record_member_keys(CALIBRATION) if CALIBRATION else None),
         )
+
+        if STAGE == "map":
+            # Refuse an incompatible calibration BEFORE any inversion (or cache reuse).
+            _errs, _warns = stage_split.check_compatibility(
+                CALIBRATION, depths0=DEPTHS0, cond_ranges=COND_RANGES,
+                em_files=(list(EM_FNAMES) if timelapse else [EM_FNAMES]),
+                scenario=_scenario_name)
+            for _w in _warns:
+                print(f"[STAGE][WARN] {_w}")
+            if _errs:
+                raise ValueError("--stage map: calibration is incompatible with this run: "
+                                 + " | ".join(_errs))
 
         # Real-data time-lapse spatial reference grid coordinates (union
         # across all survey epochs -- see geometry_utils.match_epochs_to_
@@ -2768,6 +2835,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     combo_list.append((alpha, beta, gamma_val, method, f_model, list(conds0)))
 
             files_to_process = EM_FNAMES if timelapse else [EM_FNAMES]
+            if STAGE == "map":
+                _n_grid = len(combo_list)
+                combo_list, _missing = stage_split.select_members(combo_list, CALIBRATION)
+                if _missing:
+                    raise ValueError(
+                        f"--stage map: {len(_missing)} calibrated member(s) are not in this "
+                        f"scenario's parameter grid (grid/scenario changed since the "
+                        f"calibration?): {_missing[:3]}{' ...' if len(_missing) > 3 else ''}")
+                print(f"[STAGE] map: ensemble cut from {_n_grid} to {len(combo_list)} "
+                      f"member(s) (the K={CALIBRATION['selected_K']} selected by the calibration).")
             tasks = []
             task_meta = {}          # task_idx -> dict describing the combo, for failure reporting
             global_task_idx = 0
@@ -4471,6 +4548,19 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             WS_LOCALIZED_BANDWIDTH = ws_localized_bandwidth
         if ws_localized_bandwidth_sweep is not None:
             WS_LOCALIZED_BANDWIDTH_SWEEP = list(ws_localized_bandwidth_sweep)
+        if STAGE == "map":
+            # The leave-one-probe-out bandwidth CV only reads probe-matched points, so it
+            # belongs to the calibrate stage; the map run reuses the bandwidth it chose
+            # (an explicit --ws-localized-bandwidth still wins).
+            if WS_LOCALIZED_BANDWIDTH_SWEEP is not None:
+                reporter.log("[STAGE] map: ws_localized_bandwidth_sweep skipped -- the bandwidth "
+                             "is taken from the calibration run.")
+            WS_LOCALIZED_BANDWIDTH_SWEEP = None
+            if ws_localized_bandwidth is None and CALIBRATION.get("localized_bandwidth") is not None:
+                WS_LOCALIZED_BANDWIDTH = CALIBRATION["localized_bandwidth"]
+                reporter.log(f"[STAGE] map: ws_localized_bandwidth = {WS_LOCALIZED_BANDWIDTH:g} "
+                             f"(from the calibration"
+                             f"{', chosen there by the LOO-CV sweep' if CALIBRATION.get('bandwidth_from_sweep') else ''}).")
         _localized_y = y_transect if (mode == "2d" and utm_y is not None) else None
         _bandwidth_from_sweep = False
 
@@ -4782,6 +4872,55 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   McNeill-weighted comparison alongside the existing hard-routed
         #   (nearest-layer) one.
         # -----------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # --stage hand-over (see stage_split.py)
+        # ------------------------------------------------------------------
+        if STAGE in ("calibrate", "map"):
+            _ws_now = stage_split.ws_rows_from_fit(fits_step4[selected_output.K - 1].horizon_fits)
+        if STAGE == "calibrate":
+            _calib_record = stage_split.build_calibration_record(
+                scenario=_scenario_name, run_id=reporter.run_id, output_dir=OUTPUT_DIR,
+                ranking=ranking, param_metadata=param_metadata,
+                rmse_by_member=[f.rmse for f in fits_step2],
+                selected_K=selected_output.K, selected_rmse=selected_output.rmse,
+                ws_by_horizon=_ws_now,
+                localized_bandwidth=WS_LOCALIZED_BANDWIDTH,
+                bandwidth_from_sweep=_bandwidth_from_sweep,
+                depths0=DEPTHS0, cond_ranges=COND_RANGES,
+                em_files=(list(EM_FNAMES) if timelapse else [EM_FNAMES]),
+                em_subsample=EM_SUBSAMPLE, quick=quick, n_probe_obs=len(theta_obs),
+            )
+            _calib_path = stage_split.write_calibration(OUTPUT_DIR, _calib_record)
+            reporter.log(
+                f"[STAGE] calibrate: wrote '{_calib_path}' -- K={selected_output.K} of "
+                f"{len(param_metadata)} member(s), RMSE={selected_output.rmse:.5f} m3/m3, "
+                f"localized bandwidth={WS_LOCALIZED_BANDWIDTH!r}. Next: "
+                f"--stage map --calibration '{OUTPUT_DIR}'")
+            reporter.args_table("Stage calibrate — members handed to the map stage", {
+                f"rank {m['rank']}": (f"alpha={m['alpha']:.4g}  {m['forwardModel']}  {m['method']}  "
+                                      f"start={m['conds0']}  RMSE={m['rmse']:.5f}")
+                for m in _calib_record["members"]
+            })
+        elif STAGE == "map":
+            _drift = stage_split.drift_report(CALIBRATION, selected_output.K, _ws_now)
+            reporter.table(
+                "Stage map — drift of the re-derived calibration vs the calibrate run",
+                ["Horizon", "Param", "Calibration", "Map run", "Rel. diff", "Drift"],
+                [[r["horizon"], r["param"], f"{r['calibration']:.4g}", f"{r['map_run']:.4g}",
+                  f"{r['rel_diff']*100:.1f}%", "YES" if r["drift"] else ""] for r in _drift["rows"]],
+                note=(f"K: calibration {_drift['K_calibration']} vs map run {_drift['K_map']}. "
+                      f"Drift threshold {_drift['rel_tol']*100:.0f}% of the calibrated value. A "
+                      f"small drift is expected when the map run matches probes to a denser "
+                      f"point set; a changed K or large drift means the calibration no longer "
+                      f"describes this run."))
+            reporter.metric("Stage map — K (calibration / map)",
+                            f"{_drift['K_calibration']} / {_drift['K_map']}")
+            reporter.metric("Stage map — max WS parameter drift", f"{_drift['max_rel']*100:.1f}%")
+            reporter.log(
+                f"[STAGE] map: K calibration={_drift['K_calibration']} vs map={_drift['K_map']}; "
+                f"max WS parameter drift {_drift['max_rel']*100:.1f}%"
+                + ("  [WARN] CALIBRATION DRIFT -- consider redoing --stage calibrate." if _drift["warn"] else "  (OK)"))
+
         if em_footprint_diagnostic:
             reporter.step("Step 5c", "EM footprint discrepancy (McNeill depth weighting)")
 
@@ -5184,6 +5323,33 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # -----------------------------------------------------------------------
         # STEP 6 — WATER CONTENT VISUALISATIONS  (XZ always; XY in 2-D mode)
         # -----------------------------------------------------------------------
+        if STAGE == "calibrate":
+            reporter.log("[STAGE] calibrate: stopping before Step 6 (no maps of the probe "
+                         "neighbourhoods). Run '--stage map' for the maps.")
+            reporter.metric("Ensemble size (Step 1)", f"{ensemble_size} realisations  [axis 0 of ensemble matrix]")
+            reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
+            reporter.metric("Final RMSE (Step 5)", f"{selected_output.rmse:.6f} m³/m³")
+            reporter.finish(exit_ok=True, quality_level=quality_gate_result.level,
+                            quality_reasons=quality_gate_result.reasons)
+            append_run_log(LOG_FILE, {
+                "run_id":        reporter.run_id,
+                "timestamp":     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "scenario":      _scenario_name,
+                "mode":          mode.upper(),
+                "data_source":   data_source,
+                "status":        "WARN" if quality_gate_result.level == "WARN" else "SUCCESS",
+                "output_dir":    OUTPUT_DIR,
+                "report_path":   reporter.report_path,
+                "final_rmse":    reporter.get_metric("Final RMSE (Step 5)"),
+                "cv_mean":       "",
+                "cv_max":        "",
+                "ensemble_size": reporter.get_metric("Ensemble size (Step 1)"),
+                "runtime_s":     f"{reporter.elapsed_total:.1f}" if reporter.elapsed_total is not None else "",
+                "quality_level": quality_gate_result.level,
+                "error":         "",
+            })
+            return
+
         reporter.step("Step 6", "Rendering water content visualizations")
         reporter.log("\n" + "=" * 80)
         reporter.log(" [PIPELINE] STEP 6: RENDERING WATER CONTENT VISUALIZATIONS")
@@ -5911,6 +6077,22 @@ if __name__ == "__main__":
              "overwritten).",
     )
     parser.add_argument(
+        "--stage", choices=list(stage_split.STAGES), default="full",
+        help="Real data only. 'full' (default): one run does everything. 'calibrate': "
+             "EM points restricted to the probe neighbourhoods, FULL ensemble, Steps 0-5, "
+             "writes stage_calibration.json (selected K, members, WS parameters, localized "
+             "bandwidth) and stops before the maps. 'map': inverts ONLY the members the "
+             "calibration selected on the scenario's EM points (all, or grid-thinned), runs "
+             "Steps 2-6 and reports the drift vs the calibration. Own '_calibrate' / '_map' "
+             "run folder and cache file.",
+    )
+    parser.add_argument(
+        "--calibration", default=None, metavar="PATH",
+        help="With --stage map: a stage_calibration.json or the '*_calibrate' run folder "
+             "that holds it. Default: the newest '*_calibrate' run under the scenario's "
+             "output_dir.",
+    )
+    parser.add_argument(
         "--quick-epochs", type=int, default=None, metavar="N",
         help="With --quick (real data only): keep only N evenly spaced survey "
              "epochs (first and last always included). Default: all epochs.",
@@ -5931,6 +6113,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if args.calibration is not None and args.stage != "map":
+        parser.error("--calibration requires --stage map")
+    if args.stage == "map" and args.quick:
+        parser.error("--stage map cannot be combined with --quick (the selected members must "
+                     "exist in the full parameter grid)")
     if args.quick_epochs is not None:
         if not args.quick:
             parser.error("--quick-epochs requires --quick")
@@ -6075,7 +6262,8 @@ if __name__ == "__main__":
              ws_localized_bandwidth=args.ws_localized_bandwidth,
              ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
              em_footprint_diagnostic=args.em_footprint_diagnostic,
-             quick=args.quick, quick_epochs=args.quick_epochs)
+             quick=args.quick, quick_epochs=args.quick_epochs,
+             stage=args.stage, calibration=args.calibration)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.
