@@ -3881,7 +3881,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             probe_x_coords=PROBE_X_COORDS_LOCAL,
             probe_y_coords=PROBE_Y_COORDS_LOCAL,   # non-zero in 2D mode → XY distance auto-enabled
             probe_depths=PROBE_DEPTHS,        # <-- Z axis (unchanged)
-            probe_ids=PROBE_LABELS,           # sensor IDs -> plot_probe_matching / plot_calibration_density_* markers
+            # Real data without --probe-xyz: PROBE_LABELS was just replaced by the
+            # real station names (e.g. 20) while PROBE_X_COORDS_LOCAL is still the
+            # synthetic-style placeholder (NUM_POSITIONS x layers, e.g. 8), so the
+            # lengths differ and extract_sample_positions_from_survey raised
+            # ValueError. The placeholder results are replaced below by
+            # station_position_results (which carry the real IDs), so label them
+            # only when the lengths agree.
+            probe_ids=(PROBE_LABELS if len(PROBE_LABELS) == len(PROBE_X_COORDS_LOCAL) else None),  # sensor IDs -> plot_probe_matching / plot_calibration_density_* markers
             # Horizon routing uses EFFECTIVE_DEPTHS0 (== DEPTHS0 when fixed;
             # the ensemble-median FITTED interface depths otherwise -- see
             # "EFFECTIVE DEPTHS FOR TDR PROBE HORIZON ROUTING" above).
