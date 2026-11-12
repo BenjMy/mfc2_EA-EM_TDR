@@ -49,6 +49,12 @@ Only the deepest horizon improved. The old cap hid part of the non-uniqueness; w
 - [ ] Check on a real run that a `grid`/`probes` run reproduces the full run's optimal EC and theta at the probe-matched points (README acceptance tests), and that the matching report does not get worse.
 - [ ] Split a real run into `--stage calibrate` (probe points only, full ensemble) and `--stage map` (all or grid-thinned points, selected alpha / forward model / K only). Today both are one run.
 	In that case **how would ws_localized_bandwidth_sweep work**??
+- [ ] For the ECa plan view map figs such as ens000_t01_map_xy.png dont interpolate (use imshow instead like for water_content_xy_real_single_test_probes or a scatter plot like for petro_calibration_localized_map_sigma_w.png).
+- [ ] Revise the scenario i.e. nb of layers (horizons) against position of real TDR sensors etc... (create also a loop with varying freedom of WS parameters) to test on the real data. Maybe replace the run_real_PAPER.sh  by a .py for readability? simplicity?
+- [ ] Check if a filter is actually applied on the TDR time serie... I see in the plot that some points are realy outliers ...
+- [ ] Check that lab values are inside the range of perturbated WS
+- [ ] Add a doc on how to run with bandwidth +  `--stage calibrate` (probe points only, full ensemble) and `--stage map` 
+- [ ] Can we add a plot along with SWC plots of the SMC uncertainties ? Like I know my SMC is 0.3 +- 0.1 (maybe this is already what MAE and/or RMSE is doing but I think those are just metrics not uncertainties no?)
 - [ ] Optional WS calibration **by zone** for real data (`ws_zones`): the clustering method still has to be discussed (geographic, ECa-based, soil-map, temporal stability), see README "Optional: calibrate Waxman-Smits by zone". First check whether it is redundant with `ws_localized_bandwidth_sweep` (continuous, distance-only version of the same idea): look at the CV-selected bandwidth on a real run; zones only pay off if there is spatial structure that a covariate or a sharp boundary explains and distance alone does not.
 - [ ] Remove the misleading "--mode not given; defaulting to '1d' for data_source='synthetic'" message in real runs; banner "Forward model : CS" while the grid sweeps FSlin and CS.
 
