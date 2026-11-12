@@ -71,6 +71,7 @@ import em_sensitivity as emsens
 import plot_em_footprint as pef
 import plot_pre_inversion_diagnostics as preinvdiag
 import plot_train_val_diagnostics as ptv
+from plots import pre_inversion
 
 import data_synthetic as step0
 import step2_petro as step2
@@ -2534,13 +2535,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # dropped coils flagged in red rather than hidden.
             if timelapse:
                 for t_idx, fname in enumerate(EM_FNAMES):
-                    EMmethod.plot_raw_apparent_conductivity(
+                    pre_inversion.plot_raw_apparent_conductivity(
                         _prefilter_path(fname) or fname,
                         os.path.join(OUTPUT_DIR, f"t{t_idx:02d}"),
                         em_unit=EM_UNIT, drop_coils=DROP_COILS,
                     )
             else:
-                EMmethod.plot_raw_apparent_conductivity(
+                pre_inversion.plot_raw_apparent_conductivity(
                     _prefilter_path(EM_FNAMES) or EM_FNAMES, OUTPUT_DIR,
                     em_unit=EM_UNIT, drop_coils=DROP_COILS,
                 )
@@ -2550,13 +2551,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
             if timelapse:
                 for t_idx, fname in enumerate(EM_FNAMES):
-                    EMmethod.plot_filtered_apparent_conductivity(
+                    pre_inversion.plot_filtered_apparent_conductivity(
                         fname, os.path.join(OUTPUT_DIR, f"t{t_idx:02d}"),
                         em_unit=EM_UNIT, drop_coils=DROP_COILS,
                         prefilter_fname=_prefilter_path(fname),
                     )
             else:
-                EMmethod.plot_filtered_apparent_conductivity(
+                pre_inversion.plot_filtered_apparent_conductivity(
                     EM_FNAMES, OUTPUT_DIR, em_unit=EM_UNIT,
                     drop_coils=DROP_COILS,
                     prefilter_fname=_prefilter_path(EM_FNAMES),
@@ -3336,7 +3337,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         plot_depths = (depths_clean[:, 0]
                        if (timelapse and depths_clean is not None)
                        else depths_clean)
-        EMmethod.plot_step1_ensemble_single_file(
+        pre_inversion.plot_step1_ensemble_single_file(
             plot_models, DEPTHS0, OUTPUT_DIR,
             depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
             depths_ensemble=plot_depths,
@@ -3346,7 +3347,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # above) -- see plot_step1_ensemble_by_point docstring for why
         # this matters: the plot above can visually manufacture a shared
         # "conductive layer" that isn't actually shared across points.
-        EMmethod.plot_step1_ensemble_by_point(
+        pre_inversion.plot_step1_ensemble_by_point(
             plot_models, DEPTHS0, OUTPUT_DIR,
         )
 
