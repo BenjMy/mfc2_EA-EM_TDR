@@ -314,6 +314,20 @@ class ScenarioConfig:
     since fitting all 4 unknowns against that few points is underdetermined.
     None (default) leaves every parameter free, unchanged from before."""
 
+    pin_layers: list | None = None
+    """Optional per-layer true/false list (length n_layers = len(depths0)+1)
+    pinning those layers' conductivity during the Step 1 inversion
+    (EMagPy fixedConds), so the free deeper layers are inverted CONDITIONED
+    on them. E.g. [true, false, false, false] pins the surface layer.
+    The pinned value comes from ``pin_source``. None (default) = every layer
+    free, unchanged from before."""
+
+    pin_source: str = "truth"
+    """Where the pinned layers' EC comes from. 'truth' = the synthetic
+    ground-truth bulk EC (ORACLE upper bound: how much could conditioning on
+    a perfectly known surface layer help; synthetic runs only). Only used
+    when ``pin_layers`` is set."""
+
     ws_bounds: dict | None = None
     """Optional override of the Waxman-Smits calibration bounds used by the
     Step 2 / Step 4 optimizer (default em_methodology.WS_BOUNDS:
@@ -571,6 +585,8 @@ class ScenarioConfig:
             f"  Drop coils      : {self.drop_coils if self.drop_coils else '(none)'}",
             f"  WS fixed params : {self.ws_fixed_params if self.ws_fixed_params else '(none — all 4 free)'}",
             f"  WS bounds       : {self.ws_bounds if self.ws_bounds else '(defaults)'}",
+            f"  Pinned layers   : {self.pin_layers if self.pin_layers else '(none)'}"
+            + (f"  (source={self.pin_source})" if self.pin_layers else ""),
             f"  WS xy variation : {self.ws_xy_variation}"
             + (
                 f"  (params={self.ws_xy_params if self.ws_xy_params else ['m', 'sigma_s']}, "
@@ -916,6 +932,25 @@ def _validate(name: str, raw: dict) -> None:
                 f"Scenario '{name}': ws_fixed_params values must all be "
                 f"true/false, got {ws_fixed_params!r}."
             )
+
+    pin_layers = raw.get("pin_layers", None)
+    if pin_layers is not None:
+        _n_layers_pin = len(raw.get("depths0", [])) + 1
+        if (not isinstance(pin_layers, list) or len(pin_layers) != _n_layers_pin
+                or not all(isinstance(v, bool) for v in pin_layers)):
+            raise ValueError(
+                f"Scenario '{name}': pin_layers must be null or a list of "
+                f"{_n_layers_pin} true/false values (one per layer), got {pin_layers!r}."
+            )
+        if all(pin_layers):
+            raise ValueError(
+                f"Scenario '{name}': pin_layers pins every layer; at least one "
+                f"layer must stay free for the inversion."
+            )
+    if raw.get("pin_source", "truth") not in ("truth",):
+        raise ValueError(
+            f"Scenario '{name}': pin_source must be 'truth', got {raw.get('pin_source')!r}."
+        )
 
     ws_bounds = raw.get("ws_bounds", None)
     if ws_bounds is not None:
@@ -1504,6 +1539,8 @@ def load_scenario(
             raw.get("quality_gate_require_all_horizons_calibrated", True)
         ),
         ws_fixed_params   = raw.get("ws_fixed_params", None),
+        pin_layers        = raw.get("pin_layers", None),
+        pin_source        = raw.get("pin_source", "truth"),
         ws_bounds         = (
             {k: [float(v[0]), float(v[1])] for k, v in raw["ws_bounds"].items()}
             if raw.get("ws_bounds") is not None else None

@@ -1146,7 +1146,8 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
 
 
 def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
-                          drop_coils=None, spatial_match_tolerance_m=None) -> str:
+                          drop_coils=None, spatial_match_tolerance_m=None,
+                          pin_layers=None, pin_source=None) -> str:
     """
     Stable content hash of everything that determines the inversion outputs
     cached in Step 1 (ensemble_cache_*.pkl). Used to auto-invalidate a cache
@@ -1173,6 +1174,10 @@ def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
         "drop_coils": drop_coils,
         "spatial_match_tolerance_m": spatial_match_tolerance_m,
     }
+    if pin_layers is not None:
+        # Only added when pinning is on, so every existing cache keeps its hash.
+        payload["pin_layers"] = [bool(v) for v in pin_layers]
+        payload["pin_source"] = pin_source
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -1729,6 +1734,11 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # Optional override of the Waxman-Smits optimizer bounds ({param: [lo, hi]},
     # subset of a/m/sigma_w/sigma_s). None keeps EMmethod.WS_BOUNDS.
     WS_BOUNDS_OVERRIDE = getattr(cfg, "ws_bounds", None) if cfg is not None else None
+
+    # Step 1 layer pinning (condition the free layers on pinned ones). None =
+    # every layer free (default). 'truth' source = ORACLE (synthetic only).
+    PIN_LAYERS = getattr(cfg, "pin_layers", None) if cfg is not None else None
+    PIN_SOURCE = getattr(cfg, "pin_source", "truth") if cfg is not None else "truth"
 
     # Homogeneous mode: disable spatial gradients in synthetic generation.
     # CLI flag (if given) overrides scenario config.
@@ -2458,6 +2468,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             DEPTHS0, FIXED_DEPTHS, PARAM_GRID, COND_RANGES,
             sorted(PARAM_GRID.get("gamma", [GAMMA])), DROP_COILS,
             spatial_match_tolerance_m=_fingerprint_tolerance,
+            pin_layers=PIN_LAYERS, pin_source=PIN_SOURCE,
         )
 
         # Real-data time-lapse spatial reference grid coordinates (union
@@ -2620,8 +2631,43 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # FIX: explicitly build solver bounds from COND_RANGES instead of
             # letting EMagPy silently fall back to its hardcoded 2-100 mS/m
             # default (see _build_inversion_bnds() docstring above).
-            bnds_list = _build_inversion_bnds(DEPTHS0, fixed_depths_list, COND_RANGES)
+            bnds_list = _build_inversion_bnds(DEPTHS0, fixed_depths_list, COND_RANGES,
+                                              fixed_conds=PIN_LAYERS)
             print(f"[INFO] Inversion bnds (depths+conds, {len(bnds_list)} params): {bnds_list}")
+
+            # ---- Optional layer pinning (oracle: pinned EC = synthetic truth) ----
+            # Pinned layers keep a per-point EC (n_points, n_layers matrix passed
+            # to EMagPy setInit) and are excluded from the optimisation, so the
+            # free deeper layers are inverted conditioned on them. The starting-
+            # conductivity grid is collapsed over pinned layers (identical
+            # starts would only duplicate tasks).
+            _pin_truth_ec = None
+            if PIN_LAYERS is not None:
+                if data_source != "synthetic":
+                    raise ValueError("pin_layers with pin_source='truth' needs synthetic data "
+                                     "(there is no ground-truth EC for real data).")
+                _ec_truth_path = _resolve_npy_path("synthetic_time_lapse_ec.npy",
+                                                   OUTPUT_MODEL_DIR, OUTPUT_DIR)
+                if not os.path.exists(_ec_truth_path):
+                    raise FileNotFoundError(f"pin_layers needs {_ec_truth_path} (written by Step 0).")
+                _pin_truth_ec = np.load(_ec_truth_path)[REALIZATION_INDEX]
+                if _pin_truth_ec.ndim == 2:
+                    _pin_truth_ec = _pin_truth_ec[np.newaxis, ...]
+                _n_layers_pin = len(DEPTHS0) + 1
+                if _pin_truth_ec.shape[-1] != _n_layers_pin:
+                    raise ValueError(f"Truth EC has {_pin_truth_ec.shape[-1]} layers, "
+                                     f"expected {_n_layers_pin}.")
+                _pinned_idx = [i for i, f in enumerate(PIN_LAYERS) if f]
+                _seen, _dedup = set(), []
+                for _cs in cond_sets:
+                    _cs = list(_cs)
+                    for _i in _pinned_idx:
+                        _cs[_i] = float(COND_RANGES[_i][0])
+                    if tuple(_cs) not in _seen:
+                        _seen.add(tuple(_cs)); _dedup.append(_cs)
+                print(f"[INFO] Layer pinning (ORACLE truth EC) on layers {_pinned_idx}: "
+                      f"{len(cond_sets)} -> {len(_dedup)} starting-conductivity combinations.")
+                cond_sets = _dedup
 
             combo_list = []
             for alpha, beta, gamma_val, method, f_model in combinations:
@@ -2641,6 +2687,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                         "em_unit": EM_UNIT, "drop_coils": DROP_COILS,
                         "bnds": bnds_list,
                     }
+                    if _pin_truth_ec is not None:
+                        _truth_t = _pin_truth_ec[min(t_idx, _pin_truth_ec.shape[0] - 1)]
+                        _mat = np.tile(np.asarray(conds0, dtype=float), (_truth_t.shape[0], 1))
+                        _mat[:, _pinned_idx] = _truth_t[:, _pinned_idx]
+                        invert_kwargs["fixed_conds"] = list(PIN_LAYERS)
+                        invert_kwargs["conds0_matrix"] = _mat
                     tasks.append((global_task_idx, file_path, DEPTHS0, conds0,
                                    fixed_depths_list, invert_kwargs))
                     task_meta[global_task_idx] = {

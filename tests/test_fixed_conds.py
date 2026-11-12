@@ -64,3 +64,42 @@ def test_worker_forwards_pinning_and_strips_private_kwargs(monkeypatch):
     assert calls["setInit"]["fixedConds"] == [True, False, False, False]
     assert np.array_equal(calls["setInit"]["conds0"], mat)
     assert "fixed_conds" not in calls["invert"] and "conds0_matrix" not in calls["invert"]
+
+
+# ---- scenario fields + cache fingerprint ------------------------------------
+import json
+import os
+
+import scenario_loader as sl
+
+_SYNTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "ensemble_scenarios.json")
+
+
+def _scn(tmp_path, **over):
+    raw = json.load(open(_SYNTH, encoding="utf-8"))["1d_full_depth_ref"]
+    raw.update(over)
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"s": raw}), encoding="utf-8")
+    return str(p)
+
+
+def test_pin_layers_validation(tmp_path):
+    n = len(DEPTHS0) + 1
+    ok = sl.load_scenario("s", config_path=_scn(tmp_path, pin_layers=[True] + [False] * (n - 1)))
+    assert ok.pin_layers == [True, False, False, False] and ok.pin_source == "truth"
+    assert sl.load_scenario("s", config_path=_scn(tmp_path)).pin_layers is None
+    for bad in ([True], [True] * n, [1, 0, 0, 0], "yes"):
+        with pytest.raises(ValueError):
+            sl.load_scenario("s", config_path=_scn(tmp_path, pin_layers=bad))
+    with pytest.raises(ValueError):
+        sl.load_scenario("s", config_path=_scn(tmp_path, pin_layers=[True, False, False, False],
+                                               pin_source="tdr"))
+
+
+def test_fingerprint_unchanged_without_pin_and_differs_with_pin():
+    args = (DEPTHS0, True, {"alpha": [0.03]}, RANGES, [0.0])
+    base = rp._config_fingerprint(*args)
+    assert rp._config_fingerprint(*args, pin_layers=None, pin_source="truth") == base
+    pinned = rp._config_fingerprint(*args, pin_layers=[True, False, False, False], pin_source="truth")
+    assert pinned != base
