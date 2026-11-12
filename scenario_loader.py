@@ -32,6 +32,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Union
 
+import sweeps  # generated scenario families (1d_*_free{K}, 1d_*_hetero_free{K})
+
 
 # ---------------------------------------------------------------------------
 # Configuration dataclass
@@ -1428,7 +1430,7 @@ def load_scenario(
 
     # Strip meta-keys
     scenarios = {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
-    scenarios = _resolve_extends(scenarios)
+    scenarios = _resolve_extends(sweeps.with_generated(scenarios))
 
     if scenario_name not in scenarios:
         available = sorted(scenarios.keys())
@@ -1594,7 +1596,9 @@ def list_scenarios(config_path: str | None = None) -> list[str]:
         )
     with open(config_path, "r", encoding="utf-8") as fh:
         all_scenarios = json.load(fh)
-    return [k for k in all_scenarios if k not in _SKIP_KEYS]
+    return list(sweeps.with_generated(
+        {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    ))
 
 
 def validate_all(config_path: str | None = None) -> None:
@@ -1612,7 +1616,7 @@ def validate_all(config_path: str | None = None) -> None:
     with open(config_path, "r", encoding="utf-8") as fh:
         all_scenarios = json.load(fh)
     scenarios = {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
-    scenarios = _resolve_extends(scenarios)
+    scenarios = _resolve_extends(sweeps.with_generated(scenarios))
     print(f"Validating {len(scenarios)} scenario(s) in '{config_path}':")
     all_ok = True
     for name, raw in scenarios.items():
@@ -1640,9 +1644,9 @@ def describe_scenarios(config_path: str | None = None) -> list[tuple[str, str]]:
         )
     with open(config_path, "r", encoding="utf-8") as fh:
         all_scenarios = json.load(fh)
-    scenarios = _resolve_extends(
+    scenarios = _resolve_extends(sweeps.with_generated(
         {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
-    )
+    ))
     return [(n, str(v.get("description", ""))) for n, v in scenarios.items()]
 
 
