@@ -14,9 +14,8 @@ SYNTH_JSON = os.path.join(ROOT, "ensemble_scenarios.json")
 
 
 def _names(path):
-    with open(path, encoding="utf-8") as fh:
-        raw = json.load(fh)
-    return [k for k in raw if k not in sl._SKIP_KEYS]
+    """Scenario names the loader exposes (file entries + generated sweeps)."""
+    return sl.list_scenarios(path)
 
 
 @pytest.mark.parametrize("name", _names(SYNTH_JSON))

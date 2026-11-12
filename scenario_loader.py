@@ -1380,7 +1380,8 @@ def _resolve_extends(scenarios: dict) -> dict:
 
     for _name in scenarios:
         _resolve(_name)
-    return resolved
+    # keep the input order (a parent resolved on demand must not jump the queue)
+    return {_name: resolved[_name] for _name in scenarios}
 
 
 def load_scenario(
