@@ -580,6 +580,29 @@ def plot_ws_parameter_histograms(fits, best_fit, depths0, lab_p0, output_path):
 
             ax.hist(data_arr, bins=num_bins, color='steelblue', edgecolor='white', alpha=0.75)
 
+            # Say what a collapsed panel means instead of leaving a bare bar on
+            # an arbitrary axis: no spread, and/or members stuck on a bound.
+            if data_arr.size:
+                _lo = EMmethod.WS_BOUNDS[0][p_idx]
+                _hi = EMmethod.WS_BOUNDS[1][p_idx]
+                _tol = 1e-6 * max(1.0, abs(_hi))
+                _n = data_arr.size
+                _n_lo = int(np.sum(data_arr <= _lo + _tol))
+                _n_hi = int(np.sum(data_arr >= _hi - _tol))
+                _notes = []
+                if np.all(np.isclose(data_arr, data_arr[0], atol=1e-5)):
+                    _pad = max(abs(float(data_arr[0])) * 0.05, 1e-3)
+                    ax.set_xlim(float(data_arr[0]) - _pad, float(data_arr[0]) + _pad)
+                    _notes.append(f"no spread (all = {float(data_arr[0]):.4g})")
+                if _n_lo:
+                    _notes.append(f"{_n_lo}/{_n} at lower bound {_lo:g}")
+                if _n_hi:
+                    _notes.append(f"{_n_hi}/{_n} at upper bound {_hi:g}")
+                if _notes:
+                    ax.text(0.97, 0.95, "\n".join(_notes), transform=ax.transAxes,
+                            ha='right', va='top', fontsize=7, color='firebrick',
+                            bbox=dict(facecolor='white', edgecolor='none', alpha=0.8, pad=1.5))
+
             # Blue dashed line: laboratory-optimized parameter (initial value for
             # the field-scale optimization).
             if lab_p0_arr is not None:
