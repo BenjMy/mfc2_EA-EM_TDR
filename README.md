@@ -139,9 +139,23 @@ There is no step that needs all points for the calibration itself, so I would ca
 
 The cost, not the science, is what pushes toward a split (next section).
 
-### Recommended split for the final runs (future)
+### Split for the final runs: `--stage calibrate` / `--stage map` (implemented)
 
-Calibration only needs the probe-matched points; the maps need all points. Plan: `--stage calibrate` (`em_subsample.mode = "probes"`, all alphas/forward models) to select K and WS parameters, then `--stage map` (all or grid-thinned points, selected alpha/forward model/K only) applying them. Today both are one run.
+Calibration only needs the probe-matched points; the maps need all points.
+
+```bash
+# 1. calibrate: EM points restricted to the probe neighbourhoods, FULL ensemble
+#    (all alphas / forward models), Steps 0-5; writes stage_calibration.json; stops before Step 6
+./run_pipeline.sh --scenario real_single_test --stage calibrate
+
+# 2. map: all (or grid-thinned) points, ONLY the selected alpha / forward model / K
+./run_pipeline.sh --scenario real_single_test --stage map \
+    --calibration <output>/<scenario>_calibrate        # folder or stage_calibration.json
+```
+
+Each stage has its own run folder suffix and cache file. `--stage map` checks that depths0 / cond_ranges / epochs match the calibration before inverting anything, re-fits Steps 2-5 on the selected members and reports the drift against the calibration (`[WARN] CALIBRATION DRIFT` means: redo calibrate). `--stage map` cannot be combined with `--quick`.
+
+**How `ws_localized_bandwidth_sweep` fits in.** The leave-one-probe-out CV only reads probe-matched points, so it runs in `--stage calibrate` only (on the full ensemble, against its rank-1 member). The chosen bandwidth is stored in `stage_calibration.json` (`localized_bandwidth`, `bandwidth_from_sweep`). In `--stage map` the sweep is skipped (logged as `[STAGE] map: ws_localized_bandwidth_sweep skipped`) and the stored bandwidth is reused as a fixed `ws_localized_bandwidth` for the kernel-localized fit, which is then evaluated at every map point (the kernel only needs probe data + target coordinates, so thinning the EM points does not change the fit, only where it is evaluated). Passing `--ws-localized-bandwidth C` to the map run overrides the stored value; the sweep list on the map CLI/scenario is ignored. Caveat: the localized fit is still a diagnostic sibling of Step 2 and does not feed Steps 3-6.
 
 ### Optional: calibrate Waxman-Smits by zone (future, clustering method to be discussed)
 
