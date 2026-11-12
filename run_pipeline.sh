@@ -104,6 +104,8 @@ GAMMA=()
 WS_LOCALIZED_BANDWIDTH=""
 WS_LOCALIZED_BANDWIDTH_SWEEP=()
 EM_FOOTPRINT_DIAGNOSTIC=false
+QUICK=false
+QUICK_EPOCHS=""
 TRAIN_VAL_SPLIT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
@@ -234,6 +236,18 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           'param_grid.gamma' (or scalar 'gamma') in the
                           scenario config. No effect on non-time-lapse
                           (single-epoch) runs regardless of value.
+      --quick             Smoke-test preset: ONE alpha (middle of the
+                          scenario's alpha list) and ONE forward model
+                          (the first) instead of the full grid, e.g.
+                          280 Step-1 tasks -> 28. Does not touch the
+                          EM/TDR data. The ensemble is shrunk on purpose:
+                          output is a smoke test, not a result. Writes
+                          to '<seq>_<scenario>_quick' and its own
+                          '*_quick*.pkl' cache, so a full-run cache is
+                          never overwritten.
+      --quick-epochs N    With --quick (real data only): also keep only
+                          N evenly spaced survey epochs (first and last
+                          always included), e.g. 3 of 7 -> 12 tasks.
       --ws-localized-bandwidth C
                           Gaspari-Cohn localization radius 'c' (same
                           units as your x/y coordinates, e.g. metres)
@@ -604,6 +618,12 @@ while [[ $# -gt 0 ]]; do
         --validate) VALIDATE_ONLY=true; shift ;;
         --homogeneous) HOMOGENEOUS=true; shift ;;
         --em-footprint-diagnostic) EM_FOOTPRINT_DIAGNOSTIC=true; shift ;;
+        --quick) QUICK=true; shift ;;
+        --quick-epochs)
+            QUICK_EPOCHS="${2:?'--quick-epochs requires a positive integer'}"
+            [[ "${QUICK_EPOCHS}" =~ ^[1-9][0-9]*$ ]] \
+                || die "--quick-epochs must be a positive integer, got '${QUICK_EPOCHS}'"
+            shift 2 ;;
         --full-range-gradient) FULL_RANGE_GRADIENT=true; shift ;;
         --xy-z-blend)
             XY_Z_BLEND="${2:?'--xy-z-blend requires a number'}"
@@ -927,6 +947,15 @@ if [[ -n "${TRAIN_VAL_SPLIT}" ]]; then
     TRAIN_VAL_ARGS+=(--train-val-split "${TRAIN_VAL_SPLIT}")
 fi
 
+if [[ -n "${QUICK_EPOCHS}" ]] && ! ${QUICK}; then
+    die "--quick-epochs requires --quick"
+fi
+QUICK_ARGS=()
+if ${QUICK}; then
+    QUICK_ARGS+=(--quick)
+    [[ -n "${QUICK_EPOCHS}" ]] && QUICK_ARGS+=(--quick-epochs "${QUICK_EPOCHS}")
+fi
+
 EM_FOOTPRINT_ARGS=()
 if ${EM_FOOTPRINT_DIAGNOSTIC}; then
     EM_FOOTPRINT_ARGS=(--em-footprint-diagnostic)
@@ -1007,6 +1036,7 @@ cat >> "${HEADER_TMP}" << MDEOF
 | ws-localized-bandwidth-sweep | \`${WS_LOCALIZED_BANDWIDTH_SWEEP[*]:-scenario default (or disabled)}\` |
 | train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |
 | em-footprint-diagnostic | \`${EM_FOOTPRINT_DIAGNOSTIC}\` |
+| quick | \`${QUICK}${QUICK_EPOCHS:+ (epochs=${QUICK_EPOCHS})}\` |
 | env | \`${VENV_PATH:-none}\` |
 | python | \`${PYTHON}\` |
 
@@ -1034,6 +1064,7 @@ set +e
     "${INVERSION_OVERRIDE_ARGS[@]+"${INVERSION_OVERRIDE_ARGS[@]}"}" \
     "${TRAIN_VAL_ARGS[@]+"${TRAIN_VAL_ARGS[@]}"}" \
     "${EM_FOOTPRINT_ARGS[@]+"${EM_FOOTPRINT_ARGS[@]}"}" \
+    "${QUICK_ARGS[@]+"${QUICK_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
     2>&1 | tee "${RUN_LOG_TMP}"
 EXIT_CODE=${PIPESTATUS[0]}

@@ -44,7 +44,8 @@ Only the deepest horizon improved. The old cap hid part of the non-uniqueness; w
 
 ## Real-data runs (added 2026-11-12)
 - [x] Initial EC range (ECmin/ECmax) + initial WS per horizon for real runs: `plots/initial_ec_ws_real.py` (Step 1d), `tests/test_initial_ec_ws_real.py`.
-- [x] Skim the real EM data for testing: `em_subsample` (`grid` / `probes` / `stride` / `random`), in the cache fingerprint, scenarios `real_single_test_grid` / `real_single_test_probes`, `tests/test_em_subsample.py`. A `--quick` preset was considered and dropped (it shrinks the ensemble itself).
+- [x] Skim the real EM data for testing: `em_subsample` (`grid` / `probes` / `stride` / `random`), in the cache fingerprint, scenarios `real_single_test_grid` / `real_single_test_probes`, `tests/test_em_subsample.py`.
+- [x] `--quick` preset for the real-case run (`run_real_PAPER.sh --quick [--quick-epochs N]`, also `run_pipeline.sh`): one alpha + one forward model (+ N epochs), 280 -> 28 tasks (12 with 3 epochs), own `_quick` folder and cache, `quick_preset.py`, `tests/test_quick_preset.py`. Reverses the earlier decision to leave it out: it shrinks the ensemble itself, so it is a smoke test only (see README). **Not yet run on the real data** (written without the field data / emagpy at hand): run it once and check the `[QUICK]` task count is 28 / 12.
 - [ ] Check on a real run that a `grid`/`probes` run reproduces the full run's optimal EC and theta at the probe-matched points (README acceptance tests), and that the matching report does not get worse.
 - [ ] Split a real run into `--stage calibrate` (probe points only, full ensemble) and `--stage map` (all or grid-thinned points, selected alpha / forward model / K only). Today both are one run.
 	In that case **how would ws_localized_bandwidth_sweep work**??

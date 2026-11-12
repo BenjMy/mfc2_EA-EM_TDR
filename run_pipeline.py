@@ -58,6 +58,7 @@ from tqdm import tqdm
 import em_methodology as EMmethod
 import em_subsample
 import geometry_utils
+import quick_preset
 import train_val_split as tvs
 from scenario_loader import load_scenario, ScenarioConfig
 import plot_water_content as pwc
@@ -915,9 +916,19 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
                     filter_percentile_qmax: float | None = 95.0,
                     rolling_mean_window: int | None = 5,
                     drop_coils=None,
-                    em_subsample_cfg: dict | None = None):
+                    em_subsample_cfg: dict | None = None,
+                    quick_epochs: int | None = None,
+                    quick: bool = False):
     """
     Load real EM and TDR field data.
+
+    ``quick`` / ``quick_epochs`` (``--quick`` preset, see quick_preset.py):
+    when ``quick_epochs`` is set, only that many evenly spaced survey epochs
+    are kept (first and last always included) -- applied right after the
+    dataset is discovered, so skipped epochs are never pre-processed and
+    every per-epoch output (em_files, em_dates, raw_em_files, observations'
+    ``time_index``, temp_by_epoch) stays mutually consistent. The kept
+    original indices are returned in ``real_data_diagnostics['epoch_indices']``.
 
     Preprocessing step added: raw GEM-2 CSV files use semicolon delimiters and
     instrument-specific column names that emagpy cannot parse.  Each file is
@@ -1009,6 +1020,18 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
         coord_file=coord_file,
         time_tolerance_days=time_tolerance_days,
     )
+
+    # --quick epoch subset (None = all epochs, the normal behaviour).
+    n_epochs_total = len(raw_em_files)
+    epoch_indices = list(range(n_epochs_total))
+    if quick and quick_epochs is not None:
+        epoch_indices = quick_preset.select_epochs(n_epochs_total, quick_epochs)
+        if len(epoch_indices) < n_epochs_total:
+            raw_em_files, em_dates, observations = quick_preset.subset_epochs(
+                raw_em_files, em_dates, observations, epoch_indices)
+            print(f"[QUICK] Epoch subset: keeping {len(epoch_indices)}/{n_epochs_total} "
+                  f"surveys (original indices {epoch_indices}): "
+                  + ", ".join(str(d.date()) for d in em_dates))
 
     # Convert each raw semicolon-delimited GEM-2 CSV into an emagpy-ready
     # comma-separated file with correctly named coil columns. As of the
@@ -1154,6 +1177,8 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
         "n_geographic_reprojected": n_geo,
         "filter_stats": filter_stat_records,      # one preprocess_em_survey() stats dict per file
         "temp_by_epoch": temp_by_epoch,           # list[float|None], one per em_dates entry
+        "epoch_indices": epoch_indices,          # original survey indices kept (all unless --quick-epochs)
+        "n_epochs_total": n_epochs_total,
     }
 
     return em_files, observations, probe_table, em_dates, raw_em_files, real_data_diagnostics
@@ -1162,7 +1187,7 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
 def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
                           drop_coils=None, spatial_match_tolerance_m=None,
                           pin_layers=None, pin_source=None,
-                          em_subsample=None) -> str:
+                          em_subsample=None, epochs=None) -> str:
     """
     Stable content hash of everything that determines the inversion outputs
     cached in Step 1 (ensemble_cache_*.pkl). Used to auto-invalidate a cache
@@ -1196,6 +1221,9 @@ def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
     if em_subsample:
         # Only added when thinning is on, so every existing cache keeps its hash.
         payload["em_subsample"] = em_subsample
+    if epochs is not None:
+        # Only added for a --quick-epochs subset, so every existing cache keeps its hash.
+        payload["epochs"] = list(epochs)
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -1511,9 +1539,19 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          train_val_split_method: str | None = None,
          ws_localized_bandwidth: float | None = None,
          ws_localized_bandwidth_sweep: list[float] | None = None,
-         em_footprint_diagnostic: bool = False):
+         em_footprint_diagnostic: bool = False,
+         quick: bool = False,
+         quick_epochs: int | None = None):
     """
     Run the full EA-EM pipeline.
+
+    ``quick`` : smoke-test preset (see quick_preset.py): ONE alpha and ONE
+    forward model out of the scenario's grid; with ``quick_epochs=k`` also
+    only k evenly spaced survey epochs (real data). Cuts e.g. 280 Step-1
+    tasks to 28 (12 with 3 epochs). Never touches the EM/TDR data itself,
+    writes to its own ``<seq>_<scenario>_quick`` folder and its own
+    ``*_quick*.pkl`` cache so a full-run cache is never overwritten.
+    The ensemble is shrunk, so the result is a smoke test, not a result.
 
     Parameters
     ----------
@@ -1673,7 +1711,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # cache live -- see _cache_path_override below); each run gets its
         # own fresh, numbered subfolder inside it (see next_run_output_dir)
         # instead of writing directly into -- and overwriting -- it.
-        OUTPUT_DIR        = next_run_output_dir(cfg.output_dir, _scenario_name)
+        OUTPUT_DIR        = next_run_output_dir(
+            cfg.output_dir, _scenario_name + ("_quick" if quick else ""))
         OUTPUT_MODEL_DIR  = os.path.join(OUTPUT_DIR, "output_model")
         os.makedirs(OUTPUT_MODEL_DIR, exist_ok=True)
         REALIZATION_INDEX = cfg.realization_index
@@ -1728,6 +1767,21 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # reconstruction) -- always the first value of the (possibly swept)
     # grid, same convention already used there for alpha/beta.
     GAMMA = PARAM_GRID["gamma"][0]
+
+    # --quick: one alpha + one forward model (after the --beta/--gamma
+    # overrides so those still apply). PARAM_GRID feeds the cache
+    # fingerprint, so a quick run can never reuse a full-grid cache.
+    QUICK_INFO = {}
+    if quick:
+        if quick_epochs is not None and data_source != "real":
+            raise ValueError("--quick-epochs applies to real-data runs only "
+                             "(synthetic epochs come from the generator).")
+        PARAM_GRID, QUICK_INFO = quick_preset.reduce_param_grid(PARAM_GRID)
+        print("[QUICK] Preset ON -- SMOKE TEST, the ensemble is deliberately shrunk:")
+        for _axis, _i in QUICK_INFO.items():
+            print(f"[QUICK]   {_axis}: {_i['n_full']} -> 1 (kept {_i['kept']})")
+        if not QUICK_INFO:
+            print("[QUICK]   (alpha / forwardModel already single-valued: nothing to reduce)")
 
     ECA_NOISE_LEVEL = getattr(cfg, "eca_noise_level", 0.0) if cfg is not None else 0.0
     TDR_NOISE_STD   = getattr(cfg, "tdr_noise_std",   0.01) if cfg is not None else 0.01
@@ -1897,6 +1951,11 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         "homogeneous":        HOMOGENEOUS,
         "spatial_match_tolerance_m (real time-lapse)": SPATIAL_MATCH_TOLERANCE_M,
         "em_subsample (real)": str(EM_SUBSAMPLE) if EM_SUBSAMPLE else "(off)",
+        "quick preset": (
+            f"ON -- SMOKE TEST (alpha/forwardModel reduced: {QUICK_INFO or 'n/a'}; "
+            f"epochs: {quick_epochs if quick_epochs else 'all'})"
+            if quick else "(off)"
+        ),
     })
 
     try:
@@ -1936,6 +1995,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 rolling_mean_window=ROLLING_MEAN_WINDOW,
                 drop_coils=DROP_COILS,
                 em_subsample_cfg=EM_SUBSAMPLE,
+                quick=quick, quick_epochs=quick_epochs,
             )
 
             # -----------------------------------------------------------------------
@@ -2474,6 +2534,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         else:
             cache_filename = "ensemble_cache_timelapse.pkl" if timelapse else "ensemble_cache_single.pkl"
             cache_path = os.path.join(OUTPUT_DIR, cache_filename)
+        if quick:
+            # Own cache file: never clobber (or be mistaken for) the full-run cache.
+            cache_path = quick_preset.quick_cache_path(cache_path, quick_epochs)
+            print(f"[QUICK] Using separate cache file: '{cache_path}'")
 
         # Content fingerprint of everything that determines Step 1's output.
         # Guards against a stale cache_tag: if depths0/fixed_depths/param_grid/
@@ -2492,6 +2556,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             spatial_match_tolerance_m=_fingerprint_tolerance,
             pin_layers=PIN_LAYERS, pin_source=PIN_SOURCE,
             em_subsample=EM_SUBSAMPLE if data_source == "real" else None,
+            epochs=(
+                REAL_DATA_DIAG["epoch_indices"]
+                if (quick and quick_epochs is not None and data_source == "real"
+                    and REAL_DATA_DIAG is not None)
+                else None
+            ),
         )
 
         # Real-data time-lapse spatial reference grid coordinates (union
@@ -2727,6 +2797,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     }
                     global_task_idx += 1
 
+            if quick:
+                print(f"[QUICK] {len(tasks)} Step-1 tasks "
+                      f"({len(combinations)} grid combo(s) x {len(cond_sets)} starting "
+                      f"combo(s) x {len(files_to_process)} epoch(s)).")
             print(f"[INFO] Dispatched {len(tasks)} tasks to parallel pool...")
 
             unordered_results = []
@@ -5819,6 +5893,22 @@ if __name__ == "__main__":
              "no sweep) otherwise.",
     )
     parser.add_argument(
+        "--quick", action="store_true",
+        help="Smoke-test preset: keep ONE alpha (the middle of the scenario's "
+             "alpha list) and ONE forward model (the first) instead of the full "
+             "grid -- e.g. 280 Step-1 tasks -> 28. Combine with --quick-epochs "
+             "to also cut the survey epochs (-> 12 with 3 of 7). Does not touch "
+             "the EM/TDR data. The ensemble is shrunk on purpose, so treat the "
+             "output as a smoke test, not a result. Uses its own '_quick' "
+             "output folder and cache file (the full-run cache is never "
+             "overwritten).",
+    )
+    parser.add_argument(
+        "--quick-epochs", type=int, default=None, metavar="N",
+        help="With --quick (real data only): keep only N evenly spaced survey "
+             "epochs (first and last always included). Default: all epochs.",
+    )
+    parser.add_argument(
         "--train-val-split", default=None,
         choices=["alternate_sorted", "by_probe", "by_time_block", "random", "off"],
         help="Split TDR/SWC observations into train (fits the Waxman-Smits "
@@ -5833,7 +5923,13 @@ if __name__ == "__main__":
              "behaviour) otherwise.",
     )
     args = parser.parse_args()
-    
+
+    if args.quick_epochs is not None:
+        if not args.quick:
+            parser.error("--quick-epochs requires --quick")
+        if args.quick_epochs < 1:
+            parser.error("--quick-epochs must be >= 1")
+
     # Validate real data requirements
     if args.data_source == "real":
         if not args.em_dir or not args.tdr_dir:
@@ -5971,7 +6067,8 @@ if __name__ == "__main__":
              train_val_split_method=args.train_val_split,
              ws_localized_bandwidth=args.ws_localized_bandwidth,
              ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
-             em_footprint_diagnostic=args.em_footprint_diagnostic)
+             em_footprint_diagnostic=args.em_footprint_diagnostic,
+             quick=args.quick, quick_epochs=args.quick_epochs)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

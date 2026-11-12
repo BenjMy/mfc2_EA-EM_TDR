@@ -101,7 +101,32 @@ Common key `keep_probe_nearest` (default `true`): the EM point nearest to each T
 ./run_pipeline.sh -s real_single_test_probes -c ensemble_scenarios_real.json
 ```
 
-Caveat: with a lateral-smoothing `beta > 0` (CLI `--beta`) thinning changes the neighbourhoods the smoothing acts on; for `beta = 0` points are independent. Not implemented, on purpose: a `--quick` preset that cuts alphas / forward models / epochs. The ensemble (alpha x forward model x starting conductivities) is the scientific object of the method, so shrinking it changes what is being tested; thinning the points does not.
+Caveat: with a lateral-smoothing `beta > 0` (CLI `--beta`) thinning changes the neighbourhoods the smoothing acts on; for `beta = 0` points are independent.
+
+### Smoke-testing the ensemble: `--quick` (implemented)
+
+`em_subsample` thins the data and leaves the ensemble alone; `--quick` is the opposite: it keeps all the data and shrinks the ensemble (module `quick_preset.py`).
+
+| flag | effect | `real_single_base` |
+|---|---|---|
+| (none) | full grid | 5 alphas x 2 forward models x 4 starts x 7 epochs = 280 tasks |
+| `--quick` | one alpha (the **middle** of the alpha list, i.e. the geometric centre of the log sweep) and one forward model (the **first**, FSlin) | 1 x 1 x 4 x 7 = **28** |
+| `--quick --quick-epochs 3` | also N evenly spaced epochs, first and last always kept | 1 x 1 x 4 x 3 = **12** |
+
+```bash
+./run_pipeline.sh -s real_single_base -c ensemble_scenarios_real.json --quick
+./run_pipeline.sh -s real_single_base -c ensemble_scenarios_real.json --quick --quick-epochs 3
+./run_real_PAPER.sh --quick --quick-epochs 3        # the whole real-case script, reduced
+./run_real_PAPER.sh --quick 425 5325                # combines with the drop-coils override
+```
+
+It never touches the EM/TDR data (no point dropped; TDR probes unchanged), and `--beta` / `--gamma` still apply on top. Starting-conductivity combinations and `method` are left as the scenario defines them. Safeguards:
+
+- **Smoke test, not a result.** The ensemble (alpha x forward model x starting conductivities) is the scientific object of the method; with one alpha and one forward model the ensemble ranking, stacking depth K and spread are not meaningful. It is meant for checking that a scenario runs end to end and for looking at the plots.
+- **Full-run cache is never overwritten.** A quick run reads/writes its own `ensemble_cache_<tag>_quick[_eN].pkl`; the grid and the epoch list are also in the cache fingerprint (epochs only when a subset is used, so existing caches keep their hash).
+- **Visible in the output.** Run folder `<seq>_<scenario>_quick`, a `[QUICK]` banner (what was kept, task count) and a "quick preset" row in the report's runtime-arguments table.
+- `--quick-epochs` needs `--quick`, is real-data only, and always keeps epoch 0 (Step 1d plots the first survey).
+- Under `--quick`, scenarios that differ from the base only by forward model (`*_fslin`, `*_cs`) all collapse to one model, so they stop being a comparison; `compare_scenarios` across them is only a plumbing check.
 
 ### Why does the pipeline currently use all points? (my reading of the code, not a documented decision)
 
