@@ -381,13 +381,76 @@ def filter_repeated_em_points(csv_path: str, tolerance: float = 0.2,
     return path
 
 
+def clean_tdr_swc(df_probes, target_depth_cols, vmin=0.02, vmax=0.60,
+                  window="3D", n_sigma=4.0, mad_floor=0.01):
+    """
+    Outlier filter for the raw TDR SWC logs (NaN-masks bad samples in a copy).
+
+    Before this existed NO filter was applied to the TDR series: the only
+    processing was a plain mean over the +-tolerance window around each EM
+    date, which a single spike drags away. Steps, per unit and per depth:
+
+    1. unit fix per SAMPLE: values > 1 are percent -> /100 (the old code did
+       this on the window MEAN, which breaks if a window mixes both units);
+    2. physical range: samples outside [vmin, vmax] m3/m3 -> NaN;
+    3. time-window Hampel filter: |x - rolling_median| >
+       n_sigma * 1.4826 * max(rolling_MAD, mad_floor) -> NaN. The floor keeps
+       a flat, noise-free series from flagging tiny wiggles.
+
+    Pass ``vmin=None, vmax=None, window=None`` to disable the respective step.
+    Returns ``(df_clean, report)``; report = DataFrame with one row per
+    (unit, depth): n, n_range, n_hampel.
+    """
+    df = df_probes.copy()
+    rows = []
+    for col in dict.fromkeys(target_depth_cols.values()):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.loc[df[col] > 1.0, col] = df.loc[df[col] > 1.0, col] / 100.0
+    for unit, idx in df.groupby("Unit").groups.items():
+        for depth, col in target_depth_cols.items():
+            x = df.loc[idx, col]
+            valid = x.notna()
+            n = int(valid.sum())
+            bad_range = pd.Series(False, index=x.index)
+            if vmin is not None:
+                bad_range |= valid & (x < vmin)
+            if vmax is not None:
+                bad_range |= valid & (x > vmax)
+            x = x.mask(bad_range)
+            bad_h = pd.Series(False, index=x.index)
+            if window:
+                ts = df.loc[x.index, "Timestamp"]
+                s_t = pd.Series(x.values, index=pd.DatetimeIndex(ts.values))
+                ok = s_t.index.notna()
+                s_t = s_t[ok]
+                order = np.argsort(s_t.index.values, kind="stable")
+                s_sorted = s_t.iloc[order]
+                med = s_sorted.rolling(window, center=True, min_periods=3).median()
+                dev = (s_sorted - med).abs()
+                mad = dev.rolling(window, center=True, min_periods=3).median()
+                thr = n_sigma * 1.4826 * mad.clip(lower=mad_floor)
+                flag_sorted = (dev > thr).fillna(False).values
+                flag = np.zeros(len(s_t), dtype=bool)
+                flag[order] = flag_sorted
+                full = np.zeros(len(x), dtype=bool)
+                full[np.flatnonzero(ok)] = flag
+                bad_h = pd.Series(full, index=x.index) & x.notna()
+            df.loc[idx, col] = x.mask(bad_h)
+            rows.append({"unit": unit, "depth": depth, "n": n,
+                         "n_range": int(bad_range.sum()), "n_hampel": int(bad_h.sum())})
+    return df, pd.DataFrame(rows)
+
+
 def prepare_real_dataset(
     em_dir: str,
     tdr_dir: str,
     coord_file: str,
-    time_tolerance_days: float = 1.0
+    time_tolerance_days: float = 1.0,
+    tdr_filter: dict | None = {},
 ):
     """
+    ``tdr_filter``: kwargs of ``clean_tdr_swc`` ({} = defaults, None = no filter).
+
     Scans and merges real EM surveys and TDR time-series logs.
 
     CRITICAL ARCHITECTURAL CHANGE: Unlike the round-robin synthetic snap generator,
@@ -415,6 +478,13 @@ def prepare_real_dataset(
 
     # TDR loading + coordinate merge (shared with the diagnostic plotting tool)
     df_probes, target_depth_cols = load_tdr_dataframe(tdr_dir, coord_file)
+    if tdr_filter is not None:
+        df_probes, tdr_report = clean_tdr_swc(df_probes, target_depth_cols, **tdr_filter)
+        print(f"[TDR FILTER] masked {int(tdr_report.n_range.sum())} out-of-range and "
+              f"{int(tdr_report.n_hampel.sum())} spike samples of {int(tdr_report.n.sum())}")
+        bad = tdr_report[(tdr_report.n_range + tdr_report.n_hampel) > 0]
+        if len(bad):
+            print(bad.to_string(index=False))
 
     observations = []
     tolerance = timedelta(days=time_tolerance_days)
