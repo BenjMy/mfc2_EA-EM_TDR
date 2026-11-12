@@ -127,6 +127,14 @@ For real data it would be convenient to optionally cluster the field into zones 
 * **Soil-map / texture-based** (external soil map, clay content): physically closest to what a, m and sigma_s represent.
 * **Temporal-stability based** (zones with persistent ECa pattern across the 7 epochs).
 
+**Possibly redundant with `ws_localized_bandwidth_sweep`.** The localized Step 2 fit (`run_petro_localized`) already lets the WS parameters vary in space: it fits a separate parameter set at every target location, weighting every TDR observation of the horizon by a Gaspari-Cohn kernel of its distance (`bandwidth -> inf` = the global per-horizon fit, `bandwidth -> 0` = nearest probe), and the bandwidth is chosen by leave-one-probe-out CV. Zones are the hard-partition version of the same idea. Where they differ:
+
+* Localized fit: no clustering decision, one hyperparameter chosen by CV, smooth variation. But it only knows distance: it smooths across an abrupt soil boundary and cannot pool probes from two separate areas that share the same soil.
+* Zones: can use a covariate (ECa, soil map, texture) so non-adjacent areas share parameters and sharp boundaries are respected, with more probes pooled per fit and parameters that are easy to interpret. But they add the clustering choice and need enough probes per zone.
+* Both can be combined (kernel weights multiplied by a same-zone indicator, or a distance that includes the covariate), at the price of more complexity.
+
+Suggested decision rule before building anything: look at what the bandwidth CV selects on the real data. If it picks a bandwidth much larger than the field, there is no spatial structure to exploit from 20 probes and zones are not worth it; if it picks a small one, there is structure, and zones are worth it only if a covariate or a boundary explains it that distance alone cannot. I have not seen that CV output for the real runs.
+
 Things to settle with it: minimum number of TDR probes per zone (20 probes in total, so only a few zones; free parameters per zone must stay below what the probes can constrain); what a zone without a probe falls back to (global parameters or nearest zone); leave-one-probe-out CV must respect the zones; relation to the existing continuous alternatives (`ws_xy_variation`, localized Gaspari-Cohn fit `ws_localized_bandwidth_sweep`). Sketch: scenario field `ws_zones` (`null` | `{"method": "polygons"|"kmeans_eca"|"file", ...}`) producing a zone label per reference-grid point, and Steps 2/4 calibrating per (horizon, zone).
 
 ### Acceptance tests for the above
