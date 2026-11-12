@@ -11,8 +11,8 @@ Outputs go to `mfc2_outputs/<scenario output_dir>/<NNNN>_<scenario>/`; every run
 ./run_pipeline.sh --validate                      # validate ensemble_scenarios.json
 ./run_pipeline.sh -s 1d_surface_tdr --mode 1d --num-swc-positions 5   # synthetic, 1-D transect
 ./run_pipeline.sh -s 2d --mode 2d                 # synthetic, 2-D grid
-./run_pipeline.sh --mode 2d -s 2d_real \
-    --em-dir ./data/EMI_MFC2/ --tdr-dir ./data/daily_MFC/             # real data
+./run_pipeline.sh --mode 2d -s real_single_base -c ensemble_scenarios_real.json   # real data (paths set in the JSON)
+python run_real_study.py --fast --dry-run         # real data: layers x WS-freedom study, plan only
 ./run_pipeline.sh --help                          # all options
 ```
 
@@ -146,10 +146,10 @@ Calibration only needs the probe-matched points; the maps need all points.
 ```bash
 # 1. calibrate: EM points restricted to the probe neighbourhoods, FULL ensemble
 #    (all alphas / forward models), Steps 0-5; writes stage_calibration.json; stops before Step 6
-./run_pipeline.sh --scenario real_single_test --stage calibrate
+./run_pipeline.sh -s real_single_test_probes -c ensemble_scenarios_real.json --mode 2d --stage calibrate
 
 # 2. map: all (or grid-thinned) points, ONLY the selected alpha / forward model / K
-./run_pipeline.sh --scenario real_single_test --stage map \
+./run_pipeline.sh -s real_single_test_probes -c ensemble_scenarios_real.json --mode 2d --stage map \
     --calibration <output>/<scenario>_calibrate        # folder or stage_calibration.json
 ```
 
