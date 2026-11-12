@@ -15,8 +15,11 @@ Update 2026-11-11 (evening): refactoring phases 8 (unknown-key validation, `--li
   | 4 | 0.164 (+0.124) | 0.055 (-0.013) |
   Reading: with full-depth TDR the error drops 3x once >= 2 WS parameters are free (K=1 cannot represent the depth change of a and sigma_w); with surface-only TDR it stays at ~0.164 whatever K, with a +0.12 m3/m3 wet bias at depth (mean theta_calc 0.370 vs 0.232). So with a vertically heterogeneous truth, freeing more parameters does not help when only horizon 0 is calibrated: this is the gap the pinned-horizon experiment below has to close. Observations to check: `surface_hetero_free1` has CV map mean/max exactly 0 and K=1 (no spread at all, as with the old 60 mS/m bound); the "Final RMSE (Step 5)" of surface runs (0.029) only measures the probes of horizon 0 (small while the deep error is large). One realisation per run, no repeats.
 
-
 ## New (added 2026-11-12)
+
+- [ ] Add a synthetic example with train/val (if possible as the nb of point is limited)
+
+
 - [x] Plot the WS **truth** spatial distribution (a, m, sigma_w, sigma_s per horizon along x) for the uniform-in-depth case (`1d_*_free{K}`) and the heterogeneous case (`1d_*_hetero_free{K}`). Source: `output_model/synthetic_ws_truth_{a,m,sigma_w,sigma_s}.npy` (check shapes first). Suggested: `plots/ws_distribution.py`, one figure per run, called from the study script.
 - [x] Plot the WS **initial** spatial distribution (starting values used in the calibration: `lab_p0` / per-horizon values, with free/fixed flag per parameter), same layout as the truth plot so both can be overlaid.
   Done for both (2026-11-12): `plots/ws_distribution.py` -> `<run>/synthetic_ws_truth_vs_initial.png`, one panel per parameter, colour = horizon, solid = truth along x, dashed = initial value, title says fixed/free and whether the truth varies in x / depth; called from Step 0 of every synthetic run; `tests/test_ws_distribution.py` (7 tests, uniform and hetero truth generated with real emagpy). A `1d_surface_tdr` run with the plot is bit-identical to one without. 1-D only is laid out along x; for 2-D grids it plots against the point index (maps per horizon not done).
