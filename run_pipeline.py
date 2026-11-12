@@ -56,6 +56,7 @@ from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
 import em_methodology as EMmethod
+import em_subsample
 import geometry_utils
 import train_val_split as tvs
 from scenario_loader import load_scenario, ScenarioConfig
@@ -71,7 +72,7 @@ import em_sensitivity as emsens
 import plot_em_footprint as pef
 import plot_pre_inversion_diagnostics as preinvdiag
 import plot_train_val_diagnostics as ptv
-from plots import pre_inversion, ws_distribution
+from plots import pre_inversion, ws_distribution, initial_ec_ws_real
 
 import data_synthetic as step0
 import step2_petro as step2
@@ -913,7 +914,8 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
                     filter_percentile_qmin: float | None = 5.0,
                     filter_percentile_qmax: float | None = 95.0,
                     rolling_mean_window: int | None = 5,
-                    drop_coils=None):
+                    drop_coils=None,
+                    em_subsample_cfg: dict | None = None):
     """
     Load real EM and TDR field data.
 
@@ -1043,6 +1045,18 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
                 rolling_window=rolling_mean_window,
                 drop_coils=drop_coils,
             )
+            if em_subsample_cfg:
+                # Optional thinning AFTER the filter chain (see em_subsample.py).
+                sub = em_subsample.subsample_em_csv(
+                    proc_path, em_subsample_cfg,
+                    probe_x=probe_table["utm_x"].to_numpy(dtype=float),
+                    probe_y=probe_table["utm_y"].to_numpy(dtype=float),
+                )
+                filt_stats["subsample"] = sub
+                filt_stats["n_final_before_subsample"] = filt_stats["n_final"]
+                filt_stats["n_final"] = sub["n_after"]
+                print(f"[+] em_subsample[{sub['mode']}] {os.path.basename(proc_path)}: "
+                      f"{sub['n_before']} -> {sub['n_after']} pts")
             filter_stat_records.append(filt_stats)
             em_unit_check_records.append(_check_em_unit_sanity(proc_path, em_unit))
             em_files.append(proc_path)
@@ -1147,7 +1161,8 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
 
 def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
                           drop_coils=None, spatial_match_tolerance_m=None,
-                          pin_layers=None, pin_source=None) -> str:
+                          pin_layers=None, pin_source=None,
+                          em_subsample=None) -> str:
     """
     Stable content hash of everything that determines the inversion outputs
     cached in Step 1 (ensemble_cache_*.pkl). Used to auto-invalidate a cache
@@ -1178,6 +1193,9 @@ def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
         # Only added when pinning is on, so every existing cache keeps its hash.
         payload["pin_layers"] = [bool(v) for v in pin_layers]
         payload["pin_source"] = pin_source
+    if em_subsample:
+        # Only added when thinning is on, so every existing cache keeps its hash.
+        payload["em_subsample"] = em_subsample
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -1816,6 +1834,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     SPATIAL_MATCH_TOLERANCE_M = (
         getattr(cfg, "spatial_match_tolerance_m", 2.0) if cfg is not None else 2.0
     )
+    # Optional thinning of the real EM surveys (em_subsample.py); None = off.
+    EM_SUBSAMPLE = getattr(cfg, "em_subsample", None) if cfg is not None else None
 
     # Train/validation split (see train_val_split.py and Loiseau et al.,
     # 2026 Secs. 2.3/2.6). "off" preserves the legacy behaviour of fitting
@@ -1876,6 +1896,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         "lab_p0":             str(LAB_P0) if LAB_P0 else "(none — using DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0])",
         "homogeneous":        HOMOGENEOUS,
         "spatial_match_tolerance_m (real time-lapse)": SPATIAL_MATCH_TOLERANCE_M,
+        "em_subsample (real)": str(EM_SUBSAMPLE) if EM_SUBSAMPLE else "(off)",
     })
 
     try:
@@ -1914,6 +1935,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 filter_percentile_qmax=FILTER_PERCENTILE_QMAX,
                 rolling_mean_window=ROLLING_MEAN_WINDOW,
                 drop_coils=DROP_COILS,
+                em_subsample_cfg=EM_SUBSAMPLE,
             )
 
             # -----------------------------------------------------------------------
@@ -2469,6 +2491,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             sorted(PARAM_GRID.get("gamma", [GAMMA])), DROP_COILS,
             spatial_match_tolerance_m=_fingerprint_tolerance,
             pin_layers=PIN_LAYERS, pin_source=PIN_SOURCE,
+            em_subsample=EM_SUBSAMPLE if data_source == "real" else None,
         )
 
         # Real-data time-lapse spatial reference grid coordinates (union
@@ -3305,6 +3328,20 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             except Exception as _ini_exc:
                 reporter.log(f"[STEP 1d][WARN] Initial model plots failed (pipeline continues): "
                              f"{type(_ini_exc).__name__}: {_ini_exc}")
+            # Initial EC range (ECmin/ECmax) + initial WS values, one subplot
+            # per horizon (real-data counterpart of ws_distribution.py).
+            try:
+                _ini_ec_ws = initial_ec_ws_real.plot_initial_ec_ws_real(
+                    OUTPUT_DIR, cond_ranges=COND_RANGES, depths0=DEPTHS0,
+                    lab_p0=LAB_P0, ws_fixed_params=WS_FIXED_PARAMS,
+                    ws_bounds=EMmethod.resolve_ws_bounds(WS_BOUNDS_OVERRIDE),
+                    observations=observations_list, probe_table=probe_table,
+                )
+                reporter.log(f"[STEP 1d] Initial EC range / WS per horizon -> "
+                             f"{_ini_ec_ws['ec']}, {_ini_ec_ws['ws']}")
+            except Exception as _ini_ws_exc:
+                reporter.log(f"[STEP 1d][WARN] initial EC/WS plots failed (pipeline continues): "
+                             f"{type(_ini_ws_exc).__name__}: {_ini_ws_exc}")
             reporter.end_step("Step 1d")
 
         reporter.end_step("Step 0")
