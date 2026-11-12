@@ -164,16 +164,62 @@ def _first_number(raw: str) -> float:
     return float(m.group(0)) if m else float("nan")
 
 
-def parse_report(path: str) -> dict:
-    """Parse one pipeline_report_*.md into a flat dict of useful fields."""
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
+def _sections_from_report(text: str):
+    """(header, metrics, timing_rows, result_block) read from a pipeline_report_*.md."""
+    header = _parse_pipe_table(text.split("\n## ", 1)[0])
+    metrics = _parse_pipe_table(_extract_section(text, "## Metrics Summary"))
+    timing_rows = _parse_pipe_table(_extract_section(text, "## Step Timing"))
+    result_block = _extract_section(text, "## Result").strip()
+    return header, metrics, timing_rows, result_block
+
+
+def _sections_from_manifest(man: dict):
+    """Same four sections, read from a run_manifest.json (no markdown parsing)."""
+    header = OrderedDict([
+        ("Scenario", str(man.get("scenario", ""))),
+        ("Data source", str(man.get("data_source", "")).upper()),
+        ("Mode", str(man.get("mode", ""))),
+        ("Generated", str(man.get("generated", ""))),
+        ("Run ID", str(man.get("run_id", ""))),
+    ])
+    metrics = OrderedDict((str(k), str(v)) for k, v in (man.get("metrics") or {}).items())
+    timing_rows = OrderedDict((str(k), f"{float(v):.1f}")
+                              for k, v in (man.get("step_timing") or {}).items())
+    if man.get("runtime_s") is not None:
+        timing_rows["**Total**"] = f"**{float(man['runtime_s']):.1f}**"
+    return header, metrics, timing_rows, str(man.get("result_line", ""))
+
+
+def _manifest_for(path: str):
+    """The run_manifest.json that describes ``path`` (a report, a manifest or a run
+    folder), or None. A report only matches the manifest that names it."""
+    import run_log
+    if os.path.isdir(path) or os.path.basename(path) == run_log.MANIFEST_NAME:
+        return run_log.read_run_manifest(path)
+    man = run_log.read_run_manifest(os.path.dirname(os.path.abspath(path)))
+    if man is not None and man.get("report") == os.path.basename(path):
+        return man
+    return None
+
+
+def parse_report(path: str, use_manifest: bool = True) -> dict:
+    """Flat dict of useful fields for one run.
+
+    ``path`` is a pipeline_report_*.md, a run_manifest.json or a run folder. When
+    the run has a run_manifest.json (every run since Phase 9) it is read instead of
+    parsing the markdown; older runs fall back to the markdown report.
+    ``use_manifest=False`` forces the markdown (used by the equivalence test).
+    """
+    man = _manifest_for(path) if use_manifest else None
+    if man is not None:
+        header, metrics, timing_rows, result_block = _sections_from_manifest(man)
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            header, metrics, timing_rows, result_block = _sections_from_report(f.read())
 
     out: dict = {"_path": path}
 
-    # --- header table (before the first '## ' heading) --------------------
-    header_block = text.split("\n## ", 1)[0]
-    header = _parse_pipe_table(header_block)
+    # --- header ---------------------------------------------------------------
     out["scenario_name"] = header.get("Scenario", "").strip("`")
     out["data_source"] = header.get("Data source", "").strip("`")
     out["mode"] = header.get("Mode", "").strip("`")
@@ -181,7 +227,6 @@ def parse_report(path: str) -> dict:
     out["run_id"] = header.get("Run ID", "").strip("`")
 
     # --- Metrics Summary ----------------------------------------------------
-    metrics = _parse_pipe_table(_extract_section(text, "## Metrics Summary"))
     out["_metrics_raw"] = metrics
 
     def m(key, default=float("nan")):
@@ -224,7 +269,6 @@ def parse_report(path: str) -> dict:
     out["eca_rmse_by_epoch"] = OrderedDict(sorted(eca.items()))
 
     # --- Step Timing ---------------------------------------------------------
-    timing_rows = _parse_pipe_table(_extract_section(text, "## Step Timing"))
     timing = OrderedDict()
     total = float("nan")
     for k, v in timing_rows.items():
@@ -238,7 +282,6 @@ def parse_report(path: str) -> dict:
     out["total_runtime_s"] = total
 
     # --- Result ---------------------------------------------------------------
-    result_block = _extract_section(text, "## Result").strip()
     out["result_line"] = result_block.splitlines()[0].strip() if result_block else ""
     out["result_ok"] = "SUCCESS" in out["result_line"] and "WARN" not in out["result_line"].upper()
 

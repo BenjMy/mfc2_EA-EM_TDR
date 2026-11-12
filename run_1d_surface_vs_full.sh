@@ -24,8 +24,8 @@ V="${VARIANT:+_${VARIANT}}"
 POSITION=(8 0)                       # truth point for depth-profile plots (x y)
 LOG="mfc2_outputs/run_log.csv"
 
-latest_id() {   # latest run_id of a scenario in the run log (cols: run_id,...,scenario)
-    awk -F, -v s="$1" 'NR>1 && $3==s {id=$1} END{print id}' "${LOG}"
+latest_id() {   # latest run_id of a scenario in the run log (see run_log.py)
+    python3 run_log.py latest "$1" --log "${LOG}"
 }
 
 if [[ "${SKIP_RUNS:-0}" != "1" ]]; then

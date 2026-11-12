@@ -181,10 +181,8 @@ def pipeline_command(name: str, config_path: str, mode: str, fast: bool, extra: 
 
 
 def read_run_log(path: str = RUN_LOG) -> list[dict]:
-    if not os.path.isfile(path):
-        return []
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+    from run_log import RunLog
+    return RunLog(path).rows()
 
 
 SUMMARY_COLUMNS = ["scenario", "design", "k_free", "status", "final_rmse", "cv_mean",

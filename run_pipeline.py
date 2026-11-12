@@ -165,6 +165,16 @@ class PipelineReporter:
         self.quality_level: str | None = None
         self.error_message: str | None = None
 
+        # What run_manifest.json needs besides metrics/timings (see run_log.py).
+        self._cfg = cfg
+        self._header = {
+            "scenario": scenario_name, "mode": mode.upper(),
+            "data_source": data_source, "train_val_split": train_val_split,
+            "output_dir": output_dir,
+        }
+        self._generated = self._start.strftime('%Y-%m-%d %H:%M:%S')
+        self._manifest_extra: dict = {}
+
         # Header
         self._write(f"# EA-EM Pipeline Run Report")
         self._write(f"")
@@ -291,6 +301,39 @@ class PipelineReporter:
         return default
 
 
+    def set_manifest_extra(self, **kwargs) -> None:
+        """Add fields (seeds, CLI options, ...) to the run_manifest.json written at the end."""
+        self._manifest_extra.update(kwargs)
+
+    def _write_manifest(self, status: str, result_line: str, elapsed: float,
+                        quality_reasons: list[str] | None = None,
+                        error: str = "") -> None:
+        """Write ``run_manifest.json`` next to the report (never raises)."""
+        import dataclasses
+        cfg_dict = None
+        if self._cfg is not None and dataclasses.is_dataclass(self._cfg):
+            cfg_dict = dataclasses.asdict(self._cfg)
+        write_run_manifest(self._header["output_dir"], {
+            "run_id": self.run_id,
+            **self._header,
+            "generated": self._generated,
+            "status": status,
+            "result_line": result_line,
+            "quality_level": self.quality_level,
+            "quality_reasons": list(quality_reasons or []),
+            "error": error,
+            "runtime_s": round(elapsed, 1),
+            "report": os.path.basename(self.report_path),
+            "git_commit": git_commit(),
+            "python": sys.version.split()[0],
+            "platform": f"{platform.system()} {platform.machine()}",
+            "host": platform.node(),
+            "metrics": dict(self._metrics),
+            "step_timing": {k: round(v, 1) for k, v in self._step_durations.items()},
+            "config": cfg_dict,
+            **self._manifest_extra,
+        })
+
     def failure(self, exc: "BaseException") -> None:
         """
         Record an unhandled exception into the report and close it.
@@ -361,6 +404,7 @@ class PipelineReporter:
             self._write(f"")
 
         self._f.close()
+        self._write_manifest("FAILED", "**❌ FAILED**", elapsed, error=str(exc)[:300])
         print(f"[REPORTER] ❌ Failure report written → {self.report_path}")
 
     def finish(self, exit_ok: bool = True, quality_level: str = "OK",
@@ -426,6 +470,9 @@ class PipelineReporter:
                 self._write(f"- {reason}")
         self._write(f"")
         self._f.close()
+        self._write_manifest(
+            "FAILED" if not exit_ok else ("WARN" if quality_level == "WARN" else "SUCCESS"),
+            f"**{status}**", elapsed_total, quality_reasons=quality_reasons)
         print(f"[REPORTER] Report written → {self.report_path}  (status: {status})")
 
 
@@ -433,44 +480,23 @@ class PipelineReporter:
 # RUN LOG — one row per pipeline run, shared across all scenarios
 # ===========================================================================
 
-# Default location of the shared run-log CSV. Deliberately a fixed path
-# (not nested under each scenario's own output_dir) so a single table
-# accumulates every run across every scenario. Override with --log-file.
-DEFAULT_RUN_LOG = "mfc2_outputs/run_log.csv"
+# The shared run-log CSV (one row per run, all scenarios) and the per-run
+# run_manifest.json live in run_log.py. DEFAULT_RUN_LOG / RUN_LOG_COLUMNS /
+# append_run_log keep their old names here for the existing call sites.
+from run_log import (DEFAULT_RUN_LOG, RUN_LOG_COLUMNS, RunLog, git_commit,  # noqa: E402,F401
+                     write_run_manifest)
 
-RUN_LOG_COLUMNS = [
-    "run_id", "timestamp", "scenario", "mode", "data_source", "status",
-    "output_dir", "report_path", "final_rmse", "cv_mean", "cv_max",
-    "ensemble_size", "runtime_s", "quality_level", "error",
-]
+# Seed of the Step 1 inversion workers (task i uses DEFAULT_INVERSION_SEED + i).
+DEFAULT_INVERSION_SEED = 1234
 
 
 def append_run_log(log_path: str, row: dict) -> None:
     """
-    Append one row to the shared run-log CSV, creating it (with a header)
-    on first use. Every ``run_pipeline.py`` invocation -- success,
-    quality-gate warning, or failure -- adds exactly one row here, keyed
-    by ``run_id``. ``compare_scenarios.py --ids <run_id> ...`` reads this
-    file to resolve a run_id straight to its ``report_path`` instead of
-    requiring a hand-typed glob.
-
-    Never raises: a run-log write failure is logged as a warning and the
-    pipeline continues, since it must not block on housekeeping.
+    Append one row to the shared run-log CSV (see ``run_log.RunLog.append``).
+    Every ``run_pipeline.py`` invocation -- success, quality-gate warning, or
+    failure -- adds exactly one row, keyed by ``run_id``. Never raises.
     """
-    import csv
-    try:
-        log_dir = os.path.dirname(log_path)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-        write_header = (not os.path.isfile(log_path)) or os.path.getsize(log_path) == 0
-        with open(log_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=RUN_LOG_COLUMNS)
-            if write_header:
-                writer.writeheader()
-            writer.writerow({k: row.get(k, "") for k in RUN_LOG_COLUMNS})
-        print(f"[RUN LOG] Appended run '{row.get('run_id')}' ({row.get('status')}) → {log_path}")
-    except OSError as e:
-        print(f"[RUN LOG] WARNING: could not write run log at {log_path!r}: {e}")
+    RunLog(log_path).append(row)
 
 
 def _next_run_seq(base_dir: str, width: int = 4) -> int:
@@ -1281,7 +1307,7 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
     # worker starts with a fresh OS-entropy RNG. Seed per task (base seed + task
     # index) so results do not depend on worker scheduling order.
     import random as _random
-    _seed = (int(invert_kwargs.get("inversion_seed", 1234)) + int(task_idx)) % (2**32 - 1)
+    _seed = (int(invert_kwargs.get("inversion_seed", DEFAULT_INVERSION_SEED)) + int(task_idx)) % (2**32 - 1)
     _random.seed(_seed)
     np.random.seed(_seed)
     from emagpy import Problem
@@ -1906,6 +1932,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # early. See write_run_marker() for why this -- not the run_log CSV --
     # is what lives in the folder itself.
     write_run_marker(OUTPUT_DIR, reporter.run_id, reporter.report_path)
+    reporter.set_manifest_extra(
+        stage=STAGE,
+        seeds={"inversion_seed": DEFAULT_INVERSION_SEED,
+               "random_xy_seed": getattr(cfg, "random_xy_seed", None),
+               "ws_xy_seed": getattr(cfg, "ws_xy_seed", None)},
+    )
     reporter.args_table("Runtime Arguments", {
         "mode":               mode.upper(),
         "scenario":           _scenario_name,
