@@ -12,10 +12,10 @@ Everything below is based on reading the repo at commit `10a4c9a`. Line numbers 
 |---|---|---|
 | 0 Reproducible runs | **done, verified** | seeding was already in the branch; two identical `1d_surface_tdr` runs give bit-identical `theta_calc`, `ec_optimal`, `rmse`, `cv_map`, `K` (final_rmse 0.036118). New baseline recorded. |
 | 1 Hygiene | **done** | `__pycache__`, `comparison_output/`, `scoring.csv` untracked + ignored; `IA_requests/`, `backup/`, legacy `tests/*` moved to `archive/`; README exists. |
-| 2 Delete obsolete | **partly done** | removed `capture_synthetic_theta.py` (pipeline saves the arrays itself) and `apply_sensor_ids_fix.py` (already applied). **Open:** `run_and_score.py` / `score_against_truth.py` kept, see open question 1. |
+| 2 Delete obsolete | **partly done** | removed `capture_synthetic_theta.py` (pipeline saves the arrays itself) and `apply_sensor_ids_fix.py` (already applied). `run_and_score.py` / `score_against_truth.py` / `generate_synthetic_real_mirror.py` **kept** (decision 2026-11-12: still used for the paper; they are described in `EM_TDR_strategy_progress_report.md` and `compare_scenarios.py` reads their scoring CSVs). |
 | 3 Importable modules | **done** | `0_generate_synthetic_data`->`data_synthetic`, `0_real_data_loader`->`data_real`, `1_..`->`step1_inversion`, `2_..`->`step2_petro`, `3_..`->`step3_average`, `4_..`->`step4_select`; importlib / fallback chains replaced by plain imports. `0_realEM_data_loader.py`, `0_realTDR_data_loader.py` were unreferenced (grep): moved to `archive/`. |
 | 4 Plot helpers | **done** | `plots/_common.py`; the 6 `_ensure_dir` + 2 `_save` copies are gone. |
-| 5 Split plotting out of core | **partly done** | the 5 plotting functions of `em_methodology.py` (`plot_step1_ensemble_*`, `plot_raw/filtered_apparent_conductivity`, `_flag_dropped_axes`) moved byte-identical to `plots/pre_inversion.py`; `em_methodology.py` no longer imports matplotlib or `os`; `run_pipeline.py` calls `pre_inversion.*` (a re-export from `em_methodology` would be circular). Checked: pyflakes (no undefined names), ensemble plots run on random data, `tests/test_plots_pre_inversion.py`. **Open:** `plot_truth_tdr` (run_pipeline.py), splitting `em_methodology.py` by responsibility, the raw/filtered plots were not executed (need real EM data). |
+| 5 Split plotting out of core | **partly done** | the 5 plotting functions of `em_methodology.py` (`plot_step1_ensemble_*`, `plot_raw/filtered_apparent_conductivity`, `_flag_dropped_axes`) moved byte-identical to `plots/pre_inversion.py`; `em_methodology.py` no longer imports matplotlib or `os`; `run_pipeline.py` calls `pre_inversion.*` (a re-export from `em_methodology` would be circular). Checked: pyflakes (no undefined names), ensemble plots run on random data, `tests/test_plots_pre_inversion.py`. **Verified on Ben's machine 2026-11-12** (`1d_surface_tdr`, worktrees at `06b042a` = before vs branch HEAD = after, plus a 2nd run of HEAD): all 20 saved arrays bit-identical before vs after and after vs after2; `t00/raw_eca_transect.png` and `t00/filtered_eca_transect.png` (the two plots not executed in the cloud) were produced. The `grep -ci 'traceback|error'` on `run.log` matched 2 lines, not yet inspected. **Open:** `plot_truth_tdr` (run_pipeline.py), splitting `em_methodology.py` by responsibility, the raw/filtered plots were not executed (need real EM data). |
 | 6 Split `main()` | open | `main()` still ~4,400 lines |
 | 7 Data-source interface | open | |
 | 8 Scenario building | **mostly done** | `"extends"` implemented + tested; unknown-key validation (typo -> `ValueError` with "did you mean", `_`-prefixed keys = comments) and `python scenario_loader.py --list-scenarios [--config FILE]` (name + description) done and tested; all shipped scenarios (synthetic + real) still validate. **Open:** sweep generator (`sweeps.py`), old-vs-new config equality test. |
@@ -27,6 +27,8 @@ Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20
 Not refactoring (behaviour changes, separate commits): 1d_* EC bound 60 -> 300 mS/m; `ws_layer_params` + `hetero` scenarios + `extends`. See `to-do.md`.
 
 Environment note: `emagpy` is not in the system Python of the cloud session; it was installed in a venv for these runs. Python 3.13 / numpy 2.5 / pandas 3.0 (your results above were made with 3.12).
+
+Baselines of `1d_surface_tdr` (`--mode 1d --num-swc-positions 5`), final_rmse / cv_mean / cv_max, run 2026-11-12 on Ben's machine (conda base): branch HEAD (EC bound 300 mS/m) **0.031212 / 0.3360 / 1.9646** (reproduced bit-identically 2x); commit `0d43365` (EC bound 60 mS/m) **0.032023 / 0.0000 / 0.0000**. The cloud reference for `0d43365` was 0.036118, so the same code gives a different value on the two machines (different Python/library versions, not investigated): compare runs only within one environment. With the 60 mS/m bound the ensemble spread is exactly 0 (consistent with every member sitting on the bound); with 300 it is not.
 
 ---
 
@@ -291,6 +293,9 @@ If you only have a day: do Phases 0–4 and 8. That removes most of the clutter 
 - *Keep `run_*_PAPER.sh` working with old names?* No. Rewrite them (Phase 3). No release tag needed for them; the `pre-refactor` tag in section 0 is enough.
 - *Where does the work happen?* Separate branch `refactor/readability`, authored by you (section 0).
 
+**Answered 2026-11-12**
+- *Scoring scripts (`run_and_score.py`, `score_against_truth.py`, real-mirror generator) still used for the paper?* Yes: keep (Phase 2 closed).
+- *One scenario JSON or two?* Two: `ensemble_scenarios.json` (synthetic) and `ensemble_scenarios_real.json` (real) stay separate (Phase 8: no merge).
+
 **Still open**
-1. Are `run_and_score.py` / `score_against_truth.py` / the real-mirror scenario still used for the paper? (decides Phase 2)
-2. Should real and synthetic share one scenario JSON, or stay separate (`ensemble_scenarios_real.json`)? (decides Phase 8)
+_none at the moment._
