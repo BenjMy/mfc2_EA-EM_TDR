@@ -204,6 +204,7 @@ def write_summary(rows: list[dict], path: str) -> None:
 # CLI
 # --------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
+    global OUT_DIR
     argv = list(sys.argv[1:] if argv is None else argv)
     extra: list[str] = []
     if "--" in argv:
@@ -215,8 +216,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--designs", nargs="+", help=f"designs to run (default: all of {list(DESIGNS)})")
     ap.add_argument("--design", action="append", default=[], metavar="NAME=d1,d2",
                     help="add or override a layer design (interface depths in m)")
-    ap.add_argument("--free-k", nargs="+", type=int, default=[1, 2, 3, 4],
-                    help="numbers of free WS parameters (0-4, order sigma_s, m, sigma_w, a)")
+    ap.add_argument("--free-k", nargs="+", type=int, default=None,
+                    help="numbers of free WS parameters (0-4, order sigma_s, m, sigma_w, a); "
+                         "default 1 2 3 4, or 1 4 (extremes only) with --fast")
     ap.add_argument("--tdr-depths", nargs="+", type=float, default=list(TDR_DEPTHS),
                     help="TDR sensor depths [m] used for the coverage report")
     ap.add_argument("--config", default=BASE_CONFIG, help="real scenarios file (parent source)")
@@ -240,13 +242,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # base scenario with `extends` already resolved
     with open(args.config, encoding="utf-8") as f:
-        resolved = sl._resolve_extends(json.load(f))
+        resolved = sl._resolve_extends(
+            {k: v for k, v in json.load(f).items() if k not in sl._SKIP_KEYS})
     if args.base not in resolved:
         ap.error(f"base scenario {args.base!r} not in {args.config}")
 
-    global OUT_DIR
     OUT_DIR = args.out_dir
-    cfg = build_study_config(resolved[args.base], designs, args.free_k, tuple(args.tdr_depths), args.fast)
+    ks = args.free_k or ([1, 4] if args.fast else [1, 2, 3, 4])
+    cfg = build_study_config(resolved[args.base], designs, ks, tuple(args.tdr_depths), args.fast)
     cfg_path = os.path.join(OUT_DIR, "study_scenarios.json")
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(cfg_path, "w", encoding="utf-8") as f:
