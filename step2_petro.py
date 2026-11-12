@@ -514,7 +514,7 @@ def plot_one_to_one_validation_by_sensor(
     )
 
 
-def plot_ws_parameter_histograms(fits, best_fit, depths0, lab_p0, output_path):
+def plot_ws_parameter_histograms(fits, best_fit, depths0, lab_p0, output_path, ws_bounds=None):
     """
     Plots histograms of the Waxman-Smits petrophysical parameters
     for each optimized horizon. Prevents ValueError if data range is zero.
@@ -543,6 +543,7 @@ def plot_ws_parameter_histograms(fits, best_fit, depths0, lab_p0, output_path):
 
     num_params = len(param_keys)
     num_horizons = len(best_fit.horizon_fits)
+    _bnd_lo, _bnd_hi = EMmethod.resolve_ws_bounds(ws_bounds)
 
     # Normalize lab_p0 into a (num_horizons, num_params) array, or None if unavailable.
     lab_p0_arr = None
@@ -583,8 +584,8 @@ def plot_ws_parameter_histograms(fits, best_fit, depths0, lab_p0, output_path):
             # Say what a collapsed panel means instead of leaving a bare bar on
             # an arbitrary axis: no spread, and/or members stuck on a bound.
             if data_arr.size:
-                _lo = EMmethod.WS_BOUNDS[0][p_idx]
-                _hi = EMmethod.WS_BOUNDS[1][p_idx]
+                _lo = _bnd_lo[p_idx]
+                _hi = _bnd_hi[p_idx]
                 _tol = 1e-6 * max(1.0, abs(_hi))
                 _n = data_arr.size
                 _n_lo = int(np.sum(data_arr <= _lo + _tol))
@@ -1022,6 +1023,7 @@ def run_petro(
     lab_p0: np.ndarray | list | None = None,
     theta_obs_std: float | Sequence[float] | None = None,
     sensor_ids: Sequence[str] | None = None,
+    ws_bounds: dict | None = None,
 ) -> list[EMmethod.PetroFit]:
     """
     Run STEP 2: Calibrate petrophysical function using Option A spatial layouts.
@@ -1129,6 +1131,7 @@ def run_petro(
         probe_depths_reflect_fitted_interfaces=probe_depths_reflect_fitted_interfaces,
         lab_p0=lab_p0,
         theta_obs_std=theta_obs_std,
+        ws_bounds=ws_bounds,
     )
     print(f"[STEP 2] Completed parameter extraction for {len(fits)} ensemble members.")
 
@@ -1404,6 +1407,7 @@ def run_petro_localized(
     theta_obs_std: float | Sequence[float] | None = None,
     global_fit: "EMmethod.PetroFit | None" = None,
     sensor_ids: Sequence[str] | None = None,
+    ws_bounds: dict | None = None,
 ) -> list["EMmethod.LocalizedPetroFit"]:
     """
     Step 2, kernel-localized variant (spatial_calibration_alternatives.md
@@ -1506,6 +1510,7 @@ def run_petro_localized(
         fixed_params=fixed_params,
         lab_p0=lab_p0,
         theta_obs_std=theta_obs_std,
+        ws_bounds=ws_bounds,
     )
     print(f"[STEP 2 LOCALIZED] Completed localized parameter extraction for "
           f"{len(fits)} ensemble members.")
@@ -1699,6 +1704,7 @@ def run_bandwidth_sweep(
     lab_p0: np.ndarray | list | None = None,
     fixed_params: dict[str, bool] | None = None,
     theta_obs_std: float | Sequence[float] | None = None,
+    ws_bounds: dict | None = None,
 ) -> tuple[list["EMmethod.BandwidthSweepResult"], float]:
     """
     Driver for ``EMmethod.sweep_localization_bandwidth`` — runs the
@@ -1747,6 +1753,7 @@ def run_bandwidth_sweep(
         lab_p0=lab_p0,
         fixed_params=fixed_params,
         theta_obs_std=theta_obs_std,
+        ws_bounds=ws_bounds,
     )
 
     for r in sweep_results:

@@ -1713,6 +1713,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # EMmethod.DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0] for every horizon.
     LAB_P0 = getattr(cfg, "lab_p0", None) if cfg is not None else None
 
+    # Optional override of the Waxman-Smits optimizer bounds ({param: [lo, hi]},
+    # subset of a/m/sigma_w/sigma_s). None keeps EMmethod.WS_BOUNDS.
+    WS_BOUNDS_OVERRIDE = getattr(cfg, "ws_bounds", None) if cfg is not None else None
+
     # Homogeneous mode: disable spatial gradients in synthetic generation.
     # CLI flag (if given) overrides scenario config.
     HOMOGENEOUS = (
@@ -1845,6 +1849,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         "window_m":           getattr(cfg, "window_m", 1.0) if cfg is not None else 1.0,
         "alpha_range_log":    str(getattr(cfg, "alpha_range_log", None) if cfg is not None else None),
         "ws_fixed_params":    str(WS_FIXED_PARAMS) if WS_FIXED_PARAMS else "(none — a/m/sigma_w/sigma_s all free)",
+        "ws_bounds":          str(WS_BOUNDS_OVERRIDE) if WS_BOUNDS_OVERRIDE else "(defaults — EMmethod.WS_BOUNDS)",
         "lab_p0":             str(LAB_P0) if LAB_P0 else "(none — using DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0])",
         "homogeneous":        HOMOGENEOUS,
         "spatial_match_tolerance_m (real time-lapse)": SPATIAL_MATCH_TOLERANCE_M,
@@ -4184,6 +4189,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             lab_p0=LAB_P0,
             theta_obs_std=_theta_obs_std_step2,
             sensor_ids=sample_sensor_ids,
+            ws_bounds=WS_BOUNDS_OVERRIDE,
         )
 
         # ------------------------------------------------------------------
@@ -4258,6 +4264,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         step2.plot_ws_parameter_histograms(
             fits=fits_step2, best_fit=fits_step2[0], depths0=DEPTHS0, lab_p0=LAB_P0,
             output_path=os.path.join(OUTPUT_DIR, "ws_parameter_histograms.png"),
+            ws_bounds=WS_BOUNDS_OVERRIDE,
         )
 
         # ------------------------------------------------------------------
@@ -4327,6 +4334,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     lab_p0=LAB_P0,
                     fixed_params=WS_FIXED_PARAMS,
                     theta_obs_std=_theta_obs_std_step2,
+                    ws_bounds=WS_BOUNDS_OVERRIDE,
                 )
                 _sweep_rows = [
                     [
@@ -4393,6 +4401,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     theta_obs_std=_theta_obs_std_step2,
                     global_fit=fits_step2[0],
                     sensor_ids=sample_sensor_ids,
+                    ws_bounds=WS_BOUNDS_OVERRIDE,
                 )
                 reporter.log(
                     f"[STEP 2 LOCALIZED] Diagnostic complete -> "
@@ -4524,6 +4533,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
             lab_p0=LAB_P0,
             theta_obs_std=_theta_obs_std_step2,  # same resolved value used in Step 2, see fix note there
+            ws_bounds=WS_BOUNDS_OVERRIDE,
         )
 
         # ------------------------------------------------------------------

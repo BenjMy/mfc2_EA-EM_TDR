@@ -314,6 +314,16 @@ class ScenarioConfig:
     since fitting all 4 unknowns against that few points is underdetermined.
     None (default) leaves every parameter free, unchanged from before."""
 
+    ws_bounds: dict | None = None
+    """Optional override of the Waxman-Smits calibration bounds used by the
+    Step 2 / Step 4 optimizer (default em_methodology.WS_BOUNDS:
+    a [0.5, 5], m [1, 4], sigma_w [1, 1000], sigma_s [0, 200]). Keys are any
+    subset of 'a', 'm', 'sigma_w', 'sigma_s', each mapping to [lo, hi];
+    unlisted parameters keep their default bounds. E.g. {"a": [0.2, 5]}
+    lets 'a' reach a truth below 0.5. A pinned parameter (ws_fixed_params)
+    ignores its bounds. None (default) keeps WS_BOUNDS, unchanged from
+    before this field existed."""
+
     lab_p0: list | None = None
     """Starting-guess / fixed-value Waxman-Smits parameters [a, m, sigma_w,
     sigma_s], used both as the optimizer's starting point for any parameter
@@ -560,6 +570,7 @@ class ScenarioConfig:
         lines += [
             f"  Drop coils      : {self.drop_coils if self.drop_coils else '(none)'}",
             f"  WS fixed params : {self.ws_fixed_params if self.ws_fixed_params else '(none — all 4 free)'}",
+            f"  WS bounds       : {self.ws_bounds if self.ws_bounds else '(defaults)'}",
             f"  WS xy variation : {self.ws_xy_variation}"
             + (
                 f"  (params={self.ws_xy_params if self.ws_xy_params else ['m', 'sigma_s']}, "
@@ -905,6 +916,31 @@ def _validate(name: str, raw: dict) -> None:
                 f"Scenario '{name}': ws_fixed_params values must all be "
                 f"true/false, got {ws_fixed_params!r}."
             )
+
+    ws_bounds = raw.get("ws_bounds", None)
+    if ws_bounds is not None:
+        _valid_wb_keys = {"a", "m", "sigma_w", "sigma_s"}
+        if not isinstance(ws_bounds, dict) or not ws_bounds:
+            raise ValueError(
+                f"Scenario '{name}': ws_bounds must be null or a non-empty object "
+                f"mapping a subset of {sorted(_valid_wb_keys)} to [lo, hi], "
+                f"got {ws_bounds!r}."
+            )
+        _bad_wb = set(ws_bounds.keys()) - _valid_wb_keys
+        if _bad_wb:
+            raise ValueError(
+                f"Scenario '{name}': ws_bounds has unknown key(s) "
+                f"{sorted(_bad_wb)}. Valid keys: {sorted(_valid_wb_keys)}."
+            )
+        for _wk, _wv in ws_bounds.items():
+            if (not isinstance(_wv, (list, tuple)) or len(_wv) != 2
+                    or not all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                               for x in _wv)
+                    or not _wv[0] < _wv[1]):
+                raise ValueError(
+                    f"Scenario '{name}': ws_bounds[{_wk!r}] must be [lo, hi] "
+                    f"with lo < hi, got {_wv!r}."
+                )
 
     lab_p0 = raw.get("lab_p0", None)
     if lab_p0 is not None:
@@ -1468,6 +1504,10 @@ def load_scenario(
             raw.get("quality_gate_require_all_horizons_calibrated", True)
         ),
         ws_fixed_params   = raw.get("ws_fixed_params", None),
+        ws_bounds         = (
+            {k: [float(v[0]), float(v[1])] for k, v in raw["ws_bounds"].items()}
+            if raw.get("ws_bounds") is not None else None
+        ),
         lab_p0            = (
             [[float(v) for v in row] for row in raw["lab_p0"]]
             if (raw.get("lab_p0") is not None and isinstance(raw["lab_p0"][0], list))

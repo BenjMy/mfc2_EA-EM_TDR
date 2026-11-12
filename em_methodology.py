@@ -1364,6 +1364,30 @@ WS_BOUNDS = (
 )
 
 
+def resolve_ws_bounds(ws_bounds: dict | None = None) -> tuple[list[float], list[float]]:
+    """Effective Waxman-Smits bounds in the ``WS_BOUNDS`` layout
+    ``([lo_a, lo_m, lo_sw, lo_ss], [hi_a, hi_m, hi_sw, hi_ss])``.
+
+    ``ws_bounds`` is an optional ``{param: [lo, hi]}`` override of any subset
+    of ``a``, ``m``, ``sigma_w``, ``sigma_s`` (the scenario's ``ws_bounds``
+    field); unlisted parameters keep their ``WS_BOUNDS`` default. ``None``
+    returns the defaults unchanged.
+    """
+    lo, hi = list(WS_BOUNDS[0]), list(WS_BOUNDS[1])
+    if ws_bounds:
+        names = ("a", "m", "sigma_w", "sigma_s")
+        unknown = set(ws_bounds) - set(names)
+        if unknown:
+            raise ValueError(f"ws_bounds: unknown parameter(s) {sorted(unknown)}.")
+        for i, n in enumerate(names):
+            if n in ws_bounds:
+                l, h = (float(v) for v in ws_bounds[n])
+                if not l < h:
+                    raise ValueError(f"ws_bounds[{n!r}] needs lo < hi, got {ws_bounds[n]!r}.")
+                lo[i], hi[i] = l, h
+    return lo, hi
+
+
 # ==========================================================================
 # 6. PETROPHYSICAL ALIGNMENT MODULES  (horizon-aware)
 # ==========================================================================
@@ -1381,6 +1405,7 @@ def calibrate_petrophysical_relationship(
     warm_start_continuation: bool = False,
     probe_depths_reflect_fitted_interfaces: bool = False,
     theta_obs_std: float | Sequence[float] | None = None,
+    ws_bounds: dict | None = None,
 ) -> list[PetroFit]:
     """
     Step 2 Core Engine: Fits Waxman-Smits parameters **separately per soil horizon**
@@ -1464,6 +1489,11 @@ def calibrate_petrophysical_relationship(
         vs. 4-unknown problem into a much better-constrained 2-vs-2 fit.
         Keys not present, or the whole dict omitted (``None``, default),
         are left free — fully backward compatible.
+    ws_bounds : dict, optional
+        ``{param: [lo, hi]}`` override of the optimizer bounds for any subset
+        of ``a``/``m``/``sigma_w``/``sigma_s`` (see ``resolve_ws_bounds``);
+        unlisted parameters keep ``WS_BOUNDS``. ``None`` (default) keeps
+        ``WS_BOUNDS`` unchanged.
     warm_start_continuation : bool, optional
         When ``True``, each ensemble member's per-horizon optimizer is
         seeded (``x0``) from the *previous* member's converged parameters
@@ -1513,6 +1543,7 @@ def calibrate_petrophysical_relationship(
 
     fixed_params = fixed_params or {}
     _PARAM_ORDER = ("a", "m", "sigma_w", "sigma_s")
+    _ws_lo, _ws_hi = resolve_ws_bounds(ws_bounds)
     if fixed_params:
         _fixed_names = [k for k in _PARAM_ORDER if fixed_params.get(k)]
         if _fixed_names:
@@ -1806,10 +1837,10 @@ def calibrate_petrophysical_relationship(
                     # This is how e.g. m and sigma_s can be held at
                     # literature/lab values while a and sigma_w still float.
                     _bounds_full = [
-                        (WS_BOUNDS[0][0], WS_BOUNDS[1][0]),   # a
-                        (WS_BOUNDS[0][1], WS_BOUNDS[1][1]),   # m
-                        (WS_BOUNDS[0][2], WS_BOUNDS[1][2]),   # σ_w
-                        (WS_BOUNDS[0][3], WS_BOUNDS[1][3]),   # σ_s
+                        (_ws_lo[0], _ws_hi[0]),   # a
+                        (_ws_lo[1], _ws_hi[1]),   # m
+                        (_ws_lo[2], _ws_hi[2]),   # σ_w
+                        (_ws_lo[3], _ws_hi[3]),   # σ_s
                     ]
                     bounds_lbfgsb = [
                         (p0[i], p0[i]) if fixed_params.get(_PARAM_ORDER[i]) else _bounds_full[i]
@@ -2039,6 +2070,7 @@ def _fit_ws_horizon_weighted(
     p0: np.ndarray,
     fixed_params: dict[str, bool],
     x0_start: np.ndarray | None = None,
+    ws_bounds: dict | None = None,
 ) -> tuple[float, float, float, float, np.ndarray]:
     """
     Single Waxman-Smits horizon fit for an arbitrary observation-weight
@@ -2151,12 +2183,8 @@ def _fit_ws_horizon_weighted(
         ])
         return obj, grad
 
-    _bounds_full = [
-        (WS_BOUNDS[0][0], WS_BOUNDS[1][0]),
-        (WS_BOUNDS[0][1], WS_BOUNDS[1][1]),
-        (WS_BOUNDS[0][2], WS_BOUNDS[1][2]),
-        (WS_BOUNDS[0][3], WS_BOUNDS[1][3]),
-    ]
+    _ws_lo, _ws_hi = resolve_ws_bounds(ws_bounds)
+    _bounds_full = [(_ws_lo[i], _ws_hi[i]) for i in range(4)]
     bounds_lbfgsb = [
         (p0[i], p0[i]) if fixed_params.get(_PARAM_ORDER[i]) else _bounds_full[i]
         for i in range(4)
@@ -2205,6 +2233,7 @@ def calibrate_petrophysical_relationship_localized(
     probe_layer_indices: Sequence[int] | None = None,
     fixed_params: dict[str, bool] | None = None,
     theta_obs_std: float | Sequence[float] | None = None,
+    ws_bounds: dict | None = None,
 ) -> list[LocalizedPetroFit]:
     """
     Kernel-localized (Gaspari-Cohn-weighted) generalization of
@@ -2482,7 +2511,7 @@ def calibrate_petrophysical_relationship_localized(
 
                 a, m, sigma_w, sigma_s, theta_pred = _fit_ws_horizon_weighted(
                     theta_layer, sigma_b_layer, combined_w, p0, fixed_params,
-                    x0_start=_prev_popt,
+                    x0_start=_prev_popt, ws_bounds=ws_bounds,
                 )
                 a_arr[t_i], m_arr[t_i], sigma_w_arr[t_i], sigma_s_arr[t_i] = (
                     a, m, sigma_w, sigma_s,
@@ -2569,6 +2598,7 @@ def sweep_localization_bandwidth(
     lab_p0: np.ndarray | None = None,
     fixed_params: dict[str, bool] | None = None,
     theta_obs_std: float | Sequence[float] | None = None,
+    ws_bounds: dict | None = None,
 ) -> list[BandwidthSweepResult]:
     """
     Leave-one-probe-out cross-validated RMSE of the kernel-localized
@@ -2752,7 +2782,7 @@ def sweep_localization_bandwidth(
                     combined_w = combined_w_raw / np.mean(combined_w_raw)
                     a, m, sigma_w, sigma_s, _ = _fit_ws_horizon_weighted(
                         theta_layer[mask], sigma_b_layer[mask], combined_w,
-                        p0, fixed_params,
+                        p0, fixed_params, ws_bounds=ws_bounds,
                     )
 
                 theta_pred_i = waxman_smits_theta(
@@ -3057,6 +3087,7 @@ def recalibrate_petrophysical_relationship(
     warm_start_continuation: bool = True,
     probe_depths_reflect_fitted_interfaces: bool = False,
     theta_obs_std: float | Sequence[float] | None = None,
+    ws_bounds: dict | None = None,
 ) -> list[PetroFit]:
     """
     Step 4 Core Engine: Re-applies Waxman-Smits regressions across cumulative
@@ -3105,6 +3136,7 @@ def recalibrate_petrophysical_relationship(
         warm_start_continuation=warm_start_continuation,
         probe_depths_reflect_fitted_interfaces=probe_depths_reflect_fitted_interfaces,
         theta_obs_std=theta_obs_std,
+        ws_bounds=ws_bounds,
     )
 
 
