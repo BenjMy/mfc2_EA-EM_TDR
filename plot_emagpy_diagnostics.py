@@ -102,9 +102,25 @@ def _panel_results(k, ax):
     ax.set_title("Inverted EC model (XZ)")
 
 
+def _scatter_xy(ax, x, y, z, label, cmap="viridis_r"):
+    """Plan-view scatter, one dot per measured point (NO interpolation, so
+    gaps between survey lines stay visible instead of being filled in)."""
+    x = np.asarray(x, float); y = np.asarray(y, float); z = np.asarray(z, float)
+    ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    sc = ax.scatter(x[ok], y[ok], c=z[ok], cmap=cmap, s=14, linewidths=0)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.figure.colorbar(sc, ax=ax, label=label)
+    return sc
+
+
 def _panel_map(k, ax):
-    k.showMap(index=0, ax=ax, contour=True, pts=True, cmap="viridis_r")
-    ax.set_title("ECa plan-view map (XY)")
+    sv = k.surveys[0]
+    coil = sv.coils[0]
+    _scatter_xy(ax, sv.df["x"].values, sv.df["y"].values, sv.df[coil].values,
+                f"ECa {coil} [mS/m]")
+    ax.set_title("ECa plan-view map (XY, measured points)")
 
 
 def _panel_dist(k, ax):
@@ -118,8 +134,10 @@ def _panel_misfit(k, ax):
 
 
 def _panel_depth(k, ax, idepth: int):
-    k.showDepths(index=0, idepth=idepth, ax=ax, contour=True, cmap="viridis_r")
-    ax.set_title(f"EC depth-slice layer {idepth} (XY)")
+    sv = k.surveys[0]
+    _scatter_xy(ax, sv.df["x"].values, sv.df["y"].values,
+                k.depths[0][:, idepth], "Depth [m]")
+    ax.set_title(f"Layer-{idepth} interface depth (XY, measured points)")
 
 
 def _summary_grid(k, n_layers: int, title: str, out_path: str) -> None:
