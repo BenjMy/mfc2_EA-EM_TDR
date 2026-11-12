@@ -38,3 +38,12 @@ Update 2026-11-11 (evening): refactoring phases 8 (unknown-key validation, `--li
 Same pair (`surface_free1` / `full_free1`), per-horizon EC RMSE, old range -> new range:
 H0 15.4 -> 25.1 (surface), 13.6 -> 25.0 (full); H1 31.8 -> 61.2 / 31.5 -> 54.0; H2 47.7 -> 61.7 / 45.3 -> 66.0; H3 57.6 -> 41.3 / 57.6 -> 21.7.
 Only the deepest horizon improved. The old cap hid part of the non-uniqueness; with room to move, the optimal EC now overshoots (bias +50 mS/m at H1-H2). theta RMSE at free1 also rose (H1 0.046 -> 0.187 surface). Not reverted since it is what the to-do asked for; a value between 60 and 300 (e.g. 150) is worth a try.
+
+## Real-data runs (added 2026-11-12)
+- [x] Initial EC range (ECmin/ECmax) + initial WS per horizon for real runs: `plots/initial_ec_ws_real.py` (Step 1d), `tests/test_initial_ec_ws_real.py`.
+- [x] Skim the real EM data for testing: `em_subsample` (`grid` / `probes` / `stride` / `random`), in the cache fingerprint, scenarios `real_single_test_grid` / `real_single_test_probes`, `tests/test_em_subsample.py`. A `--quick` preset was considered and dropped (it shrinks the ensemble itself).
+- [ ] Check on a real run that a `grid`/`probes` run reproduces the full run's optimal EC and theta at the probe-matched points (README acceptance tests), and that the matching report does not get worse.
+- [ ] Split a real run into `--stage calibrate` (probe points only, full ensemble) and `--stage map` (all or grid-thinned points, selected alpha / forward model / K only). Today both are one run.
+- [ ] Optional WS calibration **by zone** for real data (`ws_zones`): the clustering method still has to be discussed (geographic, ECa-based, soil-map, temporal stability), see README "Optional: calibrate Waxman-Smits by zone".
+- [ ] Remove the misleading "--mode not given; defaulting to '1d' for data_source='synthetic'" message in real runs; banner "Forward model : CS" while the grid sweeps FSlin and CS.
+

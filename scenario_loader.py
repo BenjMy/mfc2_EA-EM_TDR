@@ -404,6 +404,14 @@ class ScenarioConfig:
     Ignored for synthetic data (point counts are consistent by
     construction) and for real single-survey (non-time-lapse) runs."""
 
+    em_subsample: dict | None = None
+    """Real data only: optional thinning of every EM survey (see em_subsample.py).
+    ``None`` / ``{"mode": "off"}`` = use every point. Modes: ``grid`` (cell_m),
+    ``probes`` (radius_m), ``stride`` (stride), ``random`` (max_points, seed);
+    ``keep_probe_nearest`` (default true) always keeps each TDR probe's nearest
+    EM point. Applied after the raw-ECa filter chain, before the inversion."""
+
+
     # ------------------------------------------------------------------
     # Temperature correction
     # FIX ("temperature correction is currently a complete no-op"):
@@ -580,6 +588,7 @@ class ScenarioConfig:
                 f"  EM unit         : {self.em_unit}  "
                 f"({'GEM-2 / ppm sensor' if self.em_unit == 'ppm' else 'GF Instruments / ppt sensor'})",
                 f"  Spatial match tol (time-lapse epochs): ±{self.spatial_match_tolerance_m} m",
+                f"  EM subsample    : {self.em_subsample if self.em_subsample else '(off — all filtered points)'}",
             ]
         lines += [
             f"  Drop coils      : {self.drop_coils if self.drop_coils else '(none)'}",
@@ -1035,6 +1044,10 @@ def _validate(name: str, raw: dict) -> None:
                 f"Scenario '{name}': spatial_match_tolerance_m must be a "
                 f"positive number, got {spatial_tol!r}."
             )
+
+    # ---- Optional EM thinning (real data) -------------------------------
+    import em_subsample as _ems
+    _ems.validate_em_subsample(raw.get("em_subsample"), name)
 
     # ---- Temperature correction -----------------------------------------
     soil_temp = raw.get("soil_temperature_c", None)
@@ -1526,6 +1539,7 @@ def load_scenario(
         em_unit           = str(raw.get("em_unit", "ppt")),
         drop_coils        = drop_coils,
         spatial_match_tolerance_m = float(raw.get("spatial_match_tolerance_m", 2.0)),
+        em_subsample      = __import__("em_subsample").validate_em_subsample(raw.get("em_subsample"), scenario_name),
         soil_temperature_c = (
             float(raw["soil_temperature_c"])
             if isinstance(raw.get("soil_temperature_c"), (int, float))
