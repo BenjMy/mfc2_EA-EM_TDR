@@ -47,6 +47,7 @@ Only the deepest horizon improved. The old cap hid part of the non-uniqueness; w
 - [x] Skim the real EM data for testing: `em_subsample` (`grid` / `probes` / `stride` / `random`), in the cache fingerprint, scenarios `real_single_test_grid` / `real_single_test_probes`, `tests/test_em_subsample.py`. A `--quick` preset was considered and dropped (it shrinks the ensemble itself).
 - [ ] Check on a real run that a `grid`/`probes` run reproduces the full run's optimal EC and theta at the probe-matched points (README acceptance tests), and that the matching report does not get worse.
 - [ ] Split a real run into `--stage calibrate` (probe points only, full ensemble) and `--stage map` (all or grid-thinned points, selected alpha / forward model / K only). Today both are one run.
+	In that case **how would ws_localized_bandwidth_sweep work**??
 - [ ] Optional WS calibration **by zone** for real data (`ws_zones`): the clustering method still has to be discussed (geographic, ECa-based, soil-map, temporal stability), see README "Optional: calibrate Waxman-Smits by zone". First check whether it is redundant with `ws_localized_bandwidth_sweep` (continuous, distance-only version of the same idea): look at the CV-selected bandwidth on a real run; zones only pay off if there is spatial structure that a covariate or a sharp boundary explains and distance alone does not.
 - [ ] Remove the misleading "--mode not given; defaulting to '1d' for data_source='synthetic'" message in real runs; banner "Forward model : CS" while the grid sweeps FSlin and CS.
 
