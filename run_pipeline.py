@@ -1272,11 +1272,24 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
         drop_coils = invert_kwargs.get("drop_coils")
         if drop_coils is not None:
             EMmethod.drop_coils_from_problem(k, drop_coils)
-        k.setInit(depths0=list(depths0), conds0=list(conds0),
-                  fixedDepths=fixed_depths_list)
+        # Optional layer pinning (e.g. condition the deeper layers on a layer
+        # whose EC is known from TDR): ``fixed_conds`` is a per-layer bool list
+        # and ``conds0_matrix`` an (n_points, n_layers) array of per-point
+        # starting EC (the pinned layers keep exactly these values). Both
+        # absent (default) -> all layers free, vector conds0, as before.
+        _fixed_conds = invert_kwargs.get("fixed_conds")
+        _conds0_matrix = invert_kwargs.get("conds0_matrix")
+        _init_kwargs = {}
+        if _fixed_conds is not None:
+            _init_kwargs["fixedConds"] = [bool(f) for f in _fixed_conds]
+        k.setInit(depths0=list(depths0),
+                  conds0=(np.asarray(_conds0_matrix, dtype=float)
+                          if _conds0_matrix is not None else list(conds0)),
+                  fixedDepths=fixed_depths_list, **_init_kwargs)
 
         clean_kwargs = {key: v for key, v in invert_kwargs.items()
-                        if key not in ("targetProjection", "em_unit", "drop_coils", "inversion_seed")}
+                        if key not in ("targetProjection", "em_unit", "drop_coils", "inversion_seed",
+                                       "fixed_conds", "conds0_matrix")}
         k.invert(**clean_kwargs)
         models_arr = np.asarray(k.models[0])
         depths_arr = np.asarray(k.depths[0])

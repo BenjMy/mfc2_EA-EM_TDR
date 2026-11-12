@@ -118,6 +118,7 @@ def build_inversion_bnds(
     depths0: Sequence[float],
     fixed_depths_list: Sequence[bool],
     cond_ranges: Sequence[Sequence[float]],
+    fixed_conds: Sequence[bool] | None = None,
 ) -> list[tuple[float, float]]:
     """
     Build the explicit `bnds` list to pass into `Problem.invert()`.
@@ -148,10 +149,16 @@ def build_inversion_bnds(
         Per-interface fixed/free flag, same length as depths0.
     cond_ranges : sequence of [min, max] (or [value]) per layer
         Length = n_layers = len(depths0) + 1.
+    fixed_conds : sequence of bool, optional
+        Per-layer flag, same length as ``cond_ranges``; True pins that
+        layer's conductivity (EMagPy ``setInit(fixedConds=...)``). EMagPy
+        wants ``len(bnds) == n_free_depths + n_free_conds``, so the bounds of
+        pinned layers are dropped. ``None`` (default) keeps every layer free,
+        unchanged from before.
 
     Returns
     -------
-    list of (min, max) tuples, ordered [free depths..., all conductivities...]
+    list of (min, max) tuples, ordered [free depths..., free conductivities...]
     """
     depths0_arr = np.asarray(depths0, dtype=float)
     vd = ~np.asarray(fixed_depths_list, dtype=bool)
@@ -165,6 +172,13 @@ def build_inversion_bnds(
     depth_bnds = list(zip(depth_bot[vd].tolist(), depth_top[vd].tolist()))
 
     cond_bnds = [tuple(r) if len(r) == 2 else (r[0], r[0]) for r in cond_ranges]
+    if fixed_conds is not None:
+        if len(fixed_conds) != len(cond_bnds):
+            raise ValueError(
+                f"fixed_conds must have one flag per layer ({len(cond_bnds)}), "
+                f"got {len(fixed_conds)}."
+            )
+        cond_bnds = [b for b, fx in zip(cond_bnds, fixed_conds) if not fx]
 
     return depth_bnds + cond_bnds
 
