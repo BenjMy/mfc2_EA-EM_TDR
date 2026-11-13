@@ -5479,13 +5479,6 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #     (a) per_realisation — raw inversion for a sample of ensemble members
         #     (b) optimal_model   — weighted-average of top-K realisations (Step 4/5)
         # -----------------------------------------------------------------------
-        reporter.step("Step 6b", "emagpy native diagnostic plots")
-        reporter.log(" [PIPELINE] STEP 6b: emagpy DIAGNOSTIC PLOTS")
-        reporter.log(f"            surveys        : {len(EM_FNAMES)}")
-        reporter.log(f"            mode           : {mode.upper()}")
-        reporter.log(f"            optimal K      : {selected_output.K}")
-        reporter.log(f"            ensemble size  : {models_clean.shape[0]}")
-
         _fixed_bool = FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS)
         _fixed_depths_list_6b = (
             [FIXED_DEPTHS] * len(DEPTHS0)
@@ -5503,89 +5496,43 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             "bnds":         _build_inversion_bnds(DEPTHS0, _fixed_depths_list_6b, COND_RANGES),
         }
 
-        # -----------------------------------------------------------------------
-        # STEP 6c — SWC PLOTS FOR ALL THREE PIPELINE STAGES
-        #   Stage A: sample of raw realisations (models_clean)
-        #   Stage B: averaged model at K=1, K_opt, K_max (averaged_models)
-        #   Stage C: optimal model (selected_output) — same as Step 6 above
-        # -----------------------------------------------------------------------
-        reporter.step("Step 6c", "SWC plots for all pipeline stages")
-        reporter.log(" [PIPELINE] STEP 6c: SWC STAGE PLOTS (A/B/C)")
-
-        pwc.plot_swc_ensemble_stages(
-            models_clean     = models_clean,
-            averaged_models  = averaged_models,
-            selected_output  = selected_output,
-            best_fit         = fits_step4[selected_output.K - 1],
-            x_transect       = x_transect,
-            depths0          = DEPTHS0,
-            output_dir       = OUTPUT_DIR,
-            scenario_name    = cfg.name if cfg else "default",
-            timelapse        = timelapse,
-            survey_labels    = None,
-            utm_x            = utm_x,
-            utm_y            = utm_y,
-            probe_x_coords   = PROBE_X_COORDS,
-            probe_y_coords   = PROBE_Y_COORDS,
-            probe_depths     = PROBE_DEPTHS,
-            max_realisations = 4,
+        steps_step6.run_step6c_swc_stage_plots(
+            reporter,
+            models_clean=models_clean,
+            averaged_models=averaged_models,
+            selected_output=selected_output,
+            fits_step4=fits_step4,
+            x_transect=x_transect,
+            depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR,
+            cfg=cfg,
+            timelapse=timelapse,
+            utm_x=utm_x,
+            utm_y=utm_y,
+            probe_x_coords=PROBE_X_COORDS,
+            probe_y_coords=PROBE_Y_COORDS,
+            probe_depths=PROBE_DEPTHS,
+            theta_obs=theta_obs,
+            sample_positions=sample_positions,
+            sample_times=sample_times,
+            probe_layer_indices=probe_layer_indices,
         )
 
-        # -----------------------------------------------------------------------
-        # STEP 6c-bis — 1:1 validation scatter (Stages A / B / C vs. TDR truth)
-        # Called explicitly here so that the full sample_positions / sample_times /
-        # probe_layer_indices vectors — which are available in this scope but are
-        # not stored inside selected_output — are passed directly instead of
-        # relying on the fallback reconstruction inside plot_swc_ensemble_stages.
-        # -----------------------------------------------------------------------
-        pwc.plot_one_to_one_stages(
-            models_clean      = models_clean,
-            averaged_models   = averaged_models,
-            selected_output   = selected_output,
-            best_fit          = fits_step4[selected_output.K - 1],
-            theta_obs         = theta_obs,
-            sample_positions  = sample_positions,
-            sample_times      = sample_times,
-            output_dir        = OUTPUT_DIR,
-            scenario_name     = cfg.name if cfg else "default",
-            probe_layer_indices = probe_layer_indices,
+        steps_step6.run_step6b_emagpy_plots(
+            reporter,
+            em_fnames=EM_FNAMES,
+            mode=mode,
+            selected_output=selected_output,
+            models_clean=models_clean,
+            averaged_models=averaged_models,
+            tasks=tasks,                    # built in Step 1
+            depths_clean=depths_clean,
+            depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR,
+            fixed_depths=_fixed_bool,
+            invert_kwargs=_base_inv_kwargs,
+            em_unit=EM_UNIT,
         )
-
-        reporter.end_step("Step 6c")
-
-        # (a) Per-realisation plots — a uniform sample of individual inversions
-        pediag.run_emagpy_plots_per_realisation(
-            csv_paths        = EM_FNAMES,
-            tasks            = tasks,            # built in Step 1
-            models_clean     = models_clean,
-            depths_clean     = depths_clean,
-            depths0          = DEPTHS0,
-            output_dir       = OUTPUT_DIR,
-            fixed_depths     = _fixed_bool,
-            mode             = mode,
-            max_realisations = 1,                # cap: 1 sample realisation rendered (was 4 —
-                                                   # each realisation re-inverts the full survey
-                                                   # from scratch per time step; with real-data
-                                                   # point counts of 20k-47k this was the main
-                                                   # source of multi-hour Step 6b runtimes)
-            em_unit          = EM_UNIT,
-        )
-
-        # (b) Optimal model plots — weighted average of top-K realisations
-        pediag.run_emagpy_plots_optimal(
-            csv_paths        = EM_FNAMES,
-            selected_output  = selected_output,  # SelectionOutput from Step 4/5
-            averaged_models  = averaged_models,  # list from Step 3
-            depths0          = DEPTHS0,
-            output_dir       = OUTPUT_DIR,
-            fixed_depths     = _fixed_bool,
-            conds0           = None,
-            invert_kwargs    = _base_inv_kwargs,
-            mode             = mode,
-            em_unit          = EM_UNIT,
-        )
-
-        reporter.end_step("Step 6b")
 
         # -----------------------------------------------------------------------
         # STEP 6d — SOLUTION SUMMARY PLOTS (SWC + EC_bulk, synthetic ground

@@ -100,3 +100,48 @@ def test_step6e_forwards_arguments_and_records_one_metric_per_time(monkeypatch, 
     assert rep.metrics == {"Forward ECa RMSE (optimal, t=0)": "1.2500 mS/m",
                            "Forward ECa RMSE (optimal, t=1)": "0.5000 mS/m"}
     assert rep.started == ["Step 6e"] and rep.ended == ["Step 6e"]
+
+
+def test_step6c_runs_stage_plots_then_one_to_one_and_closes_step(monkeypatch, tmp_path):
+    order, seen = [], {}
+    monkeypatch.setattr(step6_plots.pwc, "plot_swc_ensemble_stages",
+                        lambda **kw: (order.append("stages"), seen.setdefault("stages", kw)))
+    monkeypatch.setattr(step6_plots.pwc, "plot_one_to_one_stages",
+                        lambda **kw: (order.append("1to1"), seen.setdefault("1to1", kw)))
+    fits = ["fit1", "fit2", "fit3"]
+    rep = FakeReporter()
+    step6_plots.run_step6c_swc_stage_plots(
+        rep, models_clean="M", averaged_models=["a1", "a2", "a3"],
+        selected_output=SimpleNamespace(K=2), fits_step4=fits, x_transect="X",
+        depths0="D", output_dir=str(tmp_path), cfg=SimpleNamespace(name="sc"),
+        timelapse=True, utm_x="ux", utm_y="uy", probe_x_coords="px", probe_y_coords="py",
+        probe_depths="pd", theta_obs="obs", sample_positions="sp", sample_times="st",
+        probe_layer_indices="pli")
+    assert order == ["stages", "1to1"]
+    assert seen["stages"]["best_fit"] == "fit2" and seen["1to1"]["best_fit"] == "fit2"
+    assert seen["stages"]["max_realisations"] == 4 and seen["stages"]["survey_labels"] is None
+    assert seen["1to1"]["theta_obs"] == "obs" and seen["1to1"]["probe_layer_indices"] == "pli"
+    assert seen["stages"]["probe_x_coords"] == "px"
+    assert rep.started == ["Step 6c"] and rep.ended == ["Step 6c"]
+
+
+def test_step6b_calls_per_realisation_then_optimal(monkeypatch, tmp_path):
+    order, seen = [], {}
+    monkeypatch.setattr(step6_plots.pediag, "run_emagpy_plots_per_realisation",
+                        lambda **kw: (order.append("per"), seen.setdefault("per", kw)))
+    monkeypatch.setattr(step6_plots.pediag, "run_emagpy_plots_optimal",
+                        lambda **kw: (order.append("opt"), seen.setdefault("opt", kw)))
+    rep = FakeReporter()
+    step6_plots.run_step6b_emagpy_plots(
+        rep, em_fnames=["a.csv", "b.csv"], mode="1d",
+        selected_output=SimpleNamespace(K=3), models_clean=np.zeros((5, 2, 4)),
+        averaged_models=[1, 2, 3], tasks=["t"], depths_clean="dc", depths0="d0",
+        output_dir=str(tmp_path), fixed_depths=True, invert_kwargs={"alpha": 0.03},
+        em_unit="mS/m")
+    assert order == ["per", "opt"]
+    assert seen["per"]["max_realisations"] == 1 and seen["per"]["tasks"] == ["t"]
+    assert seen["opt"]["invert_kwargs"] == {"alpha": 0.03} and seen["opt"]["conds0"] is None
+    assert seen["opt"]["fixed_depths"] is True and seen["opt"]["em_unit"] == "mS/m"
+    assert any("surveys        : 2" in line for line in rep.lines)
+    assert any("ensemble size  : 5" in line for line in rep.lines)
+    assert rep.started == ["Step 6b"] and rep.ended == ["Step 6b"]

@@ -10,7 +10,9 @@ import os
 
 import numpy as np
 
+import plot_emagpy_diagnostics as pediag
 import plot_solution_diagnostics as psol
+import plot_water_content as pwc
 from steps._common import resolve_npy_path as _resolve_npy_path
 
 
@@ -137,3 +139,114 @@ def run_step6e_forward_eca(reporter, *, em_fnames, averaged_models, selected_out
 
     reporter.end_step("Step 6e")
     return eca_forward_results
+
+
+def run_step6c_swc_stage_plots(reporter, *, models_clean, averaged_models, selected_output,
+                               fits_step4, x_transect, depths0, output_dir, cfg, timelapse,
+                               utm_x, utm_y, probe_x_coords, probe_y_coords, probe_depths,
+                               theta_obs, sample_positions, sample_times,
+                               probe_layer_indices):
+    """STEP 6c: SWC plots for all three pipeline stages (+ 6c-bis 1:1 scatter).
+
+    Stage A: sample of raw realisations (``models_clean``); stage B: averaged
+    model at K=1, K_opt, K_max (``averaged_models``); stage C: optimal model
+    (``selected_output``). 6c-bis passes the full ``sample_positions`` /
+    ``sample_times`` / ``probe_layer_indices`` vectors explicitly (they are
+    not stored inside ``selected_output``) instead of relying on the fallback
+    reconstruction inside ``plot_swc_ensemble_stages``.
+    """
+    reporter.step("Step 6c", "SWC plots for all pipeline stages")
+    reporter.log(" [PIPELINE] STEP 6c: SWC STAGE PLOTS (A/B/C)")
+
+    pwc.plot_swc_ensemble_stages(
+        models_clean     = models_clean,
+        averaged_models  = averaged_models,
+        selected_output  = selected_output,
+        best_fit         = fits_step4[selected_output.K - 1],
+        x_transect       = x_transect,
+        depths0          = depths0,
+        output_dir       = output_dir,
+        scenario_name    = cfg.name if cfg else "default",
+        timelapse        = timelapse,
+        survey_labels    = None,
+        utm_x            = utm_x,
+        utm_y            = utm_y,
+        probe_x_coords   = probe_x_coords,
+        probe_y_coords   = probe_y_coords,
+        probe_depths     = probe_depths,
+        max_realisations = 4,
+    )
+
+    # -----------------------------------------------------------------------
+    # STEP 6c-bis — 1:1 validation scatter (Stages A / B / C vs. TDR truth)
+    # Called explicitly here so that the full sample_positions / sample_times /
+    # probe_layer_indices vectors — which are available in this scope but are
+    # not stored inside selected_output — are passed directly instead of
+    # relying on the fallback reconstruction inside plot_swc_ensemble_stages.
+    # -----------------------------------------------------------------------
+    pwc.plot_one_to_one_stages(
+        models_clean      = models_clean,
+        averaged_models   = averaged_models,
+        selected_output   = selected_output,
+        best_fit          = fits_step4[selected_output.K - 1],
+        theta_obs         = theta_obs,
+        sample_positions  = sample_positions,
+        sample_times      = sample_times,
+        output_dir        = output_dir,
+        scenario_name     = cfg.name if cfg else "default",
+        probe_layer_indices = probe_layer_indices,
+    )
+
+    reporter.end_step("Step 6c")
+
+
+def run_step6b_emagpy_plots(reporter, *, em_fnames, mode, selected_output, models_clean,
+                            averaged_models, tasks, depths_clean, depths0, output_dir,
+                            fixed_depths, invert_kwargs, em_unit):
+    """STEP 6b: emagpy native diagnostic plots.
+
+    (a) per-realisation: raw inversion for a sample of ensemble members;
+    (b) optimal model: weighted average of the top-K realisations (Step 4/5).
+    ``tasks`` are the Step 1 inversion tasks; ``invert_kwargs`` the base
+    inversion options (alpha, beta, gamma, method, forwardModel, bnds).
+    """
+    reporter.step("Step 6b", "emagpy native diagnostic plots")
+    reporter.log(" [PIPELINE] STEP 6b: emagpy DIAGNOSTIC PLOTS")
+    reporter.log(f"            surveys        : {len(em_fnames)}")
+    reporter.log(f"            mode           : {mode.upper()}")
+    reporter.log(f"            optimal K      : {selected_output.K}")
+    reporter.log(f"            ensemble size  : {models_clean.shape[0]}")
+
+    # (a) Per-realisation plots — a uniform sample of individual inversions
+    pediag.run_emagpy_plots_per_realisation(
+        csv_paths        = em_fnames,
+        tasks            = tasks,            # built in Step 1
+        models_clean     = models_clean,
+        depths_clean     = depths_clean,
+        depths0          = depths0,
+        output_dir       = output_dir,
+        fixed_depths     = fixed_depths,
+        mode             = mode,
+        max_realisations = 1,                # cap: 1 sample realisation rendered (was 4 —
+                                               # each realisation re-inverts the full survey
+                                               # from scratch per time step; with real-data
+                                               # point counts of 20k-47k this was the main
+                                               # source of multi-hour Step 6b runtimes)
+        em_unit          = em_unit,
+    )
+
+    # (b) Optimal model plots — weighted average of top-K realisations
+    pediag.run_emagpy_plots_optimal(
+        csv_paths        = em_fnames,
+        selected_output  = selected_output,  # SelectionOutput from Step 4/5
+        averaged_models  = averaged_models,  # list from Step 3
+        depths0          = depths0,
+        output_dir       = output_dir,
+        fixed_depths     = fixed_depths,
+        conds0           = None,
+        invert_kwargs    = invert_kwargs,
+        mode             = mode,
+        em_unit          = em_unit,
+    )
+
+    reporter.end_step("Step 6b")
