@@ -20,7 +20,7 @@ Three entry points, all writing under ``<output_dir>/solution/``:
   forward_simulate_eca_optimal(...)
       Forward-simulates the apparent EC (ECa) that the optimal EC_bulk
       solution *would* produce at the surface, using emagpy's forward
-      model (the same call pattern used in ``0_generate_synthetic_data.py``
+      model (the same call pattern used in ``data_synthetic.py``
       to build the synthetic ground truth, and the same "inject the
       weighted-average model" idea used in
       ``plot_emagpy_diagnostics.run_emagpy_plots_optimal``). The simulated
@@ -79,22 +79,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from functools import partial as _partial
+from plots._common import ensure_dir as _ensure_dir, save_fig as _save_fig
+_save = _partial(_save_fig, tag="SOLUTION")
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _ensure_dir(path: str) -> str:
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def _save(fig: plt.Figure, path: str, dpi: int = 180) -> None:
-    fig.savefig(path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-    print(f"    [SOLUTION] saved → {os.path.relpath(path)}")
-
 
 def _time_slice(arr: np.ndarray, t_idx: int, timelapse: bool) -> np.ndarray:
     """Return the (n_pts, n_layers) slice for time step `t_idx`."""
@@ -295,7 +287,7 @@ def forward_simulate_eca_optimal(
     bulk-EC solution — ``averaged_models[selected_output.K - 1]`` from
     Step 3 — would produce at the surface, using emagpy's forward model
     (same ``Problem.forward()`` call pattern as
-    ``0_generate_synthetic_data.forward_waxman_smits`` → ``Problem.forward``
+    ``data_synthetic.forward_waxman_smits`` → ``Problem.forward``
     and the model-injection idea from
     ``plot_emagpy_diagnostics.run_emagpy_plots_optimal``).
 

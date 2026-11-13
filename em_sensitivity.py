@@ -17,7 +17,7 @@ Real vs. synthetic coil geometry (see run_pipeline.py wiring): the real-data
 path uses a single geometry (HCP, 1.66 m, six frequencies) so one weight
 vector is exact for that branch. Synthetic scenarios instead sweep six
 distinct (orientation, spacing) pairs feeding the SAME inversion
-(``0_generate_synthetic_data.COILS_LIST``), and there is no single
+(``data_synthetic.COILS_LIST``), and there is no single
 physically-correct way to collapse six different footprints into one
 kernel -- the inversion itself already blends their information
 nonlinearly. ``layer_weights_multi_coil`` below is an explicitly-labelled

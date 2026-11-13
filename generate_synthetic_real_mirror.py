@@ -24,7 +24,7 @@ Design decisions (documented, not hidden)
   meant to be run in a real compute environment, not this sandbox.
 * Quadrature (ppm) values are produced by forward-modelling EC_bulk with
   emagpy's own `Problem.forward(forwardModel="CS", ...)` (same call
-  pattern as `0_generate_synthetic_data.py`), converting the resulting
+  pattern as `data_synthetic.py`), converting the resulting
   ECa [mS/m] back to GEM-2-style quadrature ppm via emagpy's own
   `eca2Q` -- the exact inverse of what `Survey.readDF(unit='ppm')` does
   on the way in. This round-trips exactly through the real pipeline's own
@@ -206,7 +206,7 @@ def forward_waxman_smits(theta: np.ndarray) -> np.ndarray:
     the exact algebraic inverse of em_methodology.waxman_smits_theta,
     theta = (a * sigma_b / (sigma_w + sigma_s)) ** (1/m)
     -> sigma_b = (theta**m / a) * (sigma_w + sigma_s).
-    Matches 0_generate_synthetic_data.py's own forward_waxman_smits, which
+    Matches data_synthetic.py's own forward_waxman_smits, which
     uses the same multiplicative form. An earlier version of this function
     used an ADDITIVE surface-conduction term ((theta**m/a)*sigma_w +
     sigma_s) instead -- that is the inverse of a different equation

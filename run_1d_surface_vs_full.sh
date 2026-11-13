@@ -9,42 +9,48 @@
 #   (truth m and sigma_s vary along x; a and sigma_w are constant in the truth)
 #
 # Usage:  ./run_1d_surface_vs_full.sh [NPOS]     (default NPOS=5 probe positions)
+#         VARIANT=hetero ./run_1d_surface_vs_full.sh   -> two-zone vertical truth
 #         SKIP_RUNS=1 ./run_1d_surface_vs_full.sh  -> only redo the comparisons
 # Comparisons use the LATEST run of each scenario in the shared run log.
 # =============================================================================
 set -euo pipefail
 
 NPOS="${1:-5}"
+# VARIANT=hetero -> use the 1d_{surface,full}_hetero_free{K} scenarios (two-zone
+# vertical truth) and write to comparison_output/1d_surface_vs_full_hetero_*.
+# Default (empty) = the original homogeneous-in-depth study, names unchanged.
+VARIANT="${VARIANT:-}"
+V="${VARIANT:+_${VARIANT}}"
 POSITION=(8 0)                       # truth point for depth-profile plots (x y)
 LOG="mfc2_outputs/run_log.csv"
 
-latest_id() {   # latest run_id of a scenario in the run log (cols: run_id,...,scenario)
-    awk -F, -v s="$1" 'NR>1 && $3==s {id=$1} END{print id}' "${LOG}"
+latest_id() {   # latest run_id of a scenario in the run log (see run_log.py)
+    python3 run_log.py latest "$1" --log "${LOG}"
 }
 
 if [[ "${SKIP_RUNS:-0}" != "1" ]]; then
     for K in 1 2 3 4; do
-        ./run_pipeline.sh -s "1d_surface_free${K}" --mode 1d --num-swc-positions "${NPOS}"
-        ./run_pipeline.sh -s "1d_full_free${K}"    --mode 1d --num-swc-positions "${NPOS}"
+        ./run_pipeline.sh -s "1d_surface${V}_free${K}" --mode 1d --num-swc-positions "${NPOS}"
+        ./run_pipeline.sh -s "1d_full${V}_free${K}"    --mode 1d --num-swc-positions "${NPOS}"
     done
 fi
 
 # --- one comparison per K: surface-only vs full-depth -------------------------
 for K in 1 2 3 4; do
-    S="$(latest_id "1d_surface_free${K}")"; F="$(latest_id "1d_full_free${K}")"
+    S="$(latest_id "1d_surface${V}_free${K}")"; F="$(latest_id "1d_full${V}_free${K}")"
     [[ -n "${S}" && -n "${F}" ]] || { echo "Missing run for K=${K} (see ${LOG})" >&2; continue; }
     ./compare_scenarios.sh --ids "${S}" "${F}" \
-        --labels "surface_free${K}" "full_free${K}" \
-        --position "${POSITION[@]}" --out-dir "./comparison_output/1d_surface_vs_full_free${K}"
+        --labels "surface${V}_free${K}" "full${V}_free${K}" \
+        --position "${POSITION[@]}" --out-dir "./comparison_output/1d_surface_vs_full${V}_free${K}"
 done
 
 # --- all 8 runs together ------------------------------------------------------
 IDS=(); LABELS=()
 for K in 1 2 3 4; do
     for T in surface full; do
-        id="$(latest_id "1d_${T}_free${K}")"
-        [[ -n "${id}" ]] && { IDS+=("${id}"); LABELS+=("${T}_free${K}"); }
+        id="$(latest_id "1d_${T}${V}_free${K}")"
+        [[ -n "${id}" ]] && { IDS+=("${id}"); LABELS+=("${T}${V}_free${K}"); }
     done
 done
 ./compare_scenarios.sh --ids "${IDS[@]}" --labels "${LABELS[@]}" \
-    --position "${POSITION[@]}" --out-dir ./comparison_output/1d_surface_vs_full_all
+    --position "${POSITION[@]}" --out-dir "./comparison_output/1d_surface_vs_full${V}_all"

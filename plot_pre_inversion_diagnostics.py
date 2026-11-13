@@ -9,12 +9,12 @@ EA-EM pipeline (run_pipeline.py).
 Runs everything Step 0 / Step 1 does UP TO (but not including) the
 Step 1 ensemble inversion itself:
 
-  1. IMPORT           -- 0_real_data_loader.prepare_real_dataset()
+  1. IMPORT           -- data_real.prepare_real_dataset()
                           (EM file discovery + TDR<->EM date matching).
   2. PRE-PROCESSING    -- delimiter-detection + column-rename of each raw
                           GEM-2 CSV (mirrors run_pipeline.py::_prepare_real_em_csv).
   3. FILTERING         -- duplicate/repeated-point removal per epoch
-                          (0_real_data_loader.filter_repeated_em_points,
+                          (data_real.filter_repeated_em_points,
                           i.e. emagpy's own Problem.filterRepeated).
   4. SPATIAL MATCHING  -- cross-epoch spatial reference-grid construction
                           (geometry_utils.match_epochs_to_reference_grid),
@@ -76,6 +76,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 
 import geometry_utils
+from plots._common import ensure_dir as _ensure_dir
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ import geometry_utils
 # and plot_em_diagnostics_real.py's own copy. Duplicated locally (rather
 # than imported from run_pipeline.py) so this diagnostic doesn't have to
 # pull in run_pipeline's full downstream dependency chain
-# (0_generate_synthetic_data / 2_run_petro / 3_run_average / plot_water_content
+# (data_synthetic / step2_petro / step3_average / plot_water_content
 # / etc.) just to reuse one small CSV-renaming helper -- this mirrors the
 # same duplication pattern already used across the pipeline's other
 # diagnostic modules (see plot_em_diagnostics_real.py's own _COLUMN_VARIANTS).
@@ -102,22 +103,9 @@ _COLUMN_VARIANTS: dict[str, list[str]] = {
 
 
 def _import_real_data_loader():
-    """Import 0_real_data_loader.py (leading-digit filename can't be
-    `import`-ed directly). Mirrors run_pipeline.py::_load_real_data's own
-    fallback-import logic."""
-    try:
-        return importlib.import_module("0_real_data_loader")
-    except ImportError:
-        loader_script = Path(__file__).parent / "0_real_data_loader.py"
-        if not loader_script.exists():
-            raise ImportError(
-                f"0_real_data_loader.py not found next to this script "
-                f"(looked in {loader_script.parent})."
-            )
-        spec = importlib.util.spec_from_file_location("real_data_loader", loader_script)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
+    """Import the real-data loader module (data_real.py, next to this script)."""
+    import data_real
+    return data_real
 
 
 def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None
@@ -198,11 +186,6 @@ def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None
         out_df["date"] = pd.Timestamp(survey_date).strftime("%Y-%m-%d")
     out_df.to_csv(out_path, index=False)
     return out_path, coord_kind, epsg_used
-
-
-def _ensure_dir(path: str) -> str:
-    os.makedirs(path, exist_ok=True)
-    return path
 
 
 # ===========================================================================

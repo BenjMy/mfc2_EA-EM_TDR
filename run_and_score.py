@@ -14,10 +14,10 @@ Why a monkey-patch instead of a project edit
 ``theta_calc``, ``cv_map``, ``K``, ``rmse``, ``coverage``, ``best_fit``) is
 only ever plotted, never written to disk. Rather than editing the project's
 ``run_pipeline.py`` (and having that edit drift out of sync with future
-project changes), this script imports ``4_run_select_assess`` FIRST and
+project changes), this script imports ``step4_select`` FIRST and
 replaces its ``run_select_assess`` function with a thin wrapper that saves
 the return value before handing it back unchanged. The same trick is used
-on ``3_run_average.run_average`` to capture ``averaged_models`` (needed to
+on ``step3_average.run_average`` to capture ``averaged_models`` (needed to
 pick out the Step 3 K-th averaged EC model for the ground-truth overlay
 plot below). Because Python caches imported modules by name
 (``sys.modules``), ``run_pipeline.py``'s own ``importlib.import_module(...)``
@@ -119,11 +119,11 @@ def main() -> None:
 
     sys.path.insert(0, os.path.abspath(args.project_dir))
 
-    # --- Patch 3_run_average.run_average and 4_run_select_assess.run_select_assess
+    # --- Patch step3_average.run_average and step4_select.run_select_assess
     #     BEFORE run_pipeline imports either, so the cached sys.modules
     #     entries run_pipeline picks up already carry the patched
     #     functions. -----------------------------------------------------
-    step3 = importlib.import_module("3_run_average")
+    step3 = importlib.import_module("step3_average")
     captured: dict = {}
     _orig_run_average = step3.run_average
 
@@ -136,7 +136,7 @@ def main() -> None:
 
     step3.run_average = _capturing_run_average
 
-    step4_5 = importlib.import_module("4_run_select_assess")
+    step4_5 = importlib.import_module("step4_select")
     _orig_run_select_assess = step4_5.run_select_assess
 
     def _capturing_run_select_assess(*a, **kw):
@@ -171,13 +171,13 @@ def main() -> None:
         raise RuntimeError(
             "run_pipeline.main() completed but Step 4/5 was never captured -- "
             "the monkey-patch didn't take effect. Check that --project-dir "
-            "points at the directory containing 4_run_select_assess.py."
+            "points at the directory containing step4_select.py."
         )
     if "averaged_models" not in captured:
         raise RuntimeError(
             "run_pipeline.main() completed but Step 3 was never captured -- "
             "the monkey-patch didn't take effect. Check that --project-dir "
-            "points at the directory containing 3_run_average.py."
+            "points at the directory containing step3_average.py."
         )
 
     # --- Reference-grid coordinates from the Step 1 ensemble cache --------

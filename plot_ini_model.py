@@ -26,14 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def _load_real_data_loader():
-    here = os.path.dirname(os.path.abspath(__file__))
-    loader_path = os.path.join(here, "0_real_data_loader.py")
-    if not os.path.exists(loader_path):
-        raise ImportError(f"Could not find 0_real_data_loader.py at {loader_path}")
-    spec = spec_from_file_location("real_data_loader_mod", loader_path)
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    import data_real
+    return data_real
 
 
 def _compute_survey_eca(raw_csv_path: str, header_map: dict, unit: str = "ppt") -> pd.DataFrame:

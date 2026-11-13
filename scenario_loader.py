@@ -29,8 +29,11 @@ from __future__ import annotations
 import bisect
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Union
+
+import sweeps  # generated scenario families (1d_*_free{K}, 1d_*_hetero_free{K})
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +158,7 @@ class ScenarioConfig:
     True, the static XZ (depth) and XY (plan-view) initial-model gradients
     each span the full [theta_dry, theta_wet] range independently, instead
     of the small fixed-amplitude default gradient -- see
-    0_generate_synthetic_data.generate_time_lapse_dataset. Combined via
+    data_synthetic.generate_time_lapse_dataset. Combined via
     xy_z_blend below. Default False (small default gradient, unchanged)."""
 
     xy_z_blend: float                  = 0.5
@@ -175,7 +178,7 @@ class ScenarioConfig:
     deterministic linear XY ramp with a smooth, spatially-correlated RANDOM
     field (scattered wet/dry patches, generated as a sum of random Gaussian
     blobs) instead of a single monotonic gradient direction -- see
-    0_generate_synthetic_data._generate_random_xy_field. One field is drawn
+    data_synthetic._generate_random_xy_field. One field is drawn
     per ensemble member and held fixed across all timesteps/layers within
     that member; only the (still spatially-uniform) depth trend and small
     temporal/noise terms continue to vary. Default False (linear ramp,
@@ -232,6 +235,17 @@ class ScenarioConfig:
     """Only used when ws_xy_pattern is "random". Seeds the WS-parameter
     field independently of random_xy_seed. None (default) derives a
     seed from 99."""
+
+    ws_layer_params: dict | None       = None
+    """Synthetic data only. Per-layer overrides of the TRUE Waxman-Smits
+    parameters, e.g. {"2": {"a": 0.35, "sigma_w": 700.0}, "3": {...}}.
+    Keys are layer indices (0 = top; JSON keys are strings, stored here as
+    int), values map a subset of {a, m, sigma_w, sigma_s} to positive
+    numbers. Layers not listed keep the generator defaults (a=0.5, m=3.0,
+    sigma_w=500, sigma_s=100). Parameters listed in ws_xy_params are drawn
+    from ws_xy_ranges instead and take precedence over these values (the XY
+    range is the same for every layer). None (default) = identical truth in
+    every layer, unchanged from before this field existed."""
 
     # ------------------------------------------------------------------
     # Ensemble spread control
@@ -303,6 +317,30 @@ class ScenarioConfig:
     since fitting all 4 unknowns against that few points is underdetermined.
     None (default) leaves every parameter free, unchanged from before."""
 
+    pin_layers: list | None = None
+    """Optional per-layer true/false list (length n_layers = len(depths0)+1)
+    pinning those layers' conductivity during the Step 1 inversion
+    (EMagPy fixedConds), so the free deeper layers are inverted CONDITIONED
+    on them. E.g. [true, false, false, false] pins the surface layer.
+    The pinned value comes from ``pin_source``. None (default) = every layer
+    free, unchanged from before."""
+
+    pin_source: str = "truth"
+    """Where the pinned layers' EC comes from. 'truth' = the synthetic
+    ground-truth bulk EC (ORACLE upper bound: how much could conditioning on
+    a perfectly known surface layer help; synthetic runs only). Only used
+    when ``pin_layers`` is set."""
+
+    ws_bounds: dict | None = None
+    """Optional override of the Waxman-Smits calibration bounds used by the
+    Step 2 / Step 4 optimizer (default em_methodology.WS_BOUNDS:
+    a [0.5, 5], m [1, 4], sigma_w [1, 1000], sigma_s [0, 200]). Keys are any
+    subset of 'a', 'm', 'sigma_w', 'sigma_s', each mapping to [lo, hi];
+    unlisted parameters keep their default bounds. E.g. {"a": [0.2, 5]}
+    lets 'a' reach a truth below 0.5. A pinned parameter (ws_fixed_params)
+    ignores its bounds. None (default) keeps WS_BOUNDS, unchanged from
+    before this field existed."""
+
     lab_p0: list | None = None
     """Starting-guess / fixed-value Waxman-Smits parameters [a, m, sigma_w,
     sigma_s], used both as the optimizer's starting point for any parameter
@@ -368,6 +406,14 @@ class ScenarioConfig:
     instrument used for real-data surveys; a few metres is typical.
     Ignored for synthetic data (point counts are consistent by
     construction) and for real single-survey (non-time-lapse) runs."""
+
+    em_subsample: dict | None = None
+    """Real data only: optional thinning of every EM survey (see em_subsample.py).
+    ``None`` / ``{"mode": "off"}`` = use every point. Modes: ``grid`` (cell_m),
+    ``probes`` (radius_m), ``stride`` (stride), ``random`` (max_points, seed);
+    ``keep_probe_nearest`` (default true) always keeps each TDR probe's nearest
+    EM point. Applied after the raw-ECa filter chain, before the inversion."""
+
 
     # ------------------------------------------------------------------
     # Temperature correction
@@ -467,6 +513,15 @@ class ScenarioConfig:
     def cache_path(self) -> str:
         return os.path.join(self.output_dir, self.cache_filename)
 
+    def _forward_model_label(self) -> str:
+        """The forward model(s) the run really uses: the ``param_grid['forwardModel']``
+        sweep when present (the pipeline never reads the ``forward_model`` field)."""
+        grid = (self.param_grid or {}).get("forwardModel")
+        if grid:
+            return (f"{', '.join(str(g) for g in grid)}  (param_grid sweep; "
+                    f"the 'forward_model' field is not used)")
+        return str(self.forward_model)
+
     def summary(self) -> str:
         """One-block log string shown at pipeline start."""
         fd = self.fixed_depths
@@ -502,7 +557,7 @@ class ScenarioConfig:
             f"  Output dir      : {self.output_dir}",
             f"  Layers          : {self.n_layers}  (depths0 = {self.depths0})",
             f"  Interfaces      : {fd_str}",
-            f"  Forward model   : {self.forward_model}",
+            f"  Forward model   : {self._forward_model_label()}",
             f"  Gamma (TL)      : {self.gamma}",
             f"  Param grid      : {self.param_grid}",
             f"  Alpha sweep     : {alpha_str}",
@@ -545,10 +600,14 @@ class ScenarioConfig:
                 f"  EM unit         : {self.em_unit}  "
                 f"({'GEM-2 / ppm sensor' if self.em_unit == 'ppm' else 'GF Instruments / ppt sensor'})",
                 f"  Spatial match tol (time-lapse epochs): ±{self.spatial_match_tolerance_m} m",
+                f"  EM subsample    : {self.em_subsample if self.em_subsample else '(off — all filtered points)'}",
             ]
         lines += [
             f"  Drop coils      : {self.drop_coils if self.drop_coils else '(none)'}",
             f"  WS fixed params : {self.ws_fixed_params if self.ws_fixed_params else '(none — all 4 free)'}",
+            f"  WS bounds       : {self.ws_bounds if self.ws_bounds else '(defaults)'}",
+            f"  Pinned layers   : {self.pin_layers if self.pin_layers else '(none)'}"
+            + (f"  (source={self.pin_source})" if self.pin_layers else ""),
             f"  WS xy variation : {self.ws_xy_variation}"
             + (
                 f"  (params={self.ws_xy_params if self.ws_xy_params else ['m', 'sigma_s']}, "
@@ -669,8 +728,33 @@ def _check_swc_depth_horizon_coverage(name: str, depths0: list[float],
         )
 
 
+def _known_keys() -> set[str]:
+    """Keys a scenario entry may contain: ScenarioConfig fields (``name`` is the
+    JSON key itself). Keys starting with ``_`` are free-form comments."""
+    import dataclasses
+    return {f.name for f in dataclasses.fields(ScenarioConfig)} - {"name"}
+
+
+def _check_unknown_keys(name: str, raw: dict) -> None:
+    """Fail loudly on misspelled / unsupported keys (they were silently ignored)."""
+    import difflib
+    known = _known_keys()
+    unknown = sorted(k for k in raw if k not in known and not k.startswith("_"))
+    if not unknown:
+        return
+    hints = []
+    for k in unknown:
+        close = difflib.get_close_matches(k, sorted(known), n=1)
+        hints.append(f"'{k}'" + (f" (did you mean '{close[0]}'?)" if close else ""))
+    raise ValueError(
+        f"Scenario '{name}': unknown key(s) {', '.join(hints)}. "
+        "Prefix a key with '_' to keep it as a comment."
+    )
+
+
 def _validate(name: str, raw: dict) -> None:
     """Raise ValueError with a descriptive message on any schema violation."""
+    _check_unknown_keys(name, raw)
     missing = _REQUIRED - raw.keys()
     if missing:
         raise ValueError(
@@ -804,7 +888,7 @@ def _validate(name: str, raw: dict) -> None:
                 f"number, got {ttd!r}."
             )
         # FIX (em_unit defaults to 'ppt' but real GEM-2 data is 'ppm'):
-        # this pipeline's real-data branch (0_real_data_loader.py's
+        # this pipeline's real-data branch (data_real.py's
         # EM_HEADER_MAP / run_pipeline.py's _COLUMN_VARIANTS) only ever
         # ingests GEM-2 multi-frequency quadrature exports
         # (Q_425Hz, Q_1525Hz, ...) -- a 'ppm' instrument. Nothing enforced
@@ -870,6 +954,50 @@ def _validate(name: str, raw: dict) -> None:
                 f"true/false, got {ws_fixed_params!r}."
             )
 
+    pin_layers = raw.get("pin_layers", None)
+    if pin_layers is not None:
+        _n_layers_pin = len(raw.get("depths0", [])) + 1
+        if (not isinstance(pin_layers, list) or len(pin_layers) != _n_layers_pin
+                or not all(isinstance(v, bool) for v in pin_layers)):
+            raise ValueError(
+                f"Scenario '{name}': pin_layers must be null or a list of "
+                f"{_n_layers_pin} true/false values (one per layer), got {pin_layers!r}."
+            )
+        if all(pin_layers):
+            raise ValueError(
+                f"Scenario '{name}': pin_layers pins every layer; at least one "
+                f"layer must stay free for the inversion."
+            )
+    if raw.get("pin_source", "truth") not in ("truth",):
+        raise ValueError(
+            f"Scenario '{name}': pin_source must be 'truth', got {raw.get('pin_source')!r}."
+        )
+
+    ws_bounds = raw.get("ws_bounds", None)
+    if ws_bounds is not None:
+        _valid_wb_keys = {"a", "m", "sigma_w", "sigma_s"}
+        if not isinstance(ws_bounds, dict) or not ws_bounds:
+            raise ValueError(
+                f"Scenario '{name}': ws_bounds must be null or a non-empty object "
+                f"mapping a subset of {sorted(_valid_wb_keys)} to [lo, hi], "
+                f"got {ws_bounds!r}."
+            )
+        _bad_wb = set(ws_bounds.keys()) - _valid_wb_keys
+        if _bad_wb:
+            raise ValueError(
+                f"Scenario '{name}': ws_bounds has unknown key(s) "
+                f"{sorted(_bad_wb)}. Valid keys: {sorted(_valid_wb_keys)}."
+            )
+        for _wk, _wv in ws_bounds.items():
+            if (not isinstance(_wv, (list, tuple)) or len(_wv) != 2
+                    or not all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                               for x in _wv)
+                    or not _wv[0] < _wv[1]):
+                raise ValueError(
+                    f"Scenario '{name}': ws_bounds[{_wk!r}] must be [lo, hi] "
+                    f"with lo < hi, got {_wv!r}."
+                )
+
     lab_p0 = raw.get("lab_p0", None)
     if lab_p0 is not None:
         _lab_p0_err = (
@@ -928,6 +1056,10 @@ def _validate(name: str, raw: dict) -> None:
                 f"Scenario '{name}': spatial_match_tolerance_m must be a "
                 f"positive number, got {spatial_tol!r}."
             )
+
+    # ---- Optional EM thinning (real data) -------------------------------
+    import em_subsample as _ems
+    _ems.validate_em_subsample(raw.get("em_subsample"), name)
 
     # ---- Temperature correction -----------------------------------------
     soil_temp = raw.get("soil_temperature_c", None)
@@ -1104,6 +1236,44 @@ def _validate(name: str, raw: dict) -> None:
                 f"{sorted(_valid_ws_xy_params)}."
             )
 
+    ws_layer_params = raw.get("ws_layer_params", None)
+    if ws_layer_params is not None:
+        _n_layers_lp = len(raw.get("depths0", [])) + 1
+        if not isinstance(ws_layer_params, dict) or not ws_layer_params:
+            raise ValueError(
+                f"Scenario '{name}': ws_layer_params must be null or a non-empty "
+                f"object mapping layer index -> {{param: value}}, got {ws_layer_params!r}."
+            )
+        for _lk, _lv in ws_layer_params.items():
+            try:
+                _li = int(_lk)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params key {_lk!r} is not a layer index."
+                ) from None
+            if not 0 <= _li < _n_layers_lp:
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params layer {_li} is outside "
+                    f"0..{_n_layers_lp - 1} (depths0 defines {_n_layers_lp} layers)."
+                )
+            if not isinstance(_lv, dict) or not _lv:
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params[{_lk!r}] must be a non-empty "
+                    f"object of Waxman-Smits parameters, got {_lv!r}."
+                )
+            _bad_lp = set(_lv) - _valid_ws_xy_params
+            if _bad_lp:
+                raise ValueError(
+                    f"Scenario '{name}': ws_layer_params[{_lk!r}] has unknown "
+                    f"parameter(s) {sorted(_bad_lp)}. Valid: {sorted(_valid_ws_xy_params)}."
+                )
+            for _pn, _pv in _lv.items():
+                if isinstance(_pv, bool) or not isinstance(_pv, (int, float)) or _pv <= 0:
+                    raise ValueError(
+                        f"Scenario '{name}': ws_layer_params[{_lk!r}][{_pn!r}] must be a "
+                        f"positive number, got {_pv!r}."
+                    )
+
     ws_xy_ranges = raw.get("ws_xy_ranges", None)
     if ws_xy_ranges is not None:
         if not isinstance(ws_xy_ranges, dict):
@@ -1176,6 +1346,74 @@ def _validate(name: str, raw: dict) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _deep_merge(base: dict, over: dict) -> dict:
+    """Return ``base`` updated with ``over``; nested dicts are merged, anything else is replaced."""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _resolve_extends(scenarios: dict) -> dict:
+    """Resolve ``"extends": "<parent scenario>"`` entries.
+
+    A scenario with an ``extends`` key starts from a copy of its parent (itself
+    resolved first, so chains work) and applies its own keys on top: nested
+    objects are merged key by key, lists and scalars are replaced. The
+    ``extends`` key is removed from the result. Scenarios without ``extends``
+    are returned unchanged. Unknown parents and cycles raise ``ValueError``.
+    """
+    resolved: dict = {}
+
+    def _resolve(name: str, chain: tuple = ()) -> dict:
+        if name in resolved:
+            return resolved[name]
+        if name in chain:
+            raise ValueError(
+                f"Scenario 'extends' cycle: {' -> '.join(chain + (name,))}."
+            )
+        raw = scenarios[name]
+        parent = raw.get("extends")
+        if parent is None:
+            resolved[name] = raw
+            return raw
+        if parent not in scenarios:
+            raise ValueError(
+                f"Scenario '{name}': extends unknown scenario '{parent}'."
+            )
+        child = {k: v for k, v in raw.items() if k != "extends"}
+        resolved[name] = _deep_merge(_resolve(parent, chain + (name,)), child)
+        return resolved[name]
+
+    for _name in scenarios:
+        _resolve(_name)
+    # keep the input order (a parent resolved on demand must not jump the queue)
+    return {_name: resolved[_name] for _name in scenarios}
+
+
+def _configs_defining(scenario_name: str, config_path: str) -> list:
+    """Names of the other ``ensemble_scenarios*.json`` files (next to the loader and next
+    to ``config_path``) that define ``scenario_name`` -- used for the "wrong config" hint."""
+    import glob
+    dirs = {os.path.dirname(os.path.abspath(__file__)),
+            os.path.dirname(os.path.abspath(config_path))}
+    this = os.path.abspath(config_path)
+    found = []
+    for d in sorted(dirs):
+        for path in sorted(glob.glob(os.path.join(d, "ensemble_scenarios*.json"))):
+            if os.path.abspath(path) == this or os.path.basename(path) in found:
+                continue
+            try:
+                if scenario_name in list_scenarios(path):
+                    found.append(os.path.basename(path))
+            except (OSError, ValueError):
+                continue
+    return found
+
+
 def load_scenario(
     scenario_name: str = "default",
     config_path: str | None = None,
@@ -1223,11 +1461,15 @@ def load_scenario(
 
     # Strip meta-keys
     scenarios = {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    scenarios = _resolve_extends(sweeps.with_generated(scenarios))
 
     if scenario_name not in scenarios:
         available = sorted(scenarios.keys())
+        elsewhere = _configs_defining(scenario_name, config_path)
+        hint = (f" It is defined in {', '.join(elsewhere)}: pass that file as the "
+                f"scenario config (-c / --config)." if elsewhere else "")
         raise KeyError(
-            f"Scenario '{scenario_name}' not found in '{config_path}'. "
+            f"Scenario '{scenario_name}' not found in '{config_path}'.{hint} "
             f"Available scenarios: {available}"
         )
 
@@ -1314,6 +1556,11 @@ def load_scenario(
         ws_xy_seed        = (
             int(raw["ws_xy_seed"]) if raw.get("ws_xy_seed") is not None else None
         ),
+        ws_layer_params   = (
+            {int(k): {p: float(v) for p, v in d.items()}
+             for k, d in raw["ws_layer_params"].items()}
+            if raw.get("ws_layer_params") is not None else None
+        ),
         # Ensemble spread
         alpha_range_log   = alpha_range_log,
         # 2-D grid
@@ -1328,6 +1575,7 @@ def load_scenario(
         em_unit           = str(raw.get("em_unit", "ppt")),
         drop_coils        = drop_coils,
         spatial_match_tolerance_m = float(raw.get("spatial_match_tolerance_m", 2.0)),
+        em_subsample      = __import__("em_subsample").validate_em_subsample(raw.get("em_subsample"), scenario_name),
         soil_temperature_c = (
             float(raw["soil_temperature_c"])
             if isinstance(raw.get("soil_temperature_c"), (int, float))
@@ -1341,6 +1589,12 @@ def load_scenario(
             raw.get("quality_gate_require_all_horizons_calibrated", True)
         ),
         ws_fixed_params   = raw.get("ws_fixed_params", None),
+        pin_layers        = raw.get("pin_layers", None),
+        pin_source        = raw.get("pin_source", "truth"),
+        ws_bounds         = (
+            {k: [float(v[0]), float(v[1])] for k, v in raw["ws_bounds"].items()}
+            if raw.get("ws_bounds") is not None else None
+        ),
         lab_p0            = (
             [[float(v) for v in row] for row in raw["lab_p0"]]
             if (raw.get("lab_p0") is not None and isinstance(raw["lab_p0"][0], list))
@@ -1376,7 +1630,59 @@ def list_scenarios(config_path: str | None = None) -> list[str]:
         )
     with open(config_path, "r", encoding="utf-8") as fh:
         all_scenarios = json.load(fh)
-    return [k for k in all_scenarios if k not in _SKIP_KEYS]
+    return list(sweeps.with_generated(
+        {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    ))
+
+
+_WS_NAMES = ("a", "m", "sigma_w", "sigma_s")
+
+
+def check_ws_start_values(cfg) -> list:
+    """Warnings about where the Waxman-Smits start values sit relative to the bounds.
+
+    Compares ``lab_p0`` (or ``DEFAULT_WS_P0`` when unset), and for synthetic runs
+    the true ``ws_layer_params``, with the effective bounds (``WS_BOUNDS`` plus the
+    scenario's ``ws_bounds``). Reported:
+
+    * a value OUTSIDE the bounds (a free fit starts out of range; a truth outside the
+      bounds can never be recovered);
+    * a FREE parameter starting exactly ON a bound (L-BFGS-B / curve_fit then clips
+      most ensemble members onto it: zero spread, see the free4 case in to-do.md).
+
+    Informational only: nothing is changed. Empty list = all inside.
+    """
+    import numpy as np
+    from em_methodology import DEFAULT_WS_P0, resolve_ws_bounds
+
+    lo, hi = resolve_ws_bounds(getattr(cfg, "ws_bounds", None))
+    fixed = getattr(cfg, "ws_fixed_params", None) or {}
+    p0 = getattr(cfg, "lab_p0", None)
+    arr = np.atleast_2d(np.asarray(DEFAULT_WS_P0 if p0 is None else p0, dtype=float))
+    msgs: list = []
+    for h, row in enumerate(arr):
+        tag = "lab_p0" + (f" (horizon {h})" if len(arr) > 1 else
+                          "" if p0 is not None else " (default DEFAULT_WS_P0)")
+        for i, name in enumerate(_WS_NAMES):
+            v, is_fixed = float(row[i]), bool(fixed.get(name, False))
+            state = "fixed" if is_fixed else "free"
+            if v < lo[i] or v > hi[i]:
+                msgs.append(f"{tag}: {name}={v:g} is OUTSIDE the WS bounds "
+                            f"[{lo[i]:g}, {hi[i]:g}] ({state}).")
+            elif not is_fixed and v in (lo[i], hi[i]):
+                side = "lower" if v == lo[i] else "upper"
+                msgs.append(f"{tag}: free {name}={v:g} starts ON the {side} bound; "
+                            f"ensemble members will pile up there (zero spread). "
+                            f"Move the start value or set 'ws_bounds'.")
+    for h, params in sorted((getattr(cfg, "ws_layer_params", None) or {}).items(),
+                            key=lambda kv: int(kv[0])):
+        for name, v in params.items():
+            i = _WS_NAMES.index(name)
+            if not lo[i] <= float(v) <= hi[i]:
+                msgs.append(f"ws_layer_params[{h}]: true {name}={float(v):g} is OUTSIDE the "
+                            f"WS bounds [{lo[i]:g}, {hi[i]:g}] and cannot be recovered by "
+                            f"the calibration.")
+    return msgs
 
 
 def validate_all(config_path: str | None = None) -> None:
@@ -1394,12 +1700,18 @@ def validate_all(config_path: str | None = None) -> None:
     with open(config_path, "r", encoding="utf-8") as fh:
         all_scenarios = json.load(fh)
     scenarios = {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    scenarios = _resolve_extends(sweeps.with_generated(scenarios))
     print(f"Validating {len(scenarios)} scenario(s) in '{config_path}':")
     all_ok = True
     for name, raw in scenarios.items():
         try:
             _validate(name, raw)
             print(f"  ✓  {name}")
+            try:
+                for _w in check_ws_start_values(load_scenario(name, config_path=config_path)):
+                    print(f"       ⚠ {_w}")
+            except Exception:  # the check is informational; never fail validation on it
+                pass
         except (ValueError, TypeError) as exc:
             print(f"  ✗  {name}: {exc}")
             all_ok = False
@@ -1413,13 +1725,47 @@ def validate_all(config_path: str | None = None) -> None:
 # CLI entry point — python scenario_loader.py [scenario_name]
 # ---------------------------------------------------------------------------
 
+def describe_scenarios(config_path: str | None = None) -> list[tuple[str, str]]:
+    """Return ``(name, description)`` for every scenario (``extends`` resolved)."""
+    if config_path is None:
+        config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "ensemble_scenarios.json"
+        )
+    with open(config_path, "r", encoding="utf-8") as fh:
+        all_scenarios = json.load(fh)
+    scenarios = _resolve_extends(sweeps.with_generated(
+        {k: v for k, v in all_scenarios.items() if k not in _SKIP_KEYS}
+    ))
+    return [(n, str(v.get("description", ""))) for n, v in scenarios.items()]
+
+
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) == 1:
-        validate_all()
-    elif sys.argv[1] == "--list":
-        for name in list_scenarios():
-            print(name)
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Validate scenarios, list them, or print one scenario summary."
+    )
+    ap.add_argument("scenario", nargs="?", help="scenario name to summarise")
+    ap.add_argument("--list-scenarios", "--list", dest="list_", action="store_true",
+                    help="list scenario names with their description")
+    ap.add_argument("--config", default=None,
+                    help="scenario JSON (default: ensemble_scenarios.json)")
+    ap.add_argument("--field", default=None,
+                    help="print one resolved field of the scenario (empty if unset); "
+                         "exit 3 with the reason on stderr if the scenario cannot be loaded")
+    args = ap.parse_args()
+    if args.field is not None and args.scenario:
+        try:
+            _cfg = load_scenario(args.scenario, config_path=args.config)
+        except (KeyError, ValueError) as _e:
+            print(str(_e.args[0]) if _e.args else str(_e), file=sys.stderr)
+            raise SystemExit(3)
+        _val = getattr(_cfg, args.field, "")
+        print("" if _val is None else _val)
+    elif args.list_:
+        for _n, _d in describe_scenarios(args.config):
+            print(f"{_n}\t{_d}" if _d else _n)
+    elif args.scenario:
+        print(load_scenario(args.scenario, config_path=args.config).summary())
     else:
-        cfg = load_scenario(sys.argv[1])
-        print(cfg.summary())
+        validate_all(args.config)

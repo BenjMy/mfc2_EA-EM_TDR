@@ -104,12 +104,16 @@ GAMMA=()
 WS_LOCALIZED_BANDWIDTH=""
 WS_LOCALIZED_BANDWIDTH_SWEEP=()
 EM_FOOTPRINT_DIAGNOSTIC=false
+QUICK=false
+QUICK_EPOCHS=""
+STAGE=""
+CALIBRATION=""
 TRAIN_VAL_SPLIT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
 SCENARIO_LOADER="${SCRIPT_DIR}/scenario_loader.py"
 SCENARIO_JSON="${SCRIPT_DIR}/ensemble_scenarios.json"
-REAL_DATA_LOADER="${SCRIPT_DIR}/0_real_data_loader.py"
+REAL_DATA_LOADER="${SCRIPT_DIR}/data_real.py"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -234,6 +238,31 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           'param_grid.gamma' (or scalar 'gamma') in the
                           scenario config. No effect on non-time-lapse
                           (single-epoch) runs regardless of value.
+      --quick             Smoke-test preset: ONE alpha (middle of the
+                          scenario's alpha list) and ONE forward model
+                          (the first) instead of the full grid, e.g.
+                          280 Step-1 tasks -> 28. Does not touch the
+                          EM/TDR data. The ensemble is shrunk on purpose:
+                          output is a smoke test, not a result. Writes
+                          to '<seq>_<scenario>_quick' and its own
+                          '*_quick*.pkl' cache, so a full-run cache is
+                          never overwritten.
+      --stage S           Real data only. full (default): one run does
+                          everything. calibrate: EM points restricted to
+                          the probe neighbourhoods, FULL ensemble, Steps
+                          0-5, writes stage_calibration.json (selected K,
+                          members, WS parameters, localized bandwidth) and
+                          stops before the maps. map: inverts ONLY the
+                          members the calibration selected, on the
+                          scenario's EM points (all or grid-thinned), runs
+                          Steps 2-6 and reports drift vs the calibration.
+                          Each stage has its own run folder and cache file.
+      --calibration PATH  With --stage map: stage_calibration.json or the
+                          '*_calibrate' run folder. Default: newest
+                          '*_calibrate' run under the scenario's output_dir.
+      --quick-epochs N    With --quick (real data only): also keep only
+                          N evenly spaced survey epochs (first and last
+                          always included), e.g. 3 of 7 -> 12 tasks.
       --ws-localized-bandwidth C
                           Gaspari-Cohn localization radius 'c' (same
                           units as your x/y coordinates, e.g. metres)
@@ -604,6 +633,18 @@ while [[ $# -gt 0 ]]; do
         --validate) VALIDATE_ONLY=true; shift ;;
         --homogeneous) HOMOGENEOUS=true; shift ;;
         --em-footprint-diagnostic) EM_FOOTPRINT_DIAGNOSTIC=true; shift ;;
+        --quick) QUICK=true; shift ;;
+        --stage)
+            STAGE="${2:?'--stage requires one of: full calibrate map'}"
+            case "${STAGE}" in full|calibrate|map) ;; *) die "--stage must be full, calibrate or map, got '${STAGE}'" ;; esac
+            shift 2 ;;
+        --calibration)
+            CALIBRATION="${2:?'--calibration requires a path'}"; shift 2 ;;
+        --quick-epochs)
+            QUICK_EPOCHS="${2:?'--quick-epochs requires a positive integer'}"
+            [[ "${QUICK_EPOCHS}" =~ ^[1-9][0-9]*$ ]] \
+                || die "--quick-epochs must be a positive integer, got '${QUICK_EPOCHS}'"
+            shift 2 ;;
         --full-range-gradient) FULL_RANGE_GRADIENT=true; shift ;;
         --xy-z-blend)
             XY_Z_BLEND="${2:?'--xy-z-blend requires a number'}"
@@ -686,20 +727,21 @@ fi
 # values when explicitly supplied, but the two must not disagree.
 _SCENARIO_JSON_PATH="${CONFIG_FILE:-${SCENARIO_JSON}}"
 
+# Fields are read through scenario_loader.py, so 'extends', generated sweeps and
+# defaults are resolved exactly as in the pipeline. A scenario that cannot be
+# loaded (typically: a real-data scenario run without -c ensemble_scenarios_real.json)
+# stops here with the loader's reason instead of silently falling back to
+# data_source='synthetic' / '1d'.
+if ! _SCENARIO_ERR="$("${PYTHON}" "${SCRIPT_DIR}/scenario_loader.py" "${SCENARIO}" \
+        --config "${_SCENARIO_JSON_PATH}" --field name 2>&1 >/dev/null)"; then
+    die "${_SCENARIO_ERR%% Available scenarios:*}
+  Config used : ${_SCENARIO_JSON_PATH}
+  List the scenarios of a config with: python scenario_loader.py --list-scenarios --config <file>"
+fi
+
 _read_scenario_field() {
-    local field="$1"
-    "${PYTHON}" - <<PYEOF 2>/dev/null
-import json, sys
-try:
-    data = json.load(open('${_SCENARIO_JSON_PATH}'))
-    scenarios = {k: v for k, v in data.items() if k not in ('_comment', '_schema')}
-    s = scenarios.get('${SCENARIO}', {})
-    val = s.get('${field}', '')
-    if val:
-        print(val)
-except Exception:
-    pass
-PYEOF
+    "${PYTHON}" "${SCRIPT_DIR}/scenario_loader.py" "${SCENARIO}" \
+        --config "${_SCENARIO_JSON_PATH}" --field "$1" 2>/dev/null
 }
 
 SCENARIO_DS="$(_read_scenario_field data_source)"
@@ -927,6 +969,25 @@ if [[ -n "${TRAIN_VAL_SPLIT}" ]]; then
     TRAIN_VAL_ARGS+=(--train-val-split "${TRAIN_VAL_SPLIT}")
 fi
 
+if [[ -n "${QUICK_EPOCHS}" ]] && ! ${QUICK}; then
+    die "--quick-epochs requires --quick"
+fi
+QUICK_ARGS=()
+if ${QUICK}; then
+    QUICK_ARGS+=(--quick)
+    [[ -n "${QUICK_EPOCHS}" ]] && QUICK_ARGS+=(--quick-epochs "${QUICK_EPOCHS}")
+fi
+
+if [[ -n "${CALIBRATION}" && "${STAGE}" != "map" ]]; then
+    die "--calibration requires --stage map"
+fi
+if [[ "${STAGE}" == "map" ]] && ${QUICK}; then
+    die "--stage map cannot be combined with --quick"
+fi
+STAGE_ARGS=()
+[[ -n "${STAGE}" ]] && STAGE_ARGS+=(--stage "${STAGE}")
+[[ -n "${CALIBRATION}" ]] && STAGE_ARGS+=(--calibration "${CALIBRATION}")
+
 EM_FOOTPRINT_ARGS=()
 if ${EM_FOOTPRINT_DIAGNOSTIC}; then
     EM_FOOTPRINT_ARGS=(--em-footprint-diagnostic)
@@ -1007,6 +1068,8 @@ cat >> "${HEADER_TMP}" << MDEOF
 | ws-localized-bandwidth-sweep | \`${WS_LOCALIZED_BANDWIDTH_SWEEP[*]:-scenario default (or disabled)}\` |
 | train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |
 | em-footprint-diagnostic | \`${EM_FOOTPRINT_DIAGNOSTIC}\` |
+| quick | \`${QUICK}${QUICK_EPOCHS:+ (epochs=${QUICK_EPOCHS})}\` |
+| stage | \`${STAGE:-full}${CALIBRATION:+ (calibration=${CALIBRATION})}\` |
 | env | \`${VENV_PATH:-none}\` |
 | python | \`${PYTHON}\` |
 
@@ -1034,6 +1097,8 @@ set +e
     "${INVERSION_OVERRIDE_ARGS[@]+"${INVERSION_OVERRIDE_ARGS[@]}"}" \
     "${TRAIN_VAL_ARGS[@]+"${TRAIN_VAL_ARGS[@]}"}" \
     "${EM_FOOTPRINT_ARGS[@]+"${EM_FOOTPRINT_ARGS[@]}"}" \
+    "${QUICK_ARGS[@]+"${QUICK_ARGS[@]}"}" \
+    "${STAGE_ARGS[@]+"${STAGE_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
     2>&1 | tee "${RUN_LOG_TMP}"
 EXIT_CODE=${PIPESTATUS[0]}

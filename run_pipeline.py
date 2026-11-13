@@ -56,9 +56,12 @@ from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
 import em_methodology as EMmethod
+import em_subsample
 import geometry_utils
+import quick_preset
+import stage_split
 import train_val_split as tvs
-from scenario_loader import load_scenario, ScenarioConfig
+from scenario_loader import load_scenario, ScenarioConfig, check_ws_start_values
 import plot_water_content as pwc
 import plot_emagpy_diagnostics as pediag
 import plot_em_diagnostics_real as pediag_real
@@ -71,11 +74,18 @@ import em_sensitivity as emsens
 import plot_em_footprint as pef
 import plot_pre_inversion_diagnostics as preinvdiag
 import plot_train_val_diagnostics as ptv
+from plots import pre_inversion, ws_distribution, initial_ec_ws_real
+from plots.truth_tdr import plot_truth_tdr  # moved to plots/ (Phase 5); name kept for run_and_score
 
-step0   = importlib.import_module("0_generate_synthetic_data")
-step2   = importlib.import_module("2_run_petro")
-step3   = importlib.import_module("3_run_average")
-step4_5 = importlib.import_module("4_run_select_assess")
+import data_synthetic as step0
+import step2_petro as step2
+import step3_average as step3
+import step4_select as step4_5
+from steps import step1_diagnostics as steps_step1
+from steps import step3_4_average_recalibrate as steps_step34
+from steps import step5b_validation as steps_step5b
+from steps import step5c_footprint as steps_step5c
+from steps import step6_plots as steps_step6  # Phase 6: step functions extracted from main()
 
 
 # ===========================================================================
@@ -109,17 +119,7 @@ def _collect_npy_into_output_model(output_dir: str, output_model_dir: str) -> li
     return moved
 
 
-def _resolve_npy_path(filename: str, output_model_dir: str, output_dir: str) -> str:
-    """
-    Resolve the path to a ``.npy`` array, preferring ``output_model_dir``
-    (where this pipeline now consolidates arrays) and falling back to the
-    legacy top-level ``output_dir`` location for backward compatibility
-    with older runs/caches.
-    """
-    preferred = os.path.join(output_model_dir, filename)
-    if os.path.isfile(preferred):
-        return preferred
-    return os.path.join(output_dir, filename)
+from steps._common import resolve_npy_path as _resolve_npy_path  # noqa: E402  (moved in Phase 6)
 
 
 class PipelineReporter:
@@ -159,6 +159,16 @@ class PipelineReporter:
         self.elapsed_total: float | None = None
         self.quality_level: str | None = None
         self.error_message: str | None = None
+
+        # What run_manifest.json needs besides metrics/timings (see run_log.py).
+        self._cfg = cfg
+        self._header = {
+            "scenario": scenario_name, "mode": mode.upper(),
+            "data_source": data_source, "train_val_split": train_val_split,
+            "output_dir": output_dir,
+        }
+        self._generated = self._start.strftime('%Y-%m-%d %H:%M:%S')
+        self._manifest_extra: dict = {}
 
         # Header
         self._write(f"# EA-EM Pipeline Run Report")
@@ -286,6 +296,39 @@ class PipelineReporter:
         return default
 
 
+    def set_manifest_extra(self, **kwargs) -> None:
+        """Add fields (seeds, CLI options, ...) to the run_manifest.json written at the end."""
+        self._manifest_extra.update(kwargs)
+
+    def _write_manifest(self, status: str, result_line: str, elapsed: float,
+                        quality_reasons: list[str] | None = None,
+                        error: str = "") -> None:
+        """Write ``run_manifest.json`` next to the report (never raises)."""
+        import dataclasses
+        cfg_dict = None
+        if self._cfg is not None and dataclasses.is_dataclass(self._cfg):
+            cfg_dict = dataclasses.asdict(self._cfg)
+        write_run_manifest(self._header["output_dir"], {
+            "run_id": self.run_id,
+            **self._header,
+            "generated": self._generated,
+            "status": status,
+            "result_line": result_line,
+            "quality_level": self.quality_level,
+            "quality_reasons": list(quality_reasons or []),
+            "error": error,
+            "runtime_s": round(elapsed, 1),
+            "report": os.path.basename(self.report_path),
+            "git_commit": git_commit(),
+            "python": sys.version.split()[0],
+            "platform": f"{platform.system()} {platform.machine()}",
+            "host": platform.node(),
+            "metrics": dict(self._metrics),
+            "step_timing": {k: round(v, 1) for k, v in self._step_durations.items()},
+            "config": cfg_dict,
+            **self._manifest_extra,
+        })
+
     def failure(self, exc: "BaseException") -> None:
         """
         Record an unhandled exception into the report and close it.
@@ -356,6 +399,7 @@ class PipelineReporter:
             self._write(f"")
 
         self._f.close()
+        self._write_manifest("FAILED", "**❌ FAILED**", elapsed, error=str(exc)[:300])
         print(f"[REPORTER] ❌ Failure report written → {self.report_path}")
 
     def finish(self, exit_ok: bool = True, quality_level: str = "OK",
@@ -421,6 +465,9 @@ class PipelineReporter:
                 self._write(f"- {reason}")
         self._write(f"")
         self._f.close()
+        self._write_manifest(
+            "FAILED" if not exit_ok else ("WARN" if quality_level == "WARN" else "SUCCESS"),
+            f"**{status}**", elapsed_total, quality_reasons=quality_reasons)
         print(f"[REPORTER] Report written → {self.report_path}  (status: {status})")
 
 
@@ -428,44 +475,23 @@ class PipelineReporter:
 # RUN LOG — one row per pipeline run, shared across all scenarios
 # ===========================================================================
 
-# Default location of the shared run-log CSV. Deliberately a fixed path
-# (not nested under each scenario's own output_dir) so a single table
-# accumulates every run across every scenario. Override with --log-file.
-DEFAULT_RUN_LOG = "mfc2_outputs/run_log.csv"
+# The shared run-log CSV (one row per run, all scenarios) and the per-run
+# run_manifest.json live in run_log.py. DEFAULT_RUN_LOG / RUN_LOG_COLUMNS /
+# append_run_log keep their old names here for the existing call sites.
+from run_log import (DEFAULT_RUN_LOG, RUN_LOG_COLUMNS, RunLog, git_commit,  # noqa: E402,F401
+                     write_run_manifest)
 
-RUN_LOG_COLUMNS = [
-    "run_id", "timestamp", "scenario", "mode", "data_source", "status",
-    "output_dir", "report_path", "final_rmse", "cv_mean", "cv_max",
-    "ensemble_size", "runtime_s", "quality_level", "error",
-]
+# Seed of the Step 1 inversion workers (task i uses DEFAULT_INVERSION_SEED + i).
+DEFAULT_INVERSION_SEED = 1234
 
 
 def append_run_log(log_path: str, row: dict) -> None:
     """
-    Append one row to the shared run-log CSV, creating it (with a header)
-    on first use. Every ``run_pipeline.py`` invocation -- success,
-    quality-gate warning, or failure -- adds exactly one row here, keyed
-    by ``run_id``. ``compare_scenarios.py --ids <run_id> ...`` reads this
-    file to resolve a run_id straight to its ``report_path`` instead of
-    requiring a hand-typed glob.
-
-    Never raises: a run-log write failure is logged as a warning and the
-    pipeline continues, since it must not block on housekeeping.
+    Append one row to the shared run-log CSV (see ``run_log.RunLog.append``).
+    Every ``run_pipeline.py`` invocation -- success, quality-gate warning, or
+    failure -- adds exactly one row, keyed by ``run_id``. Never raises.
     """
-    import csv
-    try:
-        log_dir = os.path.dirname(log_path)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-        write_header = (not os.path.isfile(log_path)) or os.path.getsize(log_path) == 0
-        with open(log_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=RUN_LOG_COLUMNS)
-            if write_header:
-                writer.writeheader()
-            writer.writerow({k: row.get(k, "") for k in RUN_LOG_COLUMNS})
-        print(f"[RUN LOG] Appended run '{row.get('run_id')}' ({row.get('status')}) → {log_path}")
-    except OSError as e:
-        print(f"[RUN LOG] WARNING: could not write run log at {log_path!r}: {e}")
+    RunLog(log_path).append(row)
 
 
 def _next_run_seq(base_dir: str, width: int = 4) -> int:
@@ -594,7 +620,7 @@ def _prepare_real_em_csv(raw_path: str, processed_dir: str, survey_date=None
     ----------
     survey_date : datetime.datetime, optional
         The date of this EM survey (as already extracted from the raw
-        filename upstream by ``0_real_data_loader.extract_date_from_filename``).
+        filename upstream by ``data_real.extract_date_from_filename``).
         If given, every row of the processed CSV gets a constant ``date``
         column set to this value. emagpy's ``Survey.computeStat()`` (called
         internally by ``filterRepeated``) unconditionally looks for a
@@ -832,7 +858,7 @@ def _extract_temperature_by_epoch(
     or data source).
 
     Mirrors the same ``time_tolerance_days`` date-matching window
-    ``0_real_data_loader.prepare_real_dataset`` uses for SWC, but for
+    ``data_real.prepare_real_dataset`` uses for SWC, but for
     whichever column(s) look like a temperature reading (column name
     containing ``'temp'``, case-insensitive -- the same simple substring
     convention that module already uses for SWC column detection,
@@ -848,7 +874,7 @@ def _extract_temperature_by_epoch(
     Parameters
     ----------
     load_tdr_dataframe_fn : callable
-        The ``load_tdr_dataframe`` function from ``0_real_data_loader``,
+        The ``load_tdr_dataframe`` function from ``data_real``,
         already resolved by the caller (``_load_real_data``) via whichever
         import path succeeded there.
     tdr_dir, coord_file : str
@@ -912,9 +938,20 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
                     filter_percentile_qmin: float | None = 5.0,
                     filter_percentile_qmax: float | None = 95.0,
                     rolling_mean_window: int | None = 5,
-                    drop_coils=None):
+                    drop_coils=None,
+                    em_subsample_cfg: dict | None = None,
+                    quick_epochs: int | None = None,
+                    quick: bool = False):
     """
     Load real EM and TDR field data.
+
+    ``quick`` / ``quick_epochs`` (``--quick`` preset, see quick_preset.py):
+    when ``quick_epochs`` is set, only that many evenly spaced survey epochs
+    are kept (first and last always included) -- applied right after the
+    dataset is discovered, so skipped epochs are never pre-processed and
+    every per-epoch output (em_files, em_dates, raw_em_files, observations'
+    ``time_index``, temp_by_epoch) stays mutually consistent. The kept
+    original indices are returned in ``real_data_diagnostics['epoch_indices']``.
 
     Preprocessing step added: raw GEM-2 CSV files use semicolon delimiters and
     instrument-specific column names that emagpy cannot parse.  Each file is
@@ -991,29 +1028,9 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
     """
     from pathlib import Path
 
-    # Import the real data loader
+    # Import the real data loader (data_real.py, next to this script)
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    try:
-        from l0_real_data_loader import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe  # Adjust import as needed
-    except ImportError:
-        # Try alternate name
-        try:
-            from _0_real_data_loader import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe
-        except ImportError:
-            # Fallback: try from current script directory
-            import importlib.util
-            loader_script = Path(__file__).parent / "0_real_data_loader.py"
-            if not loader_script.exists():
-                raise ImportError(
-                    f"Real data loader not found. Expected: {loader_script}\n"
-                    "Ensure 0_real_data_loader.py is in the pipeline directory."
-                )
-            spec = importlib.util.spec_from_file_location("real_data_loader", loader_script)
-            real_data_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(real_data_module)
-            prepare_real_dataset = real_data_module.prepare_real_dataset
-            preprocess_em_survey = real_data_module.preprocess_em_survey
-            load_tdr_dataframe = real_data_module.load_tdr_dataframe
+    from data_real import prepare_real_dataset, preprocess_em_survey, load_tdr_dataframe
 
     print(f"[REAL DATA] Loading from:")
     print(f"  EM directory  : {em_dir}")
@@ -1026,6 +1043,18 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
         coord_file=coord_file,
         time_tolerance_days=time_tolerance_days,
     )
+
+    # --quick epoch subset (None = all epochs, the normal behaviour).
+    n_epochs_total = len(raw_em_files)
+    epoch_indices = list(range(n_epochs_total))
+    if quick and quick_epochs is not None:
+        epoch_indices = quick_preset.select_epochs(n_epochs_total, quick_epochs)
+        if len(epoch_indices) < n_epochs_total:
+            raw_em_files, em_dates, observations = quick_preset.subset_epochs(
+                raw_em_files, em_dates, observations, epoch_indices)
+            print(f"[QUICK] Epoch subset: keeping {len(epoch_indices)}/{n_epochs_total} "
+                  f"surveys (original indices {epoch_indices}): "
+                  + ", ".join(str(d.date()) for d in em_dates))
 
     # Convert each raw semicolon-delimited GEM-2 CSV into an emagpy-ready
     # comma-separated file with correctly named coil columns. As of the
@@ -1062,6 +1091,18 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
                 rolling_window=rolling_mean_window,
                 drop_coils=drop_coils,
             )
+            if em_subsample_cfg:
+                # Optional thinning AFTER the filter chain (see em_subsample.py).
+                sub = em_subsample.subsample_em_csv(
+                    proc_path, em_subsample_cfg,
+                    probe_x=probe_table["utm_x"].to_numpy(dtype=float),
+                    probe_y=probe_table["utm_y"].to_numpy(dtype=float),
+                )
+                filt_stats["subsample"] = sub
+                filt_stats["n_final_before_subsample"] = filt_stats["n_final"]
+                filt_stats["n_final"] = sub["n_after"]
+                print(f"[+] em_subsample[{sub['mode']}] {os.path.basename(proc_path)}: "
+                      f"{sub['n_before']} -> {sub['n_after']} pts")
             filter_stat_records.append(filt_stats)
             em_unit_check_records.append(_check_em_unit_sanity(proc_path, em_unit))
             em_files.append(proc_path)
@@ -1159,13 +1200,17 @@ def _load_real_data(em_dir: str, tdr_dir: str, coord_file: str,
         "n_geographic_reprojected": n_geo,
         "filter_stats": filter_stat_records,      # one preprocess_em_survey() stats dict per file
         "temp_by_epoch": temp_by_epoch,           # list[float|None], one per em_dates entry
+        "epoch_indices": epoch_indices,          # original survey indices kept (all unless --quick-epochs)
+        "n_epochs_total": n_epochs_total,
     }
 
     return em_files, observations, probe_table, em_dates, raw_em_files, real_data_diagnostics
 
 
 def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
-                          drop_coils=None, spatial_match_tolerance_m=None) -> str:
+                          drop_coils=None, spatial_match_tolerance_m=None,
+                          pin_layers=None, pin_source=None,
+                          em_subsample=None, epochs=None, members=None) -> str:
     """
     Stable content hash of everything that determines the inversion outputs
     cached in Step 1 (ensemble_cache_*.pkl). Used to auto-invalidate a cache
@@ -1192,6 +1237,20 @@ def _config_fingerprint(depths0, fixed_depths, param_grid, cond_ranges, gamma,
         "drop_coils": drop_coils,
         "spatial_match_tolerance_m": spatial_match_tolerance_m,
     }
+    if pin_layers is not None:
+        # Only added when pinning is on, so every existing cache keeps its hash.
+        payload["pin_layers"] = [bool(v) for v in pin_layers]
+        payload["pin_source"] = pin_source
+    if em_subsample:
+        # Only added when thinning is on, so every existing cache keeps its hash.
+        payload["em_subsample"] = em_subsample
+    if epochs is not None:
+        # Only added for a --quick-epochs subset, so every existing cache keeps its hash.
+        payload["epochs"] = list(epochs)
+    if members is not None:
+        # --stage map: only the calibration-selected members are inverted, so the
+        # member set must be part of the key (param_grid alone describes the full grid).
+        payload["members"] = [list(m) for m in members]
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -1239,6 +1298,13 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
     harmless all-zero array in that case -- no method-branching needed here.
     """
     task_idx, fname, depths0, conds0, fixed_depths_list, invert_kwargs = args
+    # Reproducibility: ROPE/MCMC-family inversions sample randomly, and a spawned
+    # worker starts with a fresh OS-entropy RNG. Seed per task (base seed + task
+    # index) so results do not depend on worker scheduling order.
+    import random as _random
+    _seed = (int(invert_kwargs.get("inversion_seed", DEFAULT_INVERSION_SEED)) + int(task_idx)) % (2**32 - 1)
+    _random.seed(_seed)
+    np.random.seed(_seed)
     from emagpy import Problem
     import traceback
 
@@ -1271,7 +1337,7 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
         # NOTE: repeated/duplicate-point filtering used to happen here
         # (`k.filterRepeated(index=0)`), once per parallel inversion task.
         # It has been moved upstream into the real-data loader
-        # (`0_real_data_loader.preprocess_em_survey`), which runs the full
+        # (`data_real.preprocess_em_survey`), which runs the full
         # filterRange -> filterRepeated -> filterPercentile -> rollingMean
         # chain once per EM CSV at load time in `_load_real_data`, rather
         # than redundantly (and, for filterRepeated, incorrectly) inside
@@ -1284,11 +1350,24 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
         drop_coils = invert_kwargs.get("drop_coils")
         if drop_coils is not None:
             EMmethod.drop_coils_from_problem(k, drop_coils)
-        k.setInit(depths0=list(depths0), conds0=list(conds0),
-                  fixedDepths=fixed_depths_list)
+        # Optional layer pinning (e.g. condition the deeper layers on a layer
+        # whose EC is known from TDR): ``fixed_conds`` is a per-layer bool list
+        # and ``conds0_matrix`` an (n_points, n_layers) array of per-point
+        # starting EC (the pinned layers keep exactly these values). Both
+        # absent (default) -> all layers free, vector conds0, as before.
+        _fixed_conds = invert_kwargs.get("fixed_conds")
+        _conds0_matrix = invert_kwargs.get("conds0_matrix")
+        _init_kwargs = {}
+        if _fixed_conds is not None:
+            _init_kwargs["fixedConds"] = [bool(f) for f in _fixed_conds]
+        k.setInit(depths0=list(depths0),
+                  conds0=(np.asarray(_conds0_matrix, dtype=float)
+                          if _conds0_matrix is not None else list(conds0)),
+                  fixedDepths=fixed_depths_list, **_init_kwargs)
 
         clean_kwargs = {key: v for key, v in invert_kwargs.items()
-                        if key not in ("targetProjection", "em_unit", "drop_coils")}
+                        if key not in ("targetProjection", "em_unit", "drop_coils", "inversion_seed",
+                                       "fixed_conds", "conds0_matrix")}
         k.invert(**clean_kwargs)
         models_arr = np.asarray(k.models[0])
         depths_arr = np.asarray(k.depths[0])
@@ -1311,79 +1390,12 @@ def _invert_single_worker(args) -> tuple[int, np.ndarray | None, np.ndarray | No
 # _layer_centers is now the single shared implementation in
 # geometry_utils.py (pipeline_improvement_report.md, section 6 / action
 # item 3) -- this used to be independently reimplemented here, in
-# 0_generate_synthetic_data.py (inline), and in run_pipeline_short.py, and
+# data_synthetic.py (inline), and in run_pipeline_short.py, and
 # a mismatch between those copies is exactly what caused the Step 6d
 # "x and y must have same first dimension" crash this function's old
 # docstring described. Kept as a thin alias so every existing call site
 # (`_layer_centers(...)`) keeps working unchanged.
 _layer_centers = geometry_utils.layer_centers
-
-
-def plot_truth_tdr(output_dir: str, theta_true_realization, depths0,
-                    fname: str = "truth_tdr_profiles.png"):
-    """
-    Plot the ground-truth TDR (volumetric water content, theta) depth
-    profiles for the exported realization, BEFORE any pedophysical/EM
-    forward transformation. This is the theta that gets pedophysically
-    converted to EC_bulk and then forward-modeled into the exported ECa
-    surveys, so it's the reference point for sanity-checking that chain.
-
-    Accepts theta_true_realization shaped (n_time, n_pos, n_layer) or
-    (n_pos, n_layer) for a single-survey (non-time-lapse) run.
-
-    Ported from run_pipeline_short.py (the synthetic-only minimal runner)
-    so the full pipeline gets the same truth-check plot.
-    """
-    import matplotlib.pyplot as plt
-
-    theta = np.asarray(theta_true_realization, dtype=float)
-    if theta.ndim == 2:
-        theta = theta[np.newaxis, ...]  # -> (1, n_pos, n_layer)
-    if theta.ndim != 3:
-        raise ValueError(
-            f"[plot_truth_tdr] Unexpected theta_true_realization shape "
-            f"{theta.shape}; expected (n_time, n_pos, n_layer) or (n_pos, n_layer)."
-        )
-    n_time, n_pos, n_layer = theta.shape
-
-    # 1. Get centers for the explicitly defined bounded layers
-    z_centers = _layer_centers(depths0)
-
-    # 2. If there is an infinite half-space (n_layer > len(depths0)), append a representative depth
-    if n_layer > len(z_centers):
-        last_bottom = depths0[-1] if len(depths0) > 0 else 0.0
-        # Extrapolate the final layer's plotting depth (e.g., 0.4m below the last boundary)
-        half_space_center = last_bottom + 0.4
-        z = np.concatenate((z_centers, [half_space_center]))[:n_layer]
-    else:
-        z = z_centers[:n_layer]
-
-    fig, axes = plt.subplots(1, n_time, figsize=(4.5 * n_time, 5),
-                              squeeze=False, sharey=True)
-    axes = axes[0]
-
-    for t in range(n_time):
-        ax = axes[t]
-        theta_t = theta[t]  # (n_pos, n_layer)
-        for p in range(n_pos):
-            ax.plot(theta_t[p], z, "o-", lw=1, alpha=0.30, color="tab:blue")
-        ax.plot(theta_t.mean(axis=0), z, "o-", lw=2.5, color="tab:red",
-                 label="Mean across positions")
-        ax.invert_yaxis()
-        ax.set_xlabel(r"$\theta$ (TDR truth) [m$^3$/m$^3$]")
-        ax.set_title(f"t = {t}" if n_time > 1 else "TDR ground truth")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=8)
-    axes[0].set_ylabel("Depth [m]")
-
-    fig.suptitle("Synthetic TDR Ground Truth — Volumetric Water Content Profiles",
-                  fontsize=12)
-    fig.tight_layout()
-    fig_path = os.path.join(output_dir, fname)
-    fig.savefig(fig_path, dpi=150)
-    plt.close(fig)
-    print(f"[PLOT] TDR ground-truth profiles     -> {fig_path}")
-    return fig_path
 
 
 # ===========================================================================
@@ -1487,9 +1499,32 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          train_val_split_method: str | None = None,
          ws_localized_bandwidth: float | None = None,
          ws_localized_bandwidth_sweep: list[float] | None = None,
-         em_footprint_diagnostic: bool = False):
+         em_footprint_diagnostic: bool = False,
+         quick: bool = False,
+         quick_epochs: int | None = None,
+         stage: str = "full",
+         calibration: str | None = None):
     """
     Run the full EA-EM pipeline.
+
+    ``stage`` : ``"full"`` (default, one run does everything), ``"calibrate"`` or
+    ``"map"`` (real data only; see stage_split.py). ``calibrate`` thins the EM
+    survey to the probe neighbourhoods, inverts the FULL ensemble, runs Steps
+    0-5 and writes ``stage_calibration.json`` (selected K + members + WS
+    parameters + localized bandwidth) into the run folder, then stops before
+    the map rendering. ``map`` reads that file (``calibration`` = file / run
+    folder, default: newest ``*_calibrate`` run of the scenario), inverts ONLY
+    the K selected members on the scenario's EM points (all, or grid-thinned),
+    runs Steps 2-6 and reports how far K and the WS parameters drifted from the
+    calibration. Own run folder suffix and cache file per stage.
+
+    ``quick`` : smoke-test preset (see quick_preset.py): ONE alpha and ONE
+    forward model out of the scenario's grid; with ``quick_epochs=k`` also
+    only k evenly spaced survey epochs (real data). Cuts e.g. 280 Step-1
+    tasks to 28 (12 with 3 epochs). Never touches the EM/TDR data itself,
+    writes to its own ``<seq>_<scenario>_quick`` folder and its own
+    ``*_quick*.pkl`` cache so a full-run cache is never overwritten.
+    The ensemble is shrunk, so the result is a smoke test, not a result.
 
     Parameters
     ----------
@@ -1569,7 +1604,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         Synthetic generation only (ignored when ``homogeneous`` is True).
         When True, the static XZ (depth) and XY (plan-view) initial-model
         gradients each span the full ``[theta_dry, theta_wet]`` range
-        independently (see ``0_generate_synthetic_data.generate_time_lapse_
+        independently (see ``data_synthetic.generate_time_lapse_
         dataset``), instead of the small fixed-amplitude default gradient.
         ``None`` (default) uses the scenario config's ``full_range_gradient``
         value (or False if unset).
@@ -1587,7 +1622,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         the deterministic linear XY ramp with a smooth, spatially-
         correlated RANDOM field (scattered wet/dry patches) instead of a
         single monotonic gradient direction -- see
-        ``0_generate_synthetic_data._generate_random_xy_field``. ``None``
+        ``data_synthetic._generate_random_xy_field``. ``None``
         (default) uses the scenario config's ``random_xy_field`` value (or
         False if unset).
     random_xy_n_blobs : int or None, optional
@@ -1649,7 +1684,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # cache live -- see _cache_path_override below); each run gets its
         # own fresh, numbered subfolder inside it (see next_run_output_dir)
         # instead of writing directly into -- and overwriting -- it.
-        OUTPUT_DIR        = next_run_output_dir(cfg.output_dir, _scenario_name)
+        OUTPUT_DIR        = next_run_output_dir(
+            cfg.output_dir,
+            _scenario_name + ("_quick" if quick else "") + stage_split.stage_label(stage))
         OUTPUT_MODEL_DIR  = os.path.join(OUTPUT_DIR, "output_model")
         os.makedirs(OUTPUT_MODEL_DIR, exist_ok=True)
         REALIZATION_INDEX = cfg.realization_index
@@ -1705,6 +1742,21 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # grid, same convention already used there for alpha/beta.
     GAMMA = PARAM_GRID["gamma"][0]
 
+    # --quick: one alpha + one forward model (after the --beta/--gamma
+    # overrides so those still apply). PARAM_GRID feeds the cache
+    # fingerprint, so a quick run can never reuse a full-grid cache.
+    QUICK_INFO = {}
+    if quick:
+        if quick_epochs is not None and data_source != "real":
+            raise ValueError("--quick-epochs applies to real-data runs only "
+                             "(synthetic epochs come from the generator).")
+        PARAM_GRID, QUICK_INFO = quick_preset.reduce_param_grid(PARAM_GRID)
+        print("[QUICK] Preset ON -- SMOKE TEST, the ensemble is deliberately shrunk:")
+        for _axis, _i in QUICK_INFO.items():
+            print(f"[QUICK]   {_axis}: {_i['n_full']} -> 1 (kept {_i['kept']})")
+        if not QUICK_INFO:
+            print("[QUICK]   (alpha / forwardModel already single-valued: nothing to reduce)")
+
     ECA_NOISE_LEVEL = getattr(cfg, "eca_noise_level", 0.0) if cfg is not None else 0.0
     TDR_NOISE_STD   = getattr(cfg, "tdr_noise_std",   0.01) if cfg is not None else 0.01
     DROP_COILS      = (
@@ -1724,6 +1776,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # (default, when the scenario doesn't set lab_p0) falls back to
     # EMmethod.DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0] for every horizon.
     LAB_P0 = getattr(cfg, "lab_p0", None) if cfg is not None else None
+
+    # Optional override of the Waxman-Smits optimizer bounds ({param: [lo, hi]},
+    # subset of a/m/sigma_w/sigma_s). None keeps EMmethod.WS_BOUNDS.
+    WS_BOUNDS_OVERRIDE = getattr(cfg, "ws_bounds", None) if cfg is not None else None
+
+    # Step 1 layer pinning (condition the free layers on pinned ones). None =
+    # every layer free (default). 'truth' source = ORACLE (synthetic only).
+    PIN_LAYERS = getattr(cfg, "pin_layers", None) if cfg is not None else None
+    PIN_SOURCE = getattr(cfg, "pin_source", "truth") if cfg is not None else "truth"
 
     # Homogeneous mode: disable spatial gradients in synthetic generation.
     # CLI flag (if given) overrides scenario config.
@@ -1778,6 +1839,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     WS_XY_N_BLOBS = getattr(cfg, "ws_xy_n_blobs", 6) if cfg is not None else 6
     WS_XY_CORRELATION_M = getattr(cfg, "ws_xy_correlation_m", None) if cfg is not None else None
     WS_XY_SEED = getattr(cfg, "ws_xy_seed", None) if cfg is not None else None
+    WS_LAYER_PARAMS = getattr(cfg, "ws_layer_params", None) if cfg is not None else None
 
     # TDR<->EM spatial-matching quality gate thresholds (report item 3.1).
     # largest-group-fraction = (probes sharing the single most-shared EM
@@ -1800,6 +1862,36 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     SPATIAL_MATCH_TOLERANCE_M = (
         getattr(cfg, "spatial_match_tolerance_m", 2.0) if cfg is not None else 2.0
     )
+    # Optional thinning of the real EM surveys (em_subsample.py); None = off.
+    EM_SUBSAMPLE = getattr(cfg, "em_subsample", None) if cfg is not None else None
+
+    # --stage calibrate / map (see stage_split.py)
+    STAGE = stage or "full"
+    CALIBRATION = None
+    CALIBRATION_PATH = None
+    if STAGE != "full":
+        if data_source != "real":
+            raise ValueError("--stage calibrate/map is for real-data runs only "
+                             "(there is no probe<->EM thinning to split on synthetic data).")
+        print(f"[STAGE] --stage {STAGE}")
+    if STAGE == "calibrate":
+        EM_SUBSAMPLE, _sub_replaced = stage_split.calibrate_em_subsample(EM_SUBSAMPLE)
+        print(f"[STAGE] calibrate: EM points restricted to the probe neighbourhoods "
+              f"({EM_SUBSAMPLE})" + (" -- replaces the scenario's em_subsample." if _sub_replaced else "."))
+        print("[STAGE] calibrate: FULL ensemble; Steps 0-5, then stage_calibration.json; "
+              "no map rendering (Step 6).")
+    elif STAGE == "map":
+        CALIBRATION_PATH = stage_split.resolve_calibration_path(
+            calibration, cfg.output_dir if cfg is not None else None)
+        CALIBRATION = stage_split.read_calibration(CALIBRATION_PATH)
+        print(f"[STAGE] map: calibration '{CALIBRATION_PATH}' (scenario "
+              f"'{CALIBRATION.get('scenario')}', created {CALIBRATION.get('created')}): "
+              f"K={CALIBRATION['selected_K']} member(s) of {CALIBRATION.get('n_ensemble_total')} "
+              f"will be inverted.")
+        if EM_SUBSAMPLE and str(EM_SUBSAMPLE.get("mode", "off")).lower() == "probes":
+            print("[STAGE][WARN] map stage with em_subsample.mode='probes': only the probe "
+                  "neighbourhoods will be mapped. Use a scenario with no em_subsample (all "
+                  "points) or mode 'grid' for the maps.")
 
     # Train/validation split (see train_val_split.py and Loiseau et al.,
     # 2026 Secs. 2.3/2.6). "off" preserves the legacy behaviour of fitting
@@ -1835,6 +1927,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # early. See write_run_marker() for why this -- not the run_log CSV --
     # is what lives in the folder itself.
     write_run_marker(OUTPUT_DIR, reporter.run_id, reporter.report_path)
+    reporter.set_manifest_extra(
+        stage=STAGE,
+        ws_start_warnings=check_ws_start_values(cfg) if cfg is not None else [],
+        seeds={"inversion_seed": DEFAULT_INVERSION_SEED,
+               "random_xy_seed": getattr(cfg, "random_xy_seed", None),
+               "ws_xy_seed": getattr(cfg, "ws_xy_seed", None)},
+    )
     reporter.args_table("Runtime Arguments", {
         "mode":               mode.upper(),
         "scenario":           _scenario_name,
@@ -1856,9 +1955,20 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         "window_m":           getattr(cfg, "window_m", 1.0) if cfg is not None else 1.0,
         "alpha_range_log":    str(getattr(cfg, "alpha_range_log", None) if cfg is not None else None),
         "ws_fixed_params":    str(WS_FIXED_PARAMS) if WS_FIXED_PARAMS else "(none — a/m/sigma_w/sigma_s all free)",
+        "ws_bounds":          str(WS_BOUNDS_OVERRIDE) if WS_BOUNDS_OVERRIDE else "(defaults — EMmethod.WS_BOUNDS)",
         "lab_p0":             str(LAB_P0) if LAB_P0 else "(none — using DEFAULT_WS_P0 = [1.5, 1.8, 50.0, 5.0])",
         "homogeneous":        HOMOGENEOUS,
         "spatial_match_tolerance_m (real time-lapse)": SPATIAL_MATCH_TOLERANCE_M,
+        "em_subsample (real)": str(EM_SUBSAMPLE) if EM_SUBSAMPLE else "(off)",
+        "quick preset": (
+            f"ON -- SMOKE TEST (alpha/forwardModel reduced: {QUICK_INFO or 'n/a'}; "
+            f"epochs: {quick_epochs if quick_epochs else 'all'})"
+            if quick else "(off)"
+        ),
+        "stage": (
+            STAGE if STAGE == "full" else
+            f"{STAGE}" + (f" (calibration: {CALIBRATION_PATH})" if CALIBRATION_PATH else "")
+        ),
     })
 
     try:
@@ -1897,6 +2007,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 filter_percentile_qmax=FILTER_PERCENTILE_QMAX,
                 rolling_mean_window=ROLLING_MEAN_WINDOW,
                 drop_coils=DROP_COILS,
+                em_subsample_cfg=EM_SUBSAMPLE,
+                quick=quick, quick_epochs=quick_epochs,
             )
 
             # -----------------------------------------------------------------------
@@ -2077,8 +2189,18 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 ws_xy_n_blobs=WS_XY_N_BLOBS,
                 ws_xy_correlation_m=WS_XY_CORRELATION_M,
                 ws_xy_seed=WS_XY_SEED,
+                ws_layer_params=WS_LAYER_PARAMS,
             )
             step0.plot_synthetic_results(output_dir=OUTPUT_DIR)
+            # Truth vs initial WS parameters per horizon (never aborts the run).
+            try:
+                _ws_fig = ws_distribution.plot_ws_truth_vs_initial(
+                    OUTPUT_DIR, lab_p0=LAB_P0, ws_fixed_params=WS_FIXED_PARAMS,
+                    ws_truth_params=synthetic_geometry.get("ws_truth_params"),
+                )
+                reporter.log(f"[STEP 0] WS truth vs initial per horizon -> {_ws_fig}")
+            except Exception as _exc:  # plotting only
+                reporter.log(f"[STEP 0][WARN] ws_distribution plot failed: {_exc!r}")
             if WS_XY_VARIATION:
                 _ws_xy_map_path = os.path.join(OUTPUT_DIR, "synthetic_ws_truth_xy_maps.png")
                 reporter.log(
@@ -2425,6 +2547,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         else:
             cache_filename = "ensemble_cache_timelapse.pkl" if timelapse else "ensemble_cache_single.pkl"
             cache_path = os.path.join(OUTPUT_DIR, cache_filename)
+        if quick:
+            # Own cache file: never clobber (or be mistaken for) the full-run cache.
+            cache_path = quick_preset.quick_cache_path(cache_path, quick_epochs)
+            print(f"[QUICK] Using separate cache file: '{cache_path}'")
+        if STAGE != "full":
+            cache_path = stage_split.stage_cache_path(cache_path, STAGE)
+            print(f"[STAGE] Using separate cache file: '{cache_path}'")
 
         # Content fingerprint of everything that determines Step 1's output.
         # Guards against a stale cache_tag: if depths0/fixed_depths/param_grid/
@@ -2441,7 +2570,28 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             DEPTHS0, FIXED_DEPTHS, PARAM_GRID, COND_RANGES,
             sorted(PARAM_GRID.get("gamma", [GAMMA])), DROP_COILS,
             spatial_match_tolerance_m=_fingerprint_tolerance,
+            pin_layers=PIN_LAYERS, pin_source=PIN_SOURCE,
+            em_subsample=EM_SUBSAMPLE if data_source == "real" else None,
+            epochs=(
+                REAL_DATA_DIAG["epoch_indices"]
+                if (quick and quick_epochs is not None and data_source == "real"
+                    and REAL_DATA_DIAG is not None)
+                else None
+            ),
+            members=(stage_split.record_member_keys(CALIBRATION) if CALIBRATION else None),
         )
+
+        if STAGE == "map":
+            # Refuse an incompatible calibration BEFORE any inversion (or cache reuse).
+            _errs, _warns = stage_split.check_compatibility(
+                CALIBRATION, depths0=DEPTHS0, cond_ranges=COND_RANGES,
+                em_files=(list(EM_FNAMES) if timelapse else [EM_FNAMES]),
+                scenario=_scenario_name)
+            for _w in _warns:
+                print(f"[STAGE][WARN] {_w}")
+            if _errs:
+                raise ValueError("--stage map: calibration is incompatible with this run: "
+                                 + " | ".join(_errs))
 
         # Real-data time-lapse spatial reference grid coordinates (union
         # across all survey epochs -- see geometry_utils.match_epochs_to_
@@ -2545,13 +2695,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # dropped coils flagged in red rather than hidden.
             if timelapse:
                 for t_idx, fname in enumerate(EM_FNAMES):
-                    EMmethod.plot_raw_apparent_conductivity(
+                    pre_inversion.plot_raw_apparent_conductivity(
                         _prefilter_path(fname) or fname,
                         os.path.join(OUTPUT_DIR, f"t{t_idx:02d}"),
                         em_unit=EM_UNIT, drop_coils=DROP_COILS,
                     )
             else:
-                EMmethod.plot_raw_apparent_conductivity(
+                pre_inversion.plot_raw_apparent_conductivity(
                     _prefilter_path(EM_FNAMES) or EM_FNAMES, OUTPUT_DIR,
                     em_unit=EM_UNIT, drop_coils=DROP_COILS,
                 )
@@ -2561,13 +2711,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
             if timelapse:
                 for t_idx, fname in enumerate(EM_FNAMES):
-                    EMmethod.plot_filtered_apparent_conductivity(
+                    pre_inversion.plot_filtered_apparent_conductivity(
                         fname, os.path.join(OUTPUT_DIR, f"t{t_idx:02d}"),
                         em_unit=EM_UNIT, drop_coils=DROP_COILS,
                         prefilter_fname=_prefilter_path(fname),
                     )
             else:
-                EMmethod.plot_filtered_apparent_conductivity(
+                pre_inversion.plot_filtered_apparent_conductivity(
                     EM_FNAMES, OUTPUT_DIR, em_unit=EM_UNIT,
                     drop_coils=DROP_COILS,
                     prefilter_fname=_prefilter_path(EM_FNAMES),
@@ -2603,8 +2753,43 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # FIX: explicitly build solver bounds from COND_RANGES instead of
             # letting EMagPy silently fall back to its hardcoded 2-100 mS/m
             # default (see _build_inversion_bnds() docstring above).
-            bnds_list = _build_inversion_bnds(DEPTHS0, fixed_depths_list, COND_RANGES)
+            bnds_list = _build_inversion_bnds(DEPTHS0, fixed_depths_list, COND_RANGES,
+                                              fixed_conds=PIN_LAYERS)
             print(f"[INFO] Inversion bnds (depths+conds, {len(bnds_list)} params): {bnds_list}")
+
+            # ---- Optional layer pinning (oracle: pinned EC = synthetic truth) ----
+            # Pinned layers keep a per-point EC (n_points, n_layers matrix passed
+            # to EMagPy setInit) and are excluded from the optimisation, so the
+            # free deeper layers are inverted conditioned on them. The starting-
+            # conductivity grid is collapsed over pinned layers (identical
+            # starts would only duplicate tasks).
+            _pin_truth_ec = None
+            if PIN_LAYERS is not None:
+                if data_source != "synthetic":
+                    raise ValueError("pin_layers with pin_source='truth' needs synthetic data "
+                                     "(there is no ground-truth EC for real data).")
+                _ec_truth_path = _resolve_npy_path("synthetic_time_lapse_ec.npy",
+                                                   OUTPUT_MODEL_DIR, OUTPUT_DIR)
+                if not os.path.exists(_ec_truth_path):
+                    raise FileNotFoundError(f"pin_layers needs {_ec_truth_path} (written by Step 0).")
+                _pin_truth_ec = np.load(_ec_truth_path)[REALIZATION_INDEX]
+                if _pin_truth_ec.ndim == 2:
+                    _pin_truth_ec = _pin_truth_ec[np.newaxis, ...]
+                _n_layers_pin = len(DEPTHS0) + 1
+                if _pin_truth_ec.shape[-1] != _n_layers_pin:
+                    raise ValueError(f"Truth EC has {_pin_truth_ec.shape[-1]} layers, "
+                                     f"expected {_n_layers_pin}.")
+                _pinned_idx = [i for i, f in enumerate(PIN_LAYERS) if f]
+                _seen, _dedup = set(), []
+                for _cs in cond_sets:
+                    _cs = list(_cs)
+                    for _i in _pinned_idx:
+                        _cs[_i] = float(COND_RANGES[_i][0])
+                    if tuple(_cs) not in _seen:
+                        _seen.add(tuple(_cs)); _dedup.append(_cs)
+                print(f"[INFO] Layer pinning (ORACLE truth EC) on layers {_pinned_idx}: "
+                      f"{len(cond_sets)} -> {len(_dedup)} starting-conductivity combinations.")
+                cond_sets = _dedup
 
             combo_list = []
             for alpha, beta, gamma_val, method, f_model in combinations:
@@ -2612,6 +2797,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     combo_list.append((alpha, beta, gamma_val, method, f_model, list(conds0)))
 
             files_to_process = EM_FNAMES if timelapse else [EM_FNAMES]
+            if STAGE == "map":
+                _n_grid = len(combo_list)
+                combo_list, _missing = stage_split.select_members(combo_list, CALIBRATION)
+                if _missing:
+                    raise ValueError(
+                        f"--stage map: {len(_missing)} calibrated member(s) are not in this "
+                        f"scenario's parameter grid (grid/scenario changed since the "
+                        f"calibration?): {_missing[:3]}{' ...' if len(_missing) > 3 else ''}")
+                print(f"[STAGE] map: ensemble cut from {_n_grid} to {len(combo_list)} "
+                      f"member(s) (the K={CALIBRATION['selected_K']} selected by the calibration).")
             tasks = []
             task_meta = {}          # task_idx -> dict describing the combo, for failure reporting
             global_task_idx = 0
@@ -2624,6 +2819,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                         "em_unit": EM_UNIT, "drop_coils": DROP_COILS,
                         "bnds": bnds_list,
                     }
+                    if _pin_truth_ec is not None:
+                        _truth_t = _pin_truth_ec[min(t_idx, _pin_truth_ec.shape[0] - 1)]
+                        _mat = np.tile(np.asarray(conds0, dtype=float), (_truth_t.shape[0], 1))
+                        _mat[:, _pinned_idx] = _truth_t[:, _pinned_idx]
+                        invert_kwargs["fixed_conds"] = list(PIN_LAYERS)
+                        invert_kwargs["conds0_matrix"] = _mat
                     tasks.append((global_task_idx, file_path, DEPTHS0, conds0,
                                    fixed_depths_list, invert_kwargs))
                     task_meta[global_task_idx] = {
@@ -2635,6 +2836,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     }
                     global_task_idx += 1
 
+            if quick:
+                print(f"[QUICK] {len(tasks)} Step-1 tasks "
+                      f"({len(combinations)} grid combo(s) x {len(cond_sets)} starting "
+                      f"combo(s) x {len(files_to_process)} epoch(s)).")
             print(f"[INFO] Dispatched {len(tasks)} tasks to parallel pool...")
 
             unordered_results = []
@@ -2781,7 +2986,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # cover a given reference point. No epoch's own points are ever
             # reordered, subsetted, or discarded; NaN-safe downstream
             # handling (Steps 2-5, see em_methodology.py /
-            # 4_run_select_assess.py) treats an unmatched cell as "no data"
+            # step4_select.py) treats an unmatched cell as "no data"
             # rather than silently pairing it with an unrelated location.
             #
             # FIX: previously synthetic data used a SEPARATE, hand-rolled
@@ -2802,7 +3007,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 _reference_grid_tolerance = (
                     SPATIAL_MATCH_TOLERANCE_M if data_source == "real"
                     # Synthetic coordinates are the same float array written
-                    # to every epoch's CSV (see 0_generate_synthetic_data.py
+                    # to every epoch's CSV (see data_synthetic.py
                     # export_eca_surveys_to_csv) -- only float round-trip
                     # noise, not real positional uncertainty, needs covering.
                     else 1e-6
@@ -2986,6 +3191,27 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             n_time = 1
 
         # -----------------------------------------------------------------------
+        # PERSIST THE RAW ENSEMBLE MEMBERS (to-do: surface-only / pinned-layer
+        # analysis). Until now the members only lived in the real-data pickle
+        # cache; synthetic runs kept just the averaged ec_optimal.npy. Saved as
+        # a new file only -- no existing output or result changes.
+        # -----------------------------------------------------------------------
+        try:
+            _mem_dir = OUTPUT_MODEL_DIR
+            os.makedirs(_mem_dir, exist_ok=True)
+            np.savez_compressed(
+                os.path.join(_mem_dir, "ensemble_members.npz"),
+                models_clean=np.asarray(models_clean),
+                depths_clean=np.asarray(depths_clean),
+                param_metadata_json=np.array(json.dumps(
+                    [{k: (v.tolist() if hasattr(v, "tolist") else v)
+                      for k, v in dict(m).items()} for m in param_metadata],
+                    default=str)),
+            )
+        except Exception as _e:  # never let a diagnostic dump break a run
+            print(f"[ENSEMBLE][WARN] could not save ensemble_members.npz: {_e}")
+
+        # -----------------------------------------------------------------------
         # MCMC POSTERIOR UNCERTAINTY  (FIX: "use the full MCMC, not just a
         # single selected model")
         #   emagpy's MCMC-family methods (MCMC/ROPE/DREAM/SCEUA) sample a
@@ -3153,90 +3379,24 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.metric("EM_SENS — layer weights (McNeill)", np.round(EM_LAYER_WEIGHTS, 4).tolist())
 
         # -----------------------------------------------------------------------
-        # STEP 1b — REAL-DATA EM DIAGNOSTICS
-        #   Common-point footprint + ECa plan-view maps.
-        #   Only runs in real-data mode; wrapped in try/except so a plot
-        #   failure never aborts the pipeline.
+        # STEPS 1b-1d — REAL-DATA PRE-INVERSION DIAGNOSTICS (steps/step1_diagnostics.py)
+        #   EM footprint/ECa maps, raw TDR QC, initial model + initial EC/WS.
+        #   Plot failures are warnings; they never abort the pipeline.
         # -----------------------------------------------------------------------
         if data_source == "real":
-            reporter.step("Step 1b", "Real-data EM diagnostic plots")
-            reporter.log(" [PIPELINE] STEP 1b: REAL-DATA EM DIAGNOSTICS")
-            reporter.log(f"            Common points (min_pts) : {num_measured_points}")
-            reporter.log(f"            Raw EM files            : {len(RAW_EM_FNAMES)}")
-            try:
-                _diag_saved = pediag_real.plot_real_em_diagnostics(
-                    raw_em_files=RAW_EM_FNAMES,
-                    min_pts=num_measured_points,
-                    probe_table=probe_table,
-                    output_dir=OUTPUT_DIR,
-                    em_unit=EM_UNIT,
-                )
-                reporter.log(f"[STEP 1b] {len(_diag_saved)} diagnostic figure(s) written "
-                             f"to '{os.path.join(OUTPUT_DIR, 'diagnostics')}'")
-                reporter.metric("Real-data EM diagnostic figures", len(_diag_saved))
-            except Exception as _diag_exc:
-                reporter.log(f"[STEP 1b][WARN] Diagnostic plots failed (pipeline continues): "
-                             f"{type(_diag_exc).__name__}: {_diag_exc}")
-            reporter.end_step("Step 1b")
-
-        # -----------------------------------------------------------------------
-        # STEP 1c — REAL-DATA TDR IMPORT DIAGNOSTICS
-        #   Raw, unaligned/unaveraged per-station TDR time series + QC flags
-        #   (NaN gaps, un-normalized >1.0 values, implausible VWC, stuck/
-        #   flat-lined sensor runs). Only runs in real-data mode; wrapped in
-        #   try/except so a plot failure never aborts the pipeline.
-        # -----------------------------------------------------------------------
-        if data_source == "real":
-            reporter.step("Step 1c", "Real-data TDR import diagnostic plots")
-            reporter.log(" [PIPELINE] STEP 1c: REAL-DATA TDR IMPORT DIAGNOSTICS")
-            try:
-                _tdr_diag_saved = ptdrdiag.plot_tdr_diagnostics(
-                    tdr_dir=tdr_dir,
-                    coord_file=coord_file,
-                    em_dates=EM_DATES,
-                    time_tolerance_days=getattr(cfg, "time_tolerance_days", 1.0),
-                    output_dir=OUTPUT_DIR,
-                )
-                reporter.log(f"[STEP 1c] {len(_tdr_diag_saved)} diagnostic file(s) written "
-                             f"to '{os.path.join(OUTPUT_DIR, 'diagnostics')}'")
-                reporter.metric("Real-data TDR diagnostic figures", len(_tdr_diag_saved))
-            except Exception as _tdr_diag_exc:
-                reporter.log(f"[STEP 1c][WARN] TDR diagnostic plots failed (pipeline continues): "
-                             f"{type(_tdr_diag_exc).__name__}: {_tdr_diag_exc}")
-            reporter.end_step("Step 1c")
-
-        # -----------------------------------------------------------------------
-        # STEP 1d — INITIAL MODEL DIAGNOSTICS (raw field inputs, pre-inversion)
-        #   Quick ECa (plan-view) and SWC (plan-view) scatter maps built
-        #   directly from the raw GEM-2 EM survey CSV and the raw TDR field
-        #   data — i.e. the "initial model" the rest of the pipeline starts
-        #   from, produced BEFORE any inversion or calibration step runs.
-        #   Only runs in real-data mode; wrapped in try/except so a plot
-        #   failure never aborts the pipeline.
-        # -----------------------------------------------------------------------
-        if data_source == "real":
-            reporter.step("Step 1d", "Initial model diagnostics (raw field inputs)")
-            reporter.log(" [PIPELINE] STEP 1d: INITIAL MODEL DIAGNOSTICS (raw field inputs)")
-            try:
-                _ini_model_paths = pim.plot_initial_model(
-                    em_dir=em_dir,
-                    tdr_dir=tdr_dir,
-                    coord_file=coord_file,
-                    output_dir=OUTPUT_DIR,
-                    em_unit=EM_UNIT,
-                    em_date_index=0,
-                )
-                reporter.log(
-                    "[STEP 1d] Initial-model plots written -> "
-                    f"ECa: {_ini_model_paths['eca_plot']}, "
-                    f"SWC: {_ini_model_paths['swc_plot']}, "
-                    f"combined: {_ini_model_paths['combined_plot']}"
-                )
-                reporter.metric("Initial model diagnostic figures", len(_ini_model_paths))
-            except Exception as _ini_exc:
-                reporter.log(f"[STEP 1d][WARN] Initial model plots failed (pipeline continues): "
-                             f"{type(_ini_exc).__name__}: {_ini_exc}")
-            reporter.end_step("Step 1d")
+            steps_step1.run_step1b_em_diagnostics(
+                reporter, raw_em_files=RAW_EM_FNAMES, min_pts=num_measured_points,
+                probe_table=probe_table, output_dir=OUTPUT_DIR, em_unit=EM_UNIT)
+            steps_step1.run_step1c_tdr_diagnostics(
+                reporter, tdr_dir=tdr_dir, coord_file=coord_file, em_dates=EM_DATES,
+                time_tolerance_days=getattr(cfg, "time_tolerance_days", 1.0),
+                output_dir=OUTPUT_DIR)
+            steps_step1.run_step1d_initial_model(
+                reporter, em_dir=em_dir, tdr_dir=tdr_dir, coord_file=coord_file,
+                output_dir=OUTPUT_DIR, em_unit=EM_UNIT, cond_ranges=COND_RANGES,
+                depths0=DEPTHS0, lab_p0=LAB_P0, ws_fixed_params=WS_FIXED_PARAMS,
+                ws_bounds=EMmethod.resolve_ws_bounds(WS_BOUNDS_OVERRIDE),
+                observations=observations_list, probe_table=probe_table)
 
         reporter.end_step("Step 0")
         reporter.step("Step 1", "Parallel multi-inversion ensemble generation")
@@ -3347,7 +3507,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         plot_depths = (depths_clean[:, 0]
                        if (timelapse and depths_clean is not None)
                        else depths_clean)
-        EMmethod.plot_step1_ensemble_single_file(
+        pre_inversion.plot_step1_ensemble_single_file(
             plot_models, DEPTHS0, OUTPUT_DIR,
             depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
             depths_ensemble=plot_depths,
@@ -3357,7 +3517,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # above) -- see plot_step1_ensemble_by_point docstring for why
         # this matters: the plot above can visually manufacture a shared
         # "conductive layer" that isn't actually shared across points.
-        EMmethod.plot_step1_ensemble_by_point(
+        pre_inversion.plot_step1_ensemble_by_point(
             plot_models, DEPTHS0, OUTPUT_DIR,
         )
 
@@ -3685,7 +3845,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # at NUM_POSITIONS points along x_transect/y_transect) -- it
             # was never a real TDR station location. Real station
             # positions/IDs (probe_table['utm_x'/'utm_y'/'station_name'],
-            # built at import time in 0_real_data_loader.py) are the
+            # built at import time in data_real.py) are the
             # correct thing to plot on water_content_xy_{scenario}.png's
             # probe markers, so swap them in here. This does NOT affect
             # PROBE_X_COORDS_LOCAL/PROBE_Y_COORDS_LOCAL above (used only
@@ -3701,7 +3861,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             probe_x_coords=PROBE_X_COORDS_LOCAL,
             probe_y_coords=PROBE_Y_COORDS_LOCAL,   # non-zero in 2D mode → XY distance auto-enabled
             probe_depths=PROBE_DEPTHS,        # <-- Z axis (unchanged)
-            probe_ids=PROBE_LABELS,           # sensor IDs -> plot_probe_matching / plot_calibration_density_* markers
+            # Real data without --probe-xyz: PROBE_LABELS was just replaced by the
+            # real station names (e.g. 20) while PROBE_X_COORDS_LOCAL is still the
+            # synthetic-style placeholder (NUM_POSITIONS x layers, e.g. 8), so the
+            # lengths differ and extract_sample_positions_from_survey raised
+            # ValueError. The placeholder results are replaced below by
+            # station_position_results (which carry the real IDs), so label them
+            # only when the lengths agree.
+            probe_ids=(PROBE_LABELS if len(PROBE_LABELS) == len(PROBE_X_COORDS_LOCAL) else None),  # sensor IDs -> plot_probe_matching / plot_calibration_density_* markers
             # Horizon routing uses EFFECTIVE_DEPTHS0 (== DEPTHS0 when fixed;
             # the ensemble-median FITTED interface depths otherwise -- see
             # "EFFECTIVE DEPTHS FOR TDR PROBE HORIZON ROUTING" above).
@@ -3849,7 +4016,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # (position x layer) is now expanded across all n_time epochs,
             # mirroring how real TDR data is aggregated across every
             # matched EM survey date in
-            # 0_real_data_loader.prepare_real_dataset (which gathers ALL
+            # data_real.prepare_real_dataset (which gathers ALL
             # historical readings per probe rather than one snapshot).
             n_probes_base       = len(sample_positions)
             sample_positions    = [pos for pos in sample_positions for _ in range(n_time)]
@@ -3880,7 +4047,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # was built from a synthetic placement, not real station
             # coordinates), and instead of treating
             # `obs['probe_index']` — the station's plain enumeration index
-            # (0..n_stations-1) assigned by 0_real_data_loader.py — as if
+            # (0..n_stations-1) assigned by data_real.py — as if
             # it were already a spatial index into the
             # `num_measured_points` axis of `models_clean`.
             #
@@ -3905,7 +4072,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 probe_y_coords=probe_table['utm_y'].tolist(),
                 probe_depths=None, depths0=None, window_m=WINDOW_M,
                 # Real TDR station IDs (the logger 'Unit' column, captured
-                # at import time in 0_real_data_loader.py) -> labels the
+                # at import time in data_real.py) -> labels the
                 # probe markers on probe_em_matching_real_stations.png,
                 # calibration_density_hard_real_stations.png, and
                 # calibration_density_kernel.png (via CALIB_POSITION_RESULTS
@@ -4185,6 +4352,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             lab_p0=LAB_P0,
             theta_obs_std=_theta_obs_std_step2,
             sensor_ids=sample_sensor_ids,
+            ws_bounds=WS_BOUNDS_OVERRIDE,
         )
 
         # ------------------------------------------------------------------
@@ -4259,6 +4427,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         step2.plot_ws_parameter_histograms(
             fits=fits_step2, best_fit=fits_step2[0], depths0=DEPTHS0, lab_p0=LAB_P0,
             output_path=os.path.join(OUTPUT_DIR, "ws_parameter_histograms.png"),
+            ws_bounds=WS_BOUNDS_OVERRIDE,
         )
 
         # ------------------------------------------------------------------
@@ -4282,6 +4451,19 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             WS_LOCALIZED_BANDWIDTH = ws_localized_bandwidth
         if ws_localized_bandwidth_sweep is not None:
             WS_LOCALIZED_BANDWIDTH_SWEEP = list(ws_localized_bandwidth_sweep)
+        if STAGE == "map":
+            # The leave-one-probe-out bandwidth CV only reads probe-matched points, so it
+            # belongs to the calibrate stage; the map run reuses the bandwidth it chose
+            # (an explicit --ws-localized-bandwidth still wins).
+            if WS_LOCALIZED_BANDWIDTH_SWEEP is not None:
+                reporter.log("[STAGE] map: ws_localized_bandwidth_sweep skipped -- the bandwidth "
+                             "is taken from the calibration run.")
+            WS_LOCALIZED_BANDWIDTH_SWEEP = None
+            if ws_localized_bandwidth is None and CALIBRATION.get("localized_bandwidth") is not None:
+                WS_LOCALIZED_BANDWIDTH = CALIBRATION["localized_bandwidth"]
+                reporter.log(f"[STAGE] map: ws_localized_bandwidth = {WS_LOCALIZED_BANDWIDTH:g} "
+                             f"(from the calibration"
+                             f"{', chosen there by the LOO-CV sweep' if CALIBRATION.get('bandwidth_from_sweep') else ''}).")
         _localized_y = y_transect if (mode == "2d" and utm_y is not None) else None
         _bandwidth_from_sweep = False
 
@@ -4328,6 +4510,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     lab_p0=LAB_P0,
                     fixed_params=WS_FIXED_PARAMS,
                     theta_obs_std=_theta_obs_std_step2,
+                    ws_bounds=WS_BOUNDS_OVERRIDE,
                 )
                 _sweep_rows = [
                     [
@@ -4394,6 +4577,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                     theta_obs_std=_theta_obs_std_step2,
                     global_fit=fits_step2[0],
                     sensor_ids=sample_sensor_ids,
+                    ws_bounds=WS_BOUNDS_OVERRIDE,
                 )
                 reporter.log(
                     f"[STEP 2 LOCALIZED] Diagnostic complete -> "
@@ -4466,102 +4650,32 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # -----------------------------------------------------------------------
         reporter.end_step("Step 2")
 
-        reporter.step("Step 3", "RMSE-weighted ranking-averaging engine")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 3: RMSE-WEIGHTED RANKING-AVERAGING ENGINE")
-        reporter.log("=" * 80)
+        averaged_models, ranking = steps_step34.run_step3_average(
+            reporter, models_clean=models_clean, fits_step2=fits_step2, depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR, timelapse=timelapse)
 
-        averaged_models, ranking = step3.run_average(
-            models=models_clean, fits_step2=fits_step2,
-            depths0=DEPTHS0, output_dir=OUTPUT_DIR,
-        )
-
-        # ------------------------------------------------------------------
-        # Report Step 3 averaging details
-        # ------------------------------------------------------------------
-        _ranked_rmse = [fits_step2[i].rmse for i in ranking]
-        reporter.log(
-            f"[STEP 3] Ranked {len(ranking)} ensemble members by RMSE (ascending)."
-        )
-        reporter.log(
-            f"[STEP 3] Best  member  : index {ranking[0]},  RMSE = {_ranked_rmse[0]:.5f} m³/m³"
-        )
-        reporter.log(
-            f"[STEP 3] Worst member  : index {ranking[-1]}, RMSE = {_ranked_rmse[-1]:.5f} m³/m³"
-        )
-        reporter.log(
-            f"[STEP 3] Cumulative averaged models produced: {len(averaged_models)} "
-            f"(one averaged stack per K from 1 to {len(averaged_models)})"
-        )
-        if timelapse:
-            _avg_shape = averaged_models[0].shape
-            reporter.log(
-                f"[STEP 3] Each averaged_model shape: {_avg_shape}  →  "
-                f"(n_time={_avg_shape[0]}, n_measured_points={_avg_shape[1]}, n_layers={_avg_shape[2]})"
-            )
-        else:
-            _avg_shape = averaged_models[0].shape
-            reporter.log(
-                f"[STEP 3] Each averaged_model shape: {_avg_shape}  →  "
-                f"(n_measured_points={_avg_shape[0]}, n_layers={_avg_shape[1]})"
-            )
+        # Persist the Step 2/3 member ranking + per-member TDR misfit next to
+        # ensemble_members.npz (needed to re-select stacks offline).
+        try:
+            np.save(os.path.join(OUTPUT_MODEL_DIR, "member_ranking.npy"), np.asarray(ranking))
+            np.save(os.path.join(OUTPUT_MODEL_DIR, "member_rmse.npy"),
+                    np.array([f.rmse for f in fits_step2], dtype=float))
+        except Exception as _e:
+            print(f"[ENSEMBLE][WARN] could not save member ranking/rmse: {_e}")
 
         # -----------------------------------------------------------------------
         # STEP 4 — RECALIBRATE PETROPHYSICAL RELATIONSHIPS
         # -----------------------------------------------------------------------
         reporter.end_step("Step 3")
 
-        reporter.step("Step 4", "Recalibrate petrophysical relationships")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 4: RECALIBRATE PETROPHYSICAL RELATIONSHIPS")
-        reporter.log("=" * 80)
-
-        fits_step4 = EMmethod.recalibrate_petrophysical_relationship(
-            averaged_models=averaged_models, sample_positions=sample_positions,
-            sample_times=sample_times, theta_obs=theta_obs,
-            depths0=DEPTHS0, probe_layer_indices=probe_layer_indices,
-            depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
-            fixed_params=WS_FIXED_PARAMS,
+        fits_step4, _rmse4_all = steps_step34.run_step4_recalibrate(
+            reporter, averaged_models=averaged_models, sample_positions=sample_positions,
+            sample_times=sample_times, theta_obs=theta_obs, depths0=DEPTHS0,
+            probe_layer_indices=probe_layer_indices, fixed_depths=FIXED_DEPTHS,
+            ws_fixed_params=WS_FIXED_PARAMS,
             probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
-            lab_p0=LAB_P0,
-            theta_obs_std=_theta_obs_std_step2,  # same resolved value used in Step 2, see fix note there
-        )
-
-        # ------------------------------------------------------------------
-        # Report Step 4 recalibration details
-        # ------------------------------------------------------------------
-        _n_fits4   = len(fits_step4)
-        _rmse4_all = [f.rmse for f in fits_step4]
-        reporter.log(
-            f"[STEP 4] Recalibrated {_n_fits4} Waxman-Smits fits "
-            f"(one per cumulative averaged model K=1…{_n_fits4})."
-        )
-        reporter.log(
-            f"[STEP 4] RMSE across K — mean: {np.nanmean(_rmse4_all):.5f}  "
-            f"std: {np.nanstd(_rmse4_all):.5f}  "
-            f"min: {np.nanmin(_rmse4_all):.5f} (best K)  "
-            f"max: {np.nanmax(_rmse4_all):.5f}  [m³/m³]"
-        )
-        _best4 = fits_step4[int(np.nanargmin(_rmse4_all))]
-        _hz4_rows: dict[str, str] = {}
-        for _hz in _best4.horizon_fits:
-            if _hz.is_calibrated:
-                _hz4_rows[f"Hz {_hz.horizon} — a / m / σ_w / σ_s / RMSE"] = (
-                    f"{_hz.a:.4f} / {_hz.m:.4f} / "
-                    f"{_hz.sigma_w:.2f} mS/m / {_hz.sigma_s:.2f} mS/m / "
-                    f"{_hz.rmse:.5f} m³/m³"
-                )
-            else:
-                _hz4_rows[f"Hz {_hz.horizon} — a / m / σ_w / σ_s / RMSE"] = (
-                    f"UNCALIBRATED — no TDR probe in this horizon; showing prior "
-                    f"p0 only: {_hz.a:.4f} / {_hz.m:.4f} / "
-                    f"{_hz.sigma_w:.2f} mS/m / {_hz.sigma_s:.2f} mS/m / RMSE=N/A"
-                )
-        reporter.args_table(
-            f"Step 4 — Best recalibrated fit (K={int(np.nanargmin(_rmse4_all))+1}, "
-            f"RMSE={np.nanmin(_rmse4_all):.5f} m³/m³)",
-            _hz4_rows,
-        )
+            lab_p0=LAB_P0, theta_obs_std=_theta_obs_std_step2,  # same value as Step 2
+            ws_bounds_override=WS_BOUNDS_OVERRIDE)
 
         # -----------------------------------------------------------------------
         # STEP 5 — CONVERGENCE SELECTION & RELIABILITY MAPPING
@@ -4590,122 +4704,65 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   McNeill-weighted comparison alongside the existing hard-routed
         #   (nearest-layer) one.
         # -----------------------------------------------------------------------
-        if em_footprint_diagnostic:
-            reporter.step("Step 5c", "EM footprint discrepancy (McNeill depth weighting)")
-
-            # theta_calc is ALWAYS (n_time, num_measured_points, num_layers) --
-            # SelectionOutput guarantees this (4_run_select_assess.py
-            # normalises `if theta_calc.ndim == 2: theta_calc = theta_calc[np.newaxis, ...]`
-            # right before returning), so t_idx = 0 covers the single-time
-            # case directly -- no separate timelapse-conditional 2-D branch.
-            _footprint_theta_calc = selected_output.theta_calc
-            _eff_theta = emsens.effective_theta(_footprint_theta_calc, EM_LAYER_WEIGHTS)
-            # _eff_theta shape: (n_time, num_measured_points) -- one depth-weighted
-            # "what the coil actually saw" value per position per time step.
-
-            _footprint_discrepancies = []
-            for _fp_i, (_fp_pos, _fp_li, _fp_obs) in enumerate(
-                zip(sample_positions, probe_layer_indices, theta_obs)
-            ):
-                _fp_t_idx = sample_times[_fp_i] if timelapse else 0
-                _fp_hard_routed = _footprint_theta_calc[_fp_t_idx, _fp_pos, _fp_li]
-                _fp_weighted = _eff_theta[_fp_t_idx, _fp_pos]
-                _footprint_discrepancies.append({
-                    "probe": _fp_i, "pos": int(_fp_pos), "obs": _fp_obs,
-                    # 'horizon' -- the probe's own routed layer index, same
-                    # as used for _fp_hard_routed above -- carried through
-                    # so plot_footprint_spatial_discrepancy_xz can place
-                    # this record on the depth axis without re-deriving it.
-                    "horizon": int(_fp_li),
-                    "hard_routed": _fp_hard_routed, "weighted": _fp_weighted,
-                    "hard_routed_err": _fp_hard_routed - _fp_obs,
-                    "weighted_err": _fp_weighted - _fp_obs,
-                })
-
-            _hr_rmse = np.sqrt(np.nanmean([d["hard_routed_err"] ** 2 for d in _footprint_discrepancies]))
-            _w_rmse = np.sqrt(np.nanmean([d["weighted_err"] ** 2 for d in _footprint_discrepancies]))
+        # ------------------------------------------------------------------
+        # --stage hand-over (see stage_split.py)
+        # ------------------------------------------------------------------
+        if STAGE in ("calibrate", "map"):
+            _ws_now = stage_split.ws_rows_from_fit(fits_step4[selected_output.K - 1].horizon_fits)
+        if STAGE == "calibrate":
+            _calib_record = stage_split.build_calibration_record(
+                scenario=_scenario_name, run_id=reporter.run_id, output_dir=OUTPUT_DIR,
+                ranking=ranking, param_metadata=param_metadata,
+                rmse_by_member=[f.rmse for f in fits_step2],
+                selected_K=selected_output.K, selected_rmse=selected_output.rmse,
+                ws_by_horizon=_ws_now,
+                localized_bandwidth=WS_LOCALIZED_BANDWIDTH,
+                bandwidth_from_sweep=_bandwidth_from_sweep,
+                depths0=DEPTHS0, cond_ranges=COND_RANGES,
+                em_files=(list(EM_FNAMES) if timelapse else [EM_FNAMES]),
+                em_subsample=EM_SUBSAMPLE, quick=quick, n_probe_obs=len(theta_obs),
+            )
+            _calib_path = stage_split.write_calibration(OUTPUT_DIR, _calib_record)
             reporter.log(
-                f"[STEP 5c] RMSE vs TDR — hard-routed (nearest layer): {_hr_rmse:.5f} m³/m³  "
-                f"|  depth-weighted (McNeill {_COIL_ORIENTATION if data_source == 'real' else 'multi-coil avg'}): "
-                f"{_w_rmse:.5f} m³/m³"
-            )
-            reporter.metric("Footprint RMSE — hard-routed layer", f"{_hr_rmse:.5f} m³/m³")
-            reporter.metric("Footprint RMSE — McNeill-weighted", f"{_w_rmse:.5f} m³/m³")
+                f"[STAGE] calibrate: wrote '{_calib_path}' -- K={selected_output.K} of "
+                f"{len(param_metadata)} member(s), RMSE={selected_output.rmse:.5f} m3/m3, "
+                f"localized bandwidth={WS_LOCALIZED_BANDWIDTH!r}. Next: "
+                f"--stage map --calibration '{OUTPUT_DIR}'")
+            reporter.args_table("Stage calibrate — members handed to the map stage", {
+                f"rank {m['rank']}": (f"alpha={m['alpha']:.4g}  {m['forwardModel']}  {m['method']}  "
+                                      f"start={m['conds0']}  RMSE={m['rmse']:.5f}")
+                for m in _calib_record["members"]
+            })
+        elif STAGE == "map":
+            _drift = stage_split.drift_report(CALIBRATION, selected_output.K, _ws_now)
             reporter.table(
-                "Step 5c — EM footprint discrepancy (per probe)",
-                ["Probe #", "TDR obs [m³/m³]", "Hard-routed θ", "Weighted θ",
-                 "Hard-routed err", "Weighted err"],
-                [
-                    [d["probe"], f"{d['obs']:.4f}", f"{d['hard_routed']:.4f}", f"{d['weighted']:.4f}",
-                     f"{d['hard_routed_err']:+.4f}", f"{d['weighted_err']:+.4f}"]
-                    for d in _footprint_discrepancies
-                ],
-                note=(
-                    "'Hard-routed' = theta_calc at the probe's single assigned layer "
-                    "(current Step 2/4 calibration routing, unchanged). 'Weighted' = "
-                    "McNeill depth-weighted blend across all layers (EM_LAYER_WEIGHTS). "
-                    "Diagnostic only -- neither RMSE feeds back into calibration or "
-                    "K-selection."
-                ),
-            )
-            if _w_rmse < _hr_rmse:
-                reporter.log(
-                    "[STEP 5c] Depth-weighted comparison fits TDR better than the "
-                    "hard-routed layer -- the current nearest-layer probe routing "
-                    "may be discarding real cross-layer signal contribution. "
-                    "See the explainer's Step D for what it would take to fold "
-                    "this into calibration itself, and note the caveats there "
-                    "before doing so."
-                )
-            else:
-                reporter.log(
-                    "[STEP 5c] Hard-routed layer already matches TDR at least as "
-                    "well as the McNeill-weighted blend -- either your layers are "
-                    "thick relative to the coil spacing used (weight concentrates in "
-                    "one layer anyway) or CS/high-frequency LIN departure is "
-                    "degrading the kernel here. Check EM_LAYER_WEIGHTS -- if one "
-                    "layer already carries >90% of the weight, this result is "
-                    "expected and the current routing is fine."
-                )
+                "Stage map — drift of the re-derived calibration vs the calibrate run",
+                ["Horizon", "Param", "Calibration", "Map run", "Rel. diff", "Drift"],
+                [[r["horizon"], r["param"], f"{r['calibration']:.4g}", f"{r['map_run']:.4g}",
+                  f"{r['rel_diff']*100:.1f}%", "YES" if r["drift"] else ""] for r in _drift["rows"]],
+                note=(f"K: calibration {_drift['K_calibration']} vs map run {_drift['K_map']}. "
+                      f"Drift threshold {_drift['rel_tol']*100:.0f}% of the calibrated value. A "
+                      f"small drift is expected when the map run matches probes to a denser "
+                      f"point set; a changed K or large drift means the calibration no longer "
+                      f"describes this run."))
+            reporter.metric("Stage map — K (calibration / map)",
+                            f"{_drift['K_calibration']} / {_drift['K_map']}")
+            reporter.metric("Stage map — max WS parameter drift", f"{_drift['max_rel']*100:.1f}%")
+            reporter.log(
+                f"[STAGE] map: K calibration={_drift['K_calibration']} vs map={_drift['K_map']}; "
+                f"max WS parameter drift {_drift['max_rel']*100:.1f}%"
+                + ("  [WARN] CALIBRATION DRIFT -- consider redoing --stage calibrate." if _drift["warn"] else "  (OK)"))
 
-            try:
-                pef.plot_footprint_probe_comparison(
-                    discrepancies=_footprint_discrepancies,
-                    output_dir=OUTPUT_DIR,
-                    hr_rmse=_hr_rmse, w_rmse=_w_rmse,
-                )
-                pef.plot_footprint_spatial_discrepancy(
-                    discrepancies=_footprint_discrepancies,
-                    survey_df=survey_df,
-                    output_dir=OUTPUT_DIR,
-                    probe_x=np.array([r.probe_x for r in CALIB_POSITION_RESULTS]),
-                    probe_y=np.array([r.probe_y for r in CALIB_POSITION_RESULTS]),
-                )
-                # XZ (depth) counterpart to the XY map above -- same
-                # per-(position, horizon) improvement metric
-                # (|err_hard| - |err_weighted|), but placed on the depth
-                # axis via each record's own 'horizon' instead of the
-                # survey's y/utm_y coordinate. Directly comparable to
-                # water_content_xz_*.png and plot_ws_params_xz's XZ
-                # figures elsewhere in this pipeline. Uses
-                # EFFECTIVE_DEPTHS0 (not the static DEPTHS0), same reason
-                # as the Step 2 LOCALIZED XZ call above: it's what this
-                # run's actual (possibly fitted) interfaces are.
-                pef.plot_footprint_spatial_discrepancy_xz(
-                    discrepancies=_footprint_discrepancies,
-                    survey_df=survey_df,
-                    depths0=EFFECTIVE_DEPTHS0,
-                    output_dir=OUTPUT_DIR,
-                    probe_x=np.array([r.probe_x for r in CALIB_POSITION_RESULTS]),
-                    probe_depths=np.array([r.probe_depth for r in CALIB_POSITION_RESULTS]),
-                )
-            except Exception as _footprint_plot_exc:
-                reporter.log(
-                    f"[STEP 5c][WARN] Footprint diagnostic plots failed "
-                    f"(pipeline continues): {type(_footprint_plot_exc).__name__}: {_footprint_plot_exc}"
-                )
-
-            reporter.end_step("Step 5c")
+        if em_footprint_diagnostic:
+            steps_step5c.run_step5c_footprint(
+                reporter, selected_output=selected_output,
+                em_layer_weights=EM_LAYER_WEIGHTS, sample_positions=sample_positions,
+                probe_layer_indices=probe_layer_indices, theta_obs=theta_obs,
+                sample_times=sample_times, timelapse=timelapse, data_source=data_source,
+                coil_orientation=_COIL_ORIENTATION if data_source == "real" else None,
+                survey_df=survey_df,
+                calib_position_results=CALIB_POSITION_RESULTS,
+                effective_depths0=EFFECTIVE_DEPTHS0, output_dir=OUTPUT_DIR)
 
         # ------------------------------------------------------------------
         # Report Step 5 selection and uncertainty details
@@ -4768,11 +4825,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   Previously this array was only ever plotted, then discarded --
         #   compare_scenarios.py / plot_truth_comparison.py need it on disk
         #   as 'theta_calc.npy' next to the synthetic_*.npy truth arrays to
-        #   do calc-vs-truth comparisons, which otherwise required manually
-        #   re-running the whole pipeline through the separate
-        #   capture_synthetic_theta.py monkey-patch script. Saving it here
-        #   makes every run self-sufficient for that comparison, synthetic
-        #   or real, with no extra step.
+        #   do calc-vs-truth comparisons. Saving it here makes every run
+        #   self-sufficient for that comparison, synthetic or real, with no
+        #   extra step.
         # -----------------------------------------------------------------------
         _step5_capture = {
             "K": np.array(selected_output.K),
@@ -4787,6 +4842,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             _step5_capture["is_calibrated"] = np.array(
                 [h.is_calibrated for h in selected_output.best_fit.horizon_fits]
             )
+        # Optimal RMSE-weighted bulk-EC model (n_time, n_pts, n_layers) -- needed
+        # by plot_validation_1to1.py for the per-horizon EC truth-vs-optimal 1:1.
+        try:
+            _step5_capture["ec_optimal"] = np.asarray(averaged_models[selected_output.K - 1])
+        except Exception as _e:
+            reporter.log(f"[STEP 5][WARN] could not capture ec_optimal: {_e}")
         for _key, _arr in _step5_capture.items():
             _path = os.path.join(OUTPUT_MODEL_DIR, f"{_key}.npy")
             np.save(_path, _arr)
@@ -4851,304 +4912,57 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # `split.train`, so this is the first and only time the validation
         # observations are touched.
         if split is not None and theta_obs_val is not None and len(theta_obs_val):
-            reporter.step("Step 5b", "Held-out validation (Sec. 2.6)")
-            reporter.log("\n" + "=" * 80)
-            reporter.log(" [PIPELINE] STEP 5b: HELD-OUT VALIDATION")
-            reporter.log("=" * 80)
-
-            # -----------------------------------------------------------
-            # Validation RMSE at EVERY candidate stack depth K, not just
-            # the selected one -- needed for the train-vs-val RMSE-vs-K
-            # overfitting curve (train_val/rmse_vs_K.png). Same "pin every
-            # WS param to its train-fitted value" trick as before, just
-            # looped across all K instead of stopping at selected_output.K.
-            # Cheap: fixed_params turns each L-BFGS-B call into a no-op
-            # forward pass, so this is len(fits_step4) forward evaluations,
-            # not len(fits_step4) real optimizations.
-            # -----------------------------------------------------------
-            val_rmse_by_k = []
-            val_fit = None
-            for _k in range(len(fits_step4)):
-                _train_params_k = fits_step4[_k].params  # (num_layers, 4)
-                _val_fit_k = step2.run_petro(
-                    # averaged_models[_k] already has the ensemble axis
-                    # collapsed (Step 3); wrap it back into a length-1
-                    # ensemble since run_petro/calibrate_petrophysical_
-                    # relationship call `.ndim` on `models` directly.
-                    models=np.stack([averaged_models[_k]]),
-                    sample_positions=sample_positions_val, sample_times=sample_times_val,
-                    theta_obs=theta_obs_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
-                    generate_plots=False,   # diagnostic-only pass, skip Step 2's plot set
-                    probe_layer_indices=probe_layer_val,
-                    depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
-                    fixed_params={"a": True, "m": True, "sigma_w": True, "sigma_s": True},
-                    probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
-                    lab_p0=_train_params_k,   # pin to TRAIN-fitted values at this K, not LAB_P0
-                    theta_obs_std=_theta_obs_std_step2,
-                )[0]
-                val_rmse_by_k.append(_val_fit_k.rmse)
-                if _k == selected_output.K - 1:
-                    # Keep the fit at the SELECTED K -- this is what the
-                    # scalar metrics/parity plot below use, identical to
-                    # the single-K evaluation this loop replaces.
-                    val_fit = _val_fit_k
-            val_rmse_by_k = np.array(val_rmse_by_k)
-
-            if val_fit is None:
-                # Defensive fallback -- should be unreachable since
-                # selected_output.K is always in range(1, len(fits_step4)+1),
-                # but avoids a confusing AttributeError below if that ever
-                # changes upstream.
-                reporter.log(
-                    "[STEP 5b][WARN] selected_output.K was not covered by "
-                    "the per-K validation loop -- re-evaluating it directly."
-                )
-                val_fit = step2.run_petro(
-                    models=np.stack([averaged_models[selected_output.K - 1]]),
-                    sample_positions=sample_positions_val, sample_times=sample_times_val,
-                    theta_obs=theta_obs_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
-                    generate_plots=False,
-                    probe_layer_indices=probe_layer_val,
-                    depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
-                    fixed_params={"a": True, "m": True, "sigma_w": True, "sigma_s": True},
-                    probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
-                    lab_p0=fits_step4[selected_output.K - 1].params,
-                    theta_obs_std=_theta_obs_std_step2,
-                )[0]
-
-            # Train RMSE per K was already computed above at Step 4
-            # (`_rmse4_all = [f.rmse for f in fits_step4]`) -- reuse it
-            # rather than recomputing, so both curves are guaranteed to
-            # come from the exact same fits_step4 list, index for index.
-            train_rmse_by_k = np.array(_rmse4_all)
-
-            # `fits_step4` (Step 4's recalibration of the K-averaged models)
-            # is what selected_output.K was actually picked on -- these are
-            # the TRAIN-fitted parameters frozen for reporting below.
-            train_fitted_params = fits_step4[selected_output.K - 1].params  # (num_layers, 4)
-
-            train_rmse = selected_output.rmse
-            val_rmse = val_fit.rmse
-            reporter.log(
-                f"[STEP 5b] Train RMSE (K={selected_output.K}, n={len(split.train)}): "
-                f"{train_rmse:.5f} m³/m³"
-            )
-            reporter.log(
-                f"[STEP 5b] Val   RMSE (K={selected_output.K}, n={len(split.val)}): "
-                f"{val_rmse:.5f} m³/m³"
-            )
-            _gap = val_rmse - train_rmse
-            reporter.metric("Train RMSE", f"{train_rmse:.5f} m³/m³")
-            reporter.metric("Validation RMSE", f"{val_rmse:.5f} m³/m³")
-            reporter.metric("Train↔Val RMSE gap", f"{_gap:+.5f} m³/m³")
-            if not split.independent:
-                reporter.log(
-                    f"[STEP 5b][NOTE] split method='{split.method}' is not "
-                    f"fully independent (see [SPLIT][WARN] above) -- a "
-                    f"small train/val gap here is expected and does not by "
-                    f"itself rule out overfitting the way it would for an "
-                    f"independent split."
-                )
-            if abs(_gap) > 0.3 * train_rmse:
-                reporter.log(
-                    "[STEP 5b][WARN] Val RMSE diverges >30% from train RMSE "
-                    "-- possible overfitting in K selection, or val subset "
-                    "too small to be representative. Treat the selected K "
-                    "with caution."
-                )
-
-            # -----------------------------------------------------------
-            # Train/val diagnostic plots -> <OUTPUT_DIR>/train_val/
-            # -----------------------------------------------------------
-            _train_val_dir = os.path.join(OUTPUT_DIR, "train_val")
-            try:
-                os.makedirs(_train_val_dir, exist_ok=True)
-                ptv.plot_rmse_vs_k(
-                    train_rmse_by_k=train_rmse_by_k,
-                    val_rmse_by_k=val_rmse_by_k,
-                    selected_K=selected_output.K,
-                    output_dir=_train_val_dir,
-                )
-                ptv.plot_parity_train_val(
-                    train_obs=fits_step4[selected_output.K - 1].observed_theta,
-                    train_pred=fits_step4[selected_output.K - 1].predicted_theta,
-                    val_obs=val_fit.observed_theta,
-                    val_pred=val_fit.predicted_theta,
-                    output_dir=_train_val_dir,
-                )
-                reporter.log(f"[STEP 5b] Train/val diagnostic plots -> {_train_val_dir}")
-            except Exception as _tv_plot_exc:
-                reporter.log(
-                    f"[STEP 5b][WARN] Train/val diagnostic plots failed "
-                    f"(pipeline continues): {type(_tv_plot_exc).__name__}: {_tv_plot_exc}"
-                )
-
-            reporter.end_step("Step 5b")
+            steps_step5b.run_step5b_validation(
+                reporter, split=split, selected_output=selected_output,
+                fits_step4=fits_step4, train_rmse_by_k=_rmse4_all,
+                averaged_models=averaged_models, sample_positions_val=sample_positions_val,
+                sample_times_val=sample_times_val, theta_obs_val=theta_obs_val,
+                probe_layer_val=probe_layer_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
+                fixed_depths=FIXED_DEPTHS,
+                probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
+                theta_obs_std=_theta_obs_std_step2)
 
         # -----------------------------------------------------------------------
         # STEP 6 — WATER CONTENT VISUALISATIONS  (XZ always; XY in 2-D mode)
         # -----------------------------------------------------------------------
-        reporter.step("Step 6", "Rendering water content visualizations")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 6: RENDERING WATER CONTENT VISUALIZATIONS")
-        reporter.log(f"            XZ cross-section : always")
-        reporter.log(f"            XY plan view      : {'YES (2-D mode)' if mode == '2d' else 'NO (1-D mode)'}")
-        reporter.log("=" * 80)
+        if STAGE == "calibrate":
+            reporter.log("[STAGE] calibrate: stopping before Step 6 (no maps of the probe "
+                         "neighbourhoods). Run '--stage map' for the maps.")
+            reporter.metric("Ensemble size (Step 1)", f"{ensemble_size} realisations  [axis 0 of ensemble matrix]")
+            reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
+            reporter.metric("Final RMSE (Step 5)", f"{selected_output.rmse:.6f} m³/m³")
+            reporter.finish(exit_ok=True, quality_level=quality_gate_result.level,
+                            quality_reasons=quality_gate_result.reasons)
+            append_run_log(LOG_FILE, {
+                "run_id":        reporter.run_id,
+                "timestamp":     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "scenario":      _scenario_name,
+                "mode":          mode.upper(),
+                "data_source":   data_source,
+                "status":        "WARN" if quality_gate_result.level == "WARN" else "SUCCESS",
+                "output_dir":    OUTPUT_DIR,
+                "report_path":   reporter.report_path,
+                "final_rmse":    reporter.get_metric("Final RMSE (Step 5)"),
+                "cv_mean":       "",
+                "cv_max":        "",
+                "ensemble_size": reporter.get_metric("Ensemble size (Step 1)"),
+                "runtime_s":     f"{reporter.elapsed_total:.1f}" if reporter.elapsed_total is not None else "",
+                "quality_level": quality_gate_result.level,
+                "error":         "",
+            })
+            return
 
-        pwc.plot_from_pipeline(
-            selected_output=selected_output,
-            x_transect=x_transect,
-            depths0=DEPTHS0,
-            probe_x_coords=PROBE_X_COORDS,
-            probe_y_coords=PROBE_Y_COORDS,   # local frame -- XZ probe markers only
-            probe_depths=PROBE_DEPTHS,        # Z axis (unchanged)
-            output_dir=OUTPUT_DIR,
-            scenario_name=cfg.name if cfg else "default",
-            timelapse=timelapse,
-            survey_labels=None,
-            utm_x=utm_x,
-            utm_y=utm_y,
-            # FIX: without these, plot_from_pipeline's own fallback treated
-            # the LOCAL probe_x_coords/probe_y_coords above as if they were
-            # already absolute UTM, mislocating every probe marker on
-            # water_content_xy_{scenario}.png relative to the real UTM
-            # survey grid. PROBE_X_COORDS_UTM/PROBE_Y_COORDS_UTM are the
-            # correct absolute-UTM counterparts computed earlier.
-            probe_utm_x=PROBE_X_COORDS_UTM,
-            probe_utm_y=PROBE_Y_COORDS_UTM,
-            # Real TDR station names in real-data mode (overridden above),
-            # synthetic "P0","P1",... labels otherwise.
-            probe_ids=PROBE_LABELS,
-            xy_render_mode=xy_render_mode,
-            # Auto-sizes the extra water_content_xy_{scenario}_imshow.png
-            # raster's pixel size to 2 * window_m -- see plot_from_pipeline.
-            window_m=WINDOW_M,
-        )
-
-        # Ground-truth counterpart of the plot above (water_content_xz_<scenario>_truth.png
-        # / water_content_xy_<scenario>_truth.png) -- only available in synthetic mode,
-        # where theta_true_realization is the known ground truth used to generate the
-        # synthetic surveys. No truth exists for real field data, so this is skipped there.
-        if data_source == "synthetic" and theta_true_realization is not None:
-            try:
-                pwc.plot_truth_from_pipeline(
-                    theta_true=theta_true_realization,
-                    x_transect=x_transect,
-                    depths0=DEPTHS0,
-                    probe_x_coords=PROBE_X_COORDS,
-                    probe_y_coords=PROBE_Y_COORDS,
-                    probe_depths=PROBE_DEPTHS,
-                    output_dir=OUTPUT_DIR,
-                    scenario_name=cfg.name if cfg else "default",
-                    timelapse=timelapse,
-                    survey_labels=None,
-                    utm_x=utm_x,
-                    utm_y=utm_y,
-                    # FIX: same probe_utm_x/y fix as plot_from_pipeline above --
-                    # otherwise water_content_xy_{scenario}_truth.png mislocates
-                    # every probe marker the same way.
-                    probe_utm_x=PROBE_X_COORDS_UTM,
-                    probe_utm_y=PROBE_Y_COORDS_UTM,
-                    probe_ids=PROBE_LABELS,
-                    xy_render_mode=xy_render_mode,
-                    window_m=WINDOW_M,
-                )
-                reporter.log(
-                    f"[STEP 6] Ground-truth XZ (and XY, if 2-D) water-content "
-                    f"plots -> {OUTPUT_DIR}/water_content_xz_"
-                    f"{(cfg.name if cfg else 'default')}_truth.png"
-                )
-            except Exception as e:
-                reporter.log(f"[STEP 6][WARN] plot_truth_from_pipeline failed: {e}")
-
-            # Calculated-vs-truth error maps: MAE and RMSE (%VWC), XZ always
-            # and XY too in 2-D mode -- these supersede the old signed
-            # %-difference plot (water_content_xy_{scenario}_pctdiff.png),
-            # which is undefined/blows up wherever truth ~ 0. Also logs the
-            # pooled overall MAE/RMSE into the report's Metrics Summary so
-            # compare_scenarios.py can pull them into scenario comparisons.
-            try:
-                error_metrics = pwc.plot_error_metrics_from_pipeline(
-                    selected_output=selected_output,
-                    theta_true=theta_true_realization,
-                    x_transect=x_transect,
-                    depths0=DEPTHS0,
-                    probe_x_coords=PROBE_X_COORDS,
-                    probe_y_coords=PROBE_Y_COORDS,
-                    probe_depths=PROBE_DEPTHS,
-                    output_dir=OUTPUT_DIR,
-                    scenario_name=cfg.name if cfg else "default",
-                    timelapse=timelapse,
-                    survey_labels=None,
-                    utm_x=utm_x,
-                    utm_y=utm_y,
-                    probe_utm_x=PROBE_X_COORDS_UTM,
-                    probe_utm_y=PROBE_Y_COORDS_UTM,
-                    xy_render_mode="imshow",
-                    window_m=WINDOW_M,
-                )
-                reporter.log(f"[STEP 6] Calculated-vs-truth XZ RMSE map -> {error_metrics['xz_rmse_path']}")
-                reporter.log(f"[STEP 6] Calculated-vs-truth XZ MAE map  -> {error_metrics['xz_mae_path']}")
-                reporter.metric("Water Content MAE vs Truth (XZ)", f"{error_metrics['xz_mae_overall']:.3f} %VWC")
-                reporter.metric("Water Content RMSE vs Truth (XZ)", f"{error_metrics['xz_rmse_overall']:.3f} %VWC")
-                if "xy_rmse_path" in error_metrics:
-                    reporter.log(f"[STEP 6] Calculated-vs-truth XY RMSE map -> {error_metrics['xy_rmse_path']}")
-                    reporter.log(f"[STEP 6] Calculated-vs-truth XY MAE map  -> {error_metrics['xy_mae_path']}")
-                    reporter.metric("Water Content MAE vs Truth (XY)", f"{error_metrics['xy_mae_overall']:.3f} %VWC")
-                    reporter.metric("Water Content RMSE vs Truth (XY)", f"{error_metrics['xy_rmse_overall']:.3f} %VWC")
-            except Exception as e:
-                reporter.log(f"[STEP 6][WARN] plot_error_metrics_from_pipeline failed: {e}")
-
-            # Initial model (starting guess, conds0's layer MIN/MAX bounds) vs.
-            # ground truth -- a QC check for whether the inversion's starting
-            # point plausibly brackets reality, BEFORE any inversion runs.
-            # Two flavours: depth-resolved EC_bulk (XZ heatmap, same style as
-            # water_content_xz_*.png) and per-coil apparent conductivity (ECa),
-            # which isn't depth-resolved so gets its own per-coil panel style.
-            try:
-                _ec_true_path = _resolve_npy_path("synthetic_time_lapse_ec.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
-                _eca_true_path = _resolve_npy_path("synthetic_time_lapse_eca.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
-
-                if os.path.exists(_ec_true_path):
-                    _ec_bulk_true = np.load(_ec_true_path)[REALIZATION_INDEX]
-                    ini_ec_path = pwc.plot_initial_model_vs_true_ec(
-                        cond_ranges=COND_RANGES,
-                        depths0=DEPTHS0,
-                        x_coords=x_transect,
-                        ec_bulk_true=_ec_bulk_true,
-                        output_dir=OUTPUT_DIR,
-                        scenario_name=cfg.name if cfg else "default",
-                        probe_x=PROBE_X_COORDS,
-                        probe_depths=PROBE_DEPTHS,
-                    )
-                    reporter.log(f"[STEP 6] Initial model vs. true EC_bulk -> {ini_ec_path}")
-                else:
-                    reporter.log(
-                        "[STEP 6][WARN] 'synthetic_time_lapse_ec.npy' not found; "
-                        "skipping initial-model-vs-true-EC_bulk plot."
-                    )
-
-                if os.path.exists(_eca_true_path):
-                    _eca_true = np.load(_eca_true_path)[REALIZATION_INDEX]
-                    ini_eca_path = pwc.plot_initial_eca_vs_true_eca(
-                        cond_ranges=COND_RANGES,
-                        depths0=DEPTHS0,
-                        x_coords=x_transect,
-                        eca_true=_eca_true,
-                        coils=step0.COILS_LIST,
-                        output_dir=OUTPUT_DIR,
-                        scenario_name=cfg.name if cfg else "default",
-                        forward_model=PARAM_GRID.get("forwardModel", ["FSlin"])[0],
-                    )
-                    if ini_eca_path is not None:
-                        reporter.log(f"[STEP 6] Initial model vs. true ECa -> {ini_eca_path}")
-                else:
-                    reporter.log(
-                        "[STEP 6][WARN] 'synthetic_time_lapse_eca.npy' not found; "
-                        "skipping initial-model-vs-true-ECa plot."
-                    )
-            except Exception as e:
-                reporter.log(f"[STEP 6][WARN] Initial-model-vs-truth diagnostics failed: {e}")
+        steps_step6.run_step6_water_content(
+            reporter, mode=mode, data_source=data_source, selected_output=selected_output,
+            x_transect=x_transect, depths0=DEPTHS0, probe_x_coords=PROBE_X_COORDS,
+            probe_y_coords=PROBE_Y_COORDS, probe_depths=PROBE_DEPTHS,
+            probe_x_coords_utm=PROBE_X_COORDS_UTM, probe_y_coords_utm=PROBE_Y_COORDS_UTM,
+            probe_labels=PROBE_LABELS, utm_x=utm_x, utm_y=utm_y, output_dir=OUTPUT_DIR,
+            output_model_dir=OUTPUT_MODEL_DIR, scenario_name=cfg.name if cfg else "default",
+            timelapse=timelapse, xy_render_mode=xy_render_mode, window_m=WINDOW_M,
+            theta_true_realization=theta_true_realization, realization_index=REALIZATION_INDEX,
+            cond_ranges=COND_RANGES, coils_list=step0.COILS_LIST,
+            forward_model=PARAM_GRID.get("forwardModel", ["FSlin"])[0])
 
         # -----------------------------------------------------------------------
         # SUMMARY
@@ -5160,13 +4974,6 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #     (a) per_realisation — raw inversion for a sample of ensemble members
         #     (b) optimal_model   — weighted-average of top-K realisations (Step 4/5)
         # -----------------------------------------------------------------------
-        reporter.step("Step 6b", "emagpy native diagnostic plots")
-        reporter.log(" [PIPELINE] STEP 6b: emagpy DIAGNOSTIC PLOTS")
-        reporter.log(f"            surveys        : {len(EM_FNAMES)}")
-        reporter.log(f"            mode           : {mode.upper()}")
-        reporter.log(f"            optimal K      : {selected_output.K}")
-        reporter.log(f"            ensemble size  : {models_clean.shape[0]}")
-
         _fixed_bool = FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS)
         _fixed_depths_list_6b = (
             [FIXED_DEPTHS] * len(DEPTHS0)
@@ -5184,89 +4991,43 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             "bnds":         _build_inversion_bnds(DEPTHS0, _fixed_depths_list_6b, COND_RANGES),
         }
 
-        # -----------------------------------------------------------------------
-        # STEP 6c — SWC PLOTS FOR ALL THREE PIPELINE STAGES
-        #   Stage A: sample of raw realisations (models_clean)
-        #   Stage B: averaged model at K=1, K_opt, K_max (averaged_models)
-        #   Stage C: optimal model (selected_output) — same as Step 6 above
-        # -----------------------------------------------------------------------
-        reporter.step("Step 6c", "SWC plots for all pipeline stages")
-        reporter.log(" [PIPELINE] STEP 6c: SWC STAGE PLOTS (A/B/C)")
-
-        pwc.plot_swc_ensemble_stages(
-            models_clean     = models_clean,
-            averaged_models  = averaged_models,
-            selected_output  = selected_output,
-            best_fit         = fits_step4[selected_output.K - 1],
-            x_transect       = x_transect,
-            depths0          = DEPTHS0,
-            output_dir       = OUTPUT_DIR,
-            scenario_name    = cfg.name if cfg else "default",
-            timelapse        = timelapse,
-            survey_labels    = None,
-            utm_x            = utm_x,
-            utm_y            = utm_y,
-            probe_x_coords   = PROBE_X_COORDS,
-            probe_y_coords   = PROBE_Y_COORDS,
-            probe_depths     = PROBE_DEPTHS,
-            max_realisations = 4,
+        steps_step6.run_step6c_swc_stage_plots(
+            reporter,
+            models_clean=models_clean,
+            averaged_models=averaged_models,
+            selected_output=selected_output,
+            fits_step4=fits_step4,
+            x_transect=x_transect,
+            depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR,
+            cfg=cfg,
+            timelapse=timelapse,
+            utm_x=utm_x,
+            utm_y=utm_y,
+            probe_x_coords=PROBE_X_COORDS,
+            probe_y_coords=PROBE_Y_COORDS,
+            probe_depths=PROBE_DEPTHS,
+            theta_obs=theta_obs,
+            sample_positions=sample_positions,
+            sample_times=sample_times,
+            probe_layer_indices=probe_layer_indices,
         )
 
-        # -----------------------------------------------------------------------
-        # STEP 6c-bis — 1:1 validation scatter (Stages A / B / C vs. TDR truth)
-        # Called explicitly here so that the full sample_positions / sample_times /
-        # probe_layer_indices vectors — which are available in this scope but are
-        # not stored inside selected_output — are passed directly instead of
-        # relying on the fallback reconstruction inside plot_swc_ensemble_stages.
-        # -----------------------------------------------------------------------
-        pwc.plot_one_to_one_stages(
-            models_clean      = models_clean,
-            averaged_models   = averaged_models,
-            selected_output   = selected_output,
-            best_fit          = fits_step4[selected_output.K - 1],
-            theta_obs         = theta_obs,
-            sample_positions  = sample_positions,
-            sample_times      = sample_times,
-            output_dir        = OUTPUT_DIR,
-            scenario_name     = cfg.name if cfg else "default",
-            probe_layer_indices = probe_layer_indices,
+        steps_step6.run_step6b_emagpy_plots(
+            reporter,
+            em_fnames=EM_FNAMES,
+            mode=mode,
+            selected_output=selected_output,
+            models_clean=models_clean,
+            averaged_models=averaged_models,
+            tasks=tasks,                    # built in Step 1
+            depths_clean=depths_clean,
+            depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR,
+            fixed_depths=_fixed_bool,
+            invert_kwargs=_base_inv_kwargs,
+            em_unit=EM_UNIT,
         )
-
-        reporter.end_step("Step 6c")
-
-        # (a) Per-realisation plots — a uniform sample of individual inversions
-        pediag.run_emagpy_plots_per_realisation(
-            csv_paths        = EM_FNAMES,
-            tasks            = tasks,            # built in Step 1
-            models_clean     = models_clean,
-            depths_clean     = depths_clean,
-            depths0          = DEPTHS0,
-            output_dir       = OUTPUT_DIR,
-            fixed_depths     = _fixed_bool,
-            mode             = mode,
-            max_realisations = 1,                # cap: 1 sample realisation rendered (was 4 —
-                                                   # each realisation re-inverts the full survey
-                                                   # from scratch per time step; with real-data
-                                                   # point counts of 20k-47k this was the main
-                                                   # source of multi-hour Step 6b runtimes)
-            em_unit          = EM_UNIT,
-        )
-
-        # (b) Optimal model plots — weighted average of top-K realisations
-        pediag.run_emagpy_plots_optimal(
-            csv_paths        = EM_FNAMES,
-            selected_output  = selected_output,  # SelectionOutput from Step 4/5
-            averaged_models  = averaged_models,  # list from Step 3
-            depths0          = DEPTHS0,
-            output_dir       = OUTPUT_DIR,
-            fixed_depths     = _fixed_bool,
-            conds0           = None,
-            invert_kwargs    = _base_inv_kwargs,
-            mode             = mode,
-            em_unit          = EM_UNIT,
-        )
-
-        reporter.end_step("Step 6b")
 
         # -----------------------------------------------------------------------
         # STEP 6d — SOLUTION SUMMARY PLOTS (SWC + EC_bulk, synthetic ground
@@ -5279,102 +5040,56 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   checked at a glance. Real-data runs get the same plots without the
         #   ground-truth overlay (none exists in the field).
         # -----------------------------------------------------------------------
-        reporter.step("Step 6d", "Solution SWC / EC_bulk summary plots")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 6d: SOLUTION SUMMARY PLOTS (SWC + EC_bulk)")
-        reporter.log("=" * 80)
-
-        theta_true_for_plot   = None
-        ec_bulk_true_for_plot = None
-        if data_source == "synthetic":
-            theta_true_for_plot = theta_true_realization
-            _ec_true_path = _resolve_npy_path("synthetic_time_lapse_ec.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
-            if os.path.exists(_ec_true_path):
-                ec_bulk_true_for_plot = np.load(_ec_true_path)[REALIZATION_INDEX]
-            else:
-                reporter.log(
-                    "[STEP 6d][WARN] 'synthetic_time_lapse_ec.npy' not found in "
-                    f"'{OUTPUT_DIR}' — EC_bulk ground-truth overlay skipped."
-                )
-
-        swc_fig_path = psol.plot_solution_swc(
-            theta_calc      = selected_output.theta_calc,
-            depths0         = DEPTHS0,
-            layer_centers   = synthetic_geometry["layer_centers"],
-            output_dir      = OUTPUT_DIR,
-            theta_true      = theta_true_for_plot,
-            K               = selected_output.K,
-            rmse            = selected_output.rmse,
-            scenario_name   = cfg.name if cfg else "default",
-            timelapse       = timelapse,
+        steps_step6.run_step6d_solution_plots(
+            reporter,
+            data_source=data_source,
+            theta_true_realization=theta_true_realization,
+            output_model_dir=OUTPUT_MODEL_DIR,
+            output_dir=OUTPUT_DIR,
+            realization_index=REALIZATION_INDEX,
+            selected_output=selected_output,
+            averaged_models=averaged_models,
+            depths0=DEPTHS0,
+            layer_centers=synthetic_geometry["layer_centers"],
+            cfg=cfg,
+            timelapse=timelapse,
         )
-        reporter.log(f"[STEP 6d] Solution SWC profiles      → {swc_fig_path}")
 
-        ec_fig_path = psol.plot_solution_ec_bulk(
-            ec_optimal      = averaged_models[selected_output.K - 1],
-            depths0         = DEPTHS0,
-            layer_centers   = synthetic_geometry["layer_centers"],
-            output_dir      = OUTPUT_DIR,
-            ec_bulk_true    = ec_bulk_true_for_plot,
-            K               = selected_output.K,
-            rmse            = selected_output.rmse,
-            scenario_name   = cfg.name if cfg else "default",
-            timelapse       = timelapse,
-        )
-        reporter.log(f"[STEP 6d] Solution EC_bulk profiles  → {ec_fig_path}")
-
-        reporter.end_step("Step 6d")
+        # STEP 6f — SWC UNCERTAINTY (ensemble spread of theta; diagnostic only)
+        steps_step6.run_step6f_swc_uncertainty(
+            reporter, models_clean=models_clean, ranking=ranking, member_fits=fits_step2,
+            fits_step4=fits_step4, selected_output=selected_output,
+            layer_centers=synthetic_geometry["layer_centers"], output_dir=OUTPUT_DIR,
+            output_model_dir=OUTPUT_MODEL_DIR,
+            theta_true=theta_true_realization if data_source == "synthetic" else None,
+            scenario_name=cfg.name if cfg else "default")
 
         # -----------------------------------------------------------------------
         # STEP 6e — FORWARD-SIMULATE ECa FROM THE OPTIMAL MODEL
         #   Same "inject the weighted-average EC model" idea used by
         #   pediag.run_emagpy_plots_optimal() above, but here the injected
         #   model is forward-simulated (emagpy Problem.forward(), mirroring
-        #   0_generate_synthetic_data.py's ground-truth generation) to obtain
+        #   data_synthetic.py's ground-truth generation) to obtain
         #   predicted ECa, which is then compared against the raw survey ECa
         #   that was actually fed to the inversion. This is a direct
         #   forward-model check of the full pipeline's final output.
         # -----------------------------------------------------------------------
-        reporter.step("Step 6e", "Forward-simulate ECa from optimal model")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 6e: FORWARD-SIMULATE ECa FROM OPTIMAL MODEL")
-        reporter.log("=" * 80)
-
-        # INDEXING_AUDIT_REPORT.md finding #5: for real-data, time-lapse
-        # runs, averaged_models[K-1]'s spatial axis is the reference grid
-        # (geometry_utils.match_epochs_to_reference_grid), not any one
-        # epoch's own raw-CSV row order/count. forward_simulate_eca_optimal
-        # forward-simulates ECa from that reference-grid-ordered model, so
-        # the observed ECa it's compared against must be gathered in the
-        # SAME reference-grid order -- REAL_DATA_MATCHED_INDICES (built
-        # alongside REAL_DATA_REFERENCE_XY, see Step 1 above) is exactly
-        # that per-epoch row->reference-grid-index map, and
-        # plot_solution_diagnostics.forward_simulate_eca_optimal now
-        # accepts it and gathers eca_obs/xpos through it accordingly.
-        #
-        # None for synthetic data and for real single-survey (non-time-
-        # lapse) runs, where raw CSV order already IS the model's own
-        # order and no remap ever happened -- forward_simulate_eca_optimal
-        # keeps reading raw CSV rows directly in that case.
-        eca_forward_results = psol.forward_simulate_eca_optimal(
-            csv_paths       = EM_FNAMES,
-            averaged_models = averaged_models,
-            selected_output = selected_output,
-            depths0         = DEPTHS0,
-            output_dir      = OUTPUT_DIR,
-            coils_list      = step0.COILS_LIST if data_source == "synthetic" else None,
-            x_transect      = x_transect,
-            forward_model   = _base_inv_kwargs.get("forwardModel", "CS"),
-            scenario_name   = cfg.name if cfg else "default",
-            matched_indices = (
+        steps_step6.run_step6e_forward_eca(
+            reporter,
+            em_fnames=EM_FNAMES,
+            averaged_models=averaged_models,
+            selected_output=selected_output,
+            depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR,
+            x_transect=x_transect,
+            forward_model=_base_inv_kwargs.get("forwardModel", "CS"),
+            cfg=cfg,
+            coils_list=step0.COILS_LIST if data_source == "synthetic" else None,
+            matched_indices=(
                 REAL_DATA_MATCHED_INDICES
                 if (data_source == "real" and timelapse) else None
             ),
         )
-        for _t_idx, _rmse_eca in eca_forward_results:
-            reporter.metric(f"Forward ECa RMSE (optimal, t={_t_idx})", f"{_rmse_eca:.4f} mS/m")
-
-        reporter.end_step("Step 6e")
 
         reporter.end_step("Step 6")
 
@@ -5704,6 +5419,38 @@ if __name__ == "__main__":
              "no sweep) otherwise.",
     )
     parser.add_argument(
+        "--quick", action="store_true",
+        help="Smoke-test preset: keep ONE alpha (the middle of the scenario's "
+             "alpha list) and ONE forward model (the first) instead of the full "
+             "grid -- e.g. 280 Step-1 tasks -> 28. Combine with --quick-epochs "
+             "to also cut the survey epochs (-> 12 with 3 of 7). Does not touch "
+             "the EM/TDR data. The ensemble is shrunk on purpose, so treat the "
+             "output as a smoke test, not a result. Uses its own '_quick' "
+             "output folder and cache file (the full-run cache is never "
+             "overwritten).",
+    )
+    parser.add_argument(
+        "--stage", choices=list(stage_split.STAGES), default="full",
+        help="Real data only. 'full' (default): one run does everything. 'calibrate': "
+             "EM points restricted to the probe neighbourhoods, FULL ensemble, Steps 0-5, "
+             "writes stage_calibration.json (selected K, members, WS parameters, localized "
+             "bandwidth) and stops before the maps. 'map': inverts ONLY the members the "
+             "calibration selected on the scenario's EM points (all, or grid-thinned), runs "
+             "Steps 2-6 and reports the drift vs the calibration. Own '_calibrate' / '_map' "
+             "run folder and cache file.",
+    )
+    parser.add_argument(
+        "--calibration", default=None, metavar="PATH",
+        help="With --stage map: a stage_calibration.json or the '*_calibrate' run folder "
+             "that holds it. Default: the newest '*_calibrate' run under the scenario's "
+             "output_dir.",
+    )
+    parser.add_argument(
+        "--quick-epochs", type=int, default=None, metavar="N",
+        help="With --quick (real data only): keep only N evenly spaced survey "
+             "epochs (first and last always included). Default: all epochs.",
+    )
+    parser.add_argument(
         "--train-val-split", default=None,
         choices=["alternate_sorted", "by_probe", "by_time_block", "random", "off"],
         help="Split TDR/SWC observations into train (fits the Waxman-Smits "
@@ -5718,7 +5465,18 @@ if __name__ == "__main__":
              "behaviour) otherwise.",
     )
     args = parser.parse_args()
-    
+
+    if args.calibration is not None and args.stage != "map":
+        parser.error("--calibration requires --stage map")
+    if args.stage == "map" and args.quick:
+        parser.error("--stage map cannot be combined with --quick (the selected members must "
+                     "exist in the full parameter grid)")
+    if args.quick_epochs is not None:
+        if not args.quick:
+            parser.error("--quick-epochs requires --quick")
+        if args.quick_epochs < 1:
+            parser.error("--quick-epochs must be >= 1")
+
     # Validate real data requirements
     if args.data_source == "real":
         if not args.em_dir or not args.tdr_dir:
@@ -5830,6 +5588,8 @@ if __name__ == "__main__":
         print(f" [PIPELINE] Coordinates     : {effective_coord_file}")
     print(f" [PIPELINE] Spatial mode    : {effective_mode.upper()}")
     print(cfg.summary())
+    for _w in check_ws_start_values(cfg):
+        print(f" [WARN] WS start values: {_w}")
     print("=" * 80 + "\n")
 
     try:
@@ -5856,7 +5616,9 @@ if __name__ == "__main__":
              train_val_split_method=args.train_val_split,
              ws_localized_bandwidth=args.ws_localized_bandwidth,
              ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
-             em_footprint_diagnostic=args.em_footprint_diagnostic)
+             em_footprint_diagnostic=args.em_footprint_diagnostic,
+             quick=args.quick, quick_epochs=args.quick_epochs,
+             stage=args.stage, calibration=args.calibration)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

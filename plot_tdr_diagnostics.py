@@ -8,7 +8,7 @@ before any EM-date alignment or averaging.
 
 Why this exists
 ----------------
-``0_real_data_loader.py`` aligns every TDR reading to its nearest EM survey
+``data_real.py`` aligns every TDR reading to its nearest EM survey
 date and averages within the time-tolerance window before Step 2 ever sees
 the data. If something is wrong upstream (a stuck/flat-lined sensor, a
 parsing artefact that leaves a logger reporting raw % instead of fraction,
@@ -18,7 +18,7 @@ This module renders the raw per-station time series so those issues are
 visible *before* Step 2, and runs a few cheap automated checks.
 
 It deliberately reuses ``load_tdr_dataframe()`` from
-``0_real_data_loader.py`` (no re-implementation of the parsing logic) so the
+``data_real.py`` (no re-implementation of the parsing logic) so the
 diagnostic always reflects exactly what the pipeline itself loaded.
 """
 
@@ -36,31 +36,11 @@ import matplotlib.dates as mdates
 
 
 # --------------------------------------------------------------------------
-# Import load_tdr_dataframe from 0_real_data_loader.py without renaming the
-# source file (its name starts with a digit, so a plain `import` won't work).
+# Import load_tdr_dataframe from data_real.py (next to this script).
 # --------------------------------------------------------------------------
 def _import_real_data_loader():
-    try:
-        from l0_real_data_loader import load_tdr_dataframe  # if ever renamed
-        return load_tdr_dataframe
-    except ImportError:
-        pass
-    try:
-        from _0_real_data_loader import load_tdr_dataframe
-        return load_tdr_dataframe
-    except ImportError:
-        pass
-    loader_path = Path(__file__).parent / "0_real_data_loader.py"
-    if not loader_path.exists():
-        raise ImportError(
-            f"Could not locate 0_real_data_loader.py next to {__file__}; "
-            "place plot_tdr_diagnostics.py in the same directory as the "
-            "pipeline scripts."
-        )
-    spec = importlib.util.spec_from_file_location("real_data_loader", loader_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.load_tdr_dataframe
+    from data_real import load_tdr_dataframe
+    return load_tdr_dataframe
 
 
 load_tdr_dataframe = _import_real_data_loader()
@@ -143,7 +123,7 @@ def plot_tdr_diagnostics(
     Parameters
     ----------
     tdr_dir, coord_file : str
-        Same paths passed to ``0_real_data_loader.prepare_real_dataset``.
+        Same paths passed to ``data_real.prepare_real_dataset``.
     em_dates : sequence of datetime, optional
         EM survey dates to overlay as vertical reference lines (pass the
         ``em_dates`` returned by ``prepare_real_dataset`` /
@@ -294,7 +274,7 @@ if __name__ == "__main__":
     parser.add_argument("--em-dir", default=None,
                          help="Optional EM directory to derive survey dates "
                               "for vertical reference lines (uses the same "
-                              "DDMMYY filename pattern as 0_real_data_loader.py).")
+                              "DDMMYY filename pattern as data_real.py).")
     parser.add_argument("--time-tolerance-days", type=float, default=1.0)
     parser.add_argument("--output-dir", default="mfc2_outputs")
     args = parser.parse_args()
@@ -302,10 +282,7 @@ if __name__ == "__main__":
     em_dates = None
     if args.em_dir:
         import glob as _glob
-        loader_path = Path(__file__).parent / "0_real_data_loader.py"
-        spec = importlib.util.spec_from_file_location("real_data_loader", loader_path)
-        rdl = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(rdl)
+        import data_real as rdl
         em_dates = sorted(
             d for f in _glob.glob(os.path.join(args.em_dir, "*.csv"))
             if (d := rdl.extract_date_from_filename(f)) is not None

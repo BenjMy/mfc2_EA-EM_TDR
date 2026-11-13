@@ -54,11 +54,49 @@
 #   or the exact emagpy coil name (HCP1.66f425h1_quad).
 #   The inversion cache key includes drop_coils, so changing the set never
 #   reuses results computed with a different set of channels.
+#
+# QUICK SMOKE-TEST PRESET (--quick)
+# -----------------------------------------------------------------------
+#   The full ensemble is slow: for real_single_base, 5 alphas x 2 forward
+#   models x 4 starting combinations x 7 epochs = 280 Step-1 inversion
+#   tasks PER CALL, and this script makes dozens of calls. To check that
+#   everything runs end to end (or just to look at the plots):
+#       ./run_real_PAPER.sh --quick                    # 280 -> 28 tasks
+#       ./run_real_PAPER.sh --quick --quick-epochs 3   # 280 -> 12 tasks
+#       ./run_real_PAPER.sh --quick 425 5325           # combines with drop-coils
+#   --quick keeps ONE alpha (the middle of the alpha list) and ONE forward
+#   model (the first); --quick-epochs N also keeps only N evenly spaced
+#   survey epochs (first and last always included). The EM/TDR data are NOT
+#   touched (for that, see em_subsample in the scenarios). The ensemble IS
+#   shrunk, so the output is a smoke test, never a result: each call writes
+#   to '<seq>_<scenario>_quick' with its own '*_quick*.pkl' cache, and the
+#   full-run caches are left alone. Note that scenarios whose only
+#   difference from the base is the forward model (*_fslin / *_cs) collapse
+#   to a single model under --quick, and beta/gamma sweeps still multiply
+#   the (now small) task count.
 # =============================================================================
 
 set -euo pipefail
 
 REAL_CFG="ensemble_scenarios_real.json"
+
+# --quick / --quick-epochs N are consumed here; whatever is left over is
+# the (optional) drop-coils override below.
+QUICK_ARGS=()
+_rest=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --quick) QUICK_ARGS+=(--quick); shift ;;
+        --quick-epochs)
+            [ "$#" -ge 2 ] || { echo "--quick-epochs requires a positive integer" >&2; exit 1; }
+            QUICK_ARGS+=(--quick-epochs "$2"); shift 2 ;;
+        *) _rest+=("$1"); shift ;;
+    esac
+done
+set -- ${_rest[@]+"${_rest[@]}"}
+if [ "${#QUICK_ARGS[@]}" -gt 0 ]; then
+    echo ">>> QUICK preset ON (${QUICK_ARGS[*]}) -- smoke test, reduced ensemble"
+fi
 
 # Optional CLI override of the scenario files' drop_coils (see header).
 DROP_ARGS=()
@@ -73,7 +111,8 @@ fi
 # --drop-coils override is applied uniformly (the empty-array expansion is
 # safe under 'set -u' on old bash).
 run_pipeline() {
-    ./run_pipeline.sh "$@" ${DROP_ARGS[@]+"${DROP_ARGS[@]}"}
+    ./run_pipeline.sh "$@" ${DROP_ARGS[@]+"${DROP_ARGS[@]}"} \
+        ${QUICK_ARGS[@]+"${QUICK_ARGS[@]}"}
 }
 
 # --- Sanity check: list + validate the real scenarios before doing anything --

@@ -140,7 +140,7 @@ Each run writes to a numbered folder, a Markdown report (configuration, per-step
 ### 4.3 Open code-level items noticed
 - `plot_em_diagnostics_real._plot_eca_emagpy_show` still calls `filterRepeated(index=0)`; the same invalid keyword previously caused every inversion task to fail elsewhere. It is caught by try/except, but the diagnostic will not render.
 - `plot_emagpy_diagnostics` re-inverts the full survey for each sampled realisation and time step; it has been capped at one realisation because of runtime.
-- `run_pipeline.py` has an import fallback chain (`l0_real_data_loader`, `_0_real_data_loader`) that suggests former file naming; the final fallback by path works.
+- ~~`run_pipeline.py` had an import fallback chain (`ldata_real`, `_data_real`) suggesting former file naming.~~ Fixed on `refactor/readability`: modules are renamed to importable names (`data_real`, `step2_petro`, ...) and imported plainly.
 - `generate_synthetic_real_mirror.py` defaults to 1% point counts and a 150-point cap; conclusions about density effects require running at larger scale.
 - `train_val_split(by_probe)` falls back to a non-independent split in synthetic runs; the scenario loader now rejects that combination at load time.
 - The WS truth in the twin follows the multiplicative form used by the calibration; an earlier additive-σ_s form was corrected and should be recorded as a past inconsistency.

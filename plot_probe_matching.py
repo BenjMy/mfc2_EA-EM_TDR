@@ -54,11 +54,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
-
-
-def _ensure_dir(path: str) -> str:
-    os.makedirs(path, exist_ok=True)
-    return path
+from plots._common import ensure_dir as _ensure_dir
 
 
 def plot_probe_matching(

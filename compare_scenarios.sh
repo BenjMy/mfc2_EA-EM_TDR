@@ -87,8 +87,8 @@ Labelling and scoring:
                           combined --ids + --reports list.
 
 Point-level truth comparison (needs each scenario's output_model/ --
-theta_calc.npy via capture_synthetic_theta.py, plus the synthetic_*.npy
-truth arrays 0_generate_synthetic_data.py already writes there):
+theta_calc.npy written by run_pipeline.py, plus the synthetic_*.npy
+truth arrays data_synthetic.py already writes there):
       --position X Y      Enables depth-profile / spatial-transect /
                           scatter-residual comparison plots against
                           truth, at the grid point nearest (X, Y).
