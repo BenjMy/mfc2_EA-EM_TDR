@@ -30,6 +30,8 @@ Phase 6, Step 5c (2026-11-13): moved to `steps/step5c_footprint.py` (`run_step5c
 
 Phase 6, Step 5b (2026-11-13): moved to `steps/step5b_validation.py` (`run_step5b_validation`), `tests/test_step5b_validation.py`. Before/after e2e (`1d_surface_tdr --train-val-split alternate_sorted`, fd89775 vs now): train 0.02682 / val 0.04870 identical, all 20 `output_model` arrays bit-identical.
 
+Phase 6, Step 6 main block (2026-11-13): moved to `steps/step6_plots.py::run_step6_water_content` (opens "Step 6"; `main()` closes it after 6b-6e), 3 tests added. Before/after e2e `1d_surface_tdr` (previous commit vs now): 20/20 arrays bit-identical, same 107 PNG files. Step 6 is now fully out of `main()`.
+
 Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20 saved arrays bit-identical to the pre-refactor reference. Phases 1-4 touched no scientific code.
 
 Not refactoring (behaviour changes, separate commits): 1d_* EC bound 60 -> 300 mS/m; `ws_layer_params` + `hetero` scenarios + `extends`. See `to-do.md`.

@@ -145,3 +145,69 @@ def test_step6b_calls_per_realisation_then_optimal(monkeypatch, tmp_path):
     assert any("surveys        : 2" in line for line in rep.lines)
     assert any("ensemble size  : 5" in line for line in rep.lines)
     assert rep.started == ["Step 6b"] and rep.ended == ["Step 6b"]
+
+
+def _kw(tmp_path, data_source, **over):
+    kw = dict(mode="1d", data_source=data_source, selected_output="SEL", x_transect="X",
+              depths0="D", probe_x_coords="px", probe_y_coords="py", probe_depths="pd",
+              probe_x_coords_utm="pux", probe_y_coords_utm="puy", probe_labels="pl",
+              utm_x="ux", utm_y="uy", output_dir=str(tmp_path),
+              output_model_dir=str(tmp_path / "om"), scenario_name="sc", timelapse=True,
+              xy_render_mode="scatter", window_m=3.0, theta_true_realization="TRUE",
+              realization_index=1, cond_ranges="CR", coils_list=["HCP05"],
+              forward_model="FSlin")
+    kw.update(over)
+    return kw
+
+
+def _stub_pwc(monkeypatch, fail=None):
+    seen = {}
+
+    def mk(name, ret=None):
+        def f(**kw):
+            if name == fail:
+                raise RuntimeError("boom")
+            seen[name] = kw
+            return ret
+        return f
+    em = {"xz_rmse_path": "r.png", "xz_mae_path": "m.png",
+          "xz_mae_overall": 1.5, "xz_rmse_overall": 2.5}
+    monkeypatch.setattr(step6_plots.pwc, "plot_from_pipeline", mk("main"))
+    monkeypatch.setattr(step6_plots.pwc, "plot_truth_from_pipeline", mk("truth"))
+    monkeypatch.setattr(step6_plots.pwc, "plot_error_metrics_from_pipeline", mk("err", em))
+    monkeypatch.setattr(step6_plots.pwc, "plot_initial_model_vs_true_ec", mk("iniec", "iec.png"))
+    monkeypatch.setattr(step6_plots.pwc, "plot_initial_eca_vs_true_eca", mk("inieca", "ieca.png"))
+    return seen
+
+
+def test_step6_real_only_main_plot_and_opens_step_without_closing(monkeypatch, tmp_path):
+    seen = _stub_pwc(monkeypatch)
+    rep = FakeReporter()
+    step6_plots.run_step6_water_content(rep, **_kw(tmp_path, "real"))
+    assert list(seen) == ["main"] and rep.started == ["Step 6"] and rep.ended == []
+    m = seen["main"]
+    assert m["scenario_name"] == "sc" and m["probe_utm_x"] == "pux" and m["probe_ids"] == "pl"
+    assert m["probe_x_coords"] == "px" and m["window_m"] == 3.0 and m["survey_labels"] is None
+    assert any("NO (1-D mode)" in l for l in rep.lines)
+
+
+def test_step6_synthetic_adds_truth_error_metrics_and_initial_model(monkeypatch, tmp_path):
+    seen = _stub_pwc(monkeypatch)
+    (tmp_path / "om").mkdir()
+    np.save(tmp_path / "om" / "synthetic_time_lapse_ec.npy", np.zeros((3, 2, 4)))
+    np.save(tmp_path / "om" / "synthetic_time_lapse_eca.npy", np.zeros((3, 2, 6)))
+    rep = FakeReporter()
+    step6_plots.run_step6_water_content(rep, **_kw(tmp_path, "synthetic"))
+    assert list(seen) == ["main", "truth", "err", "iniec", "inieca"]
+    assert seen["err"]["xy_render_mode"] == "imshow" and seen["truth"]["theta_true"] == "TRUE"
+    assert seen["inieca"]["coils"] == ["HCP05"] and seen["inieca"]["forward_model"] == "FSlin"
+    assert rep.metrics == {"Water Content MAE vs Truth (XZ)": "1.500 %VWC",
+                           "Water Content RMSE vs Truth (XZ)": "2.500 %VWC"}
+
+
+def test_step6_synthetic_failures_warn_and_continue(monkeypatch, tmp_path):
+    seen = _stub_pwc(monkeypatch, fail="truth")
+    rep = FakeReporter()
+    step6_plots.run_step6_water_content(rep, **_kw(tmp_path, "synthetic"))
+    assert any("[STEP 6][WARN] plot_truth_from_pipeline failed: boom" in l for l in rep.lines)
+    assert "err" in seen and any("synthetic_time_lapse_ec.npy' not found" in l for l in rep.lines)

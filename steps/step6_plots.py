@@ -250,3 +250,176 @@ def run_step6b_emagpy_plots(reporter, *, em_fnames, mode, selected_output, model
     )
 
     reporter.end_step("Step 6b")
+
+
+def run_step6_water_content(reporter, *, mode, data_source, selected_output, x_transect,
+                            depths0, probe_x_coords, probe_y_coords, probe_depths,
+                            probe_x_coords_utm, probe_y_coords_utm, probe_labels, utm_x, utm_y,
+                            output_dir, output_model_dir, scenario_name, timelapse,
+                            xy_render_mode, window_m, theta_true_realization,
+                            realization_index, cond_ranges, coils_list, forward_model):
+    """STEP 6: water-content XZ (always) / XY (2-D) maps; synthetic runs add the truth maps,
+    calculated-vs-truth MAE/RMSE maps (metrics logged to the report) and the initial-model-vs-truth
+    EC_bulk / ECa diagnostics. Opens "Step 6"; the caller closes it after Steps 6b-6e.
+    """
+    reporter.step("Step 6", "Rendering water content visualizations")
+    reporter.log("\n" + "=" * 80)
+    reporter.log(" [PIPELINE] STEP 6: RENDERING WATER CONTENT VISUALIZATIONS")
+    reporter.log(f"            XZ cross-section : always")
+    reporter.log(f"            XY plan view      : {'YES (2-D mode)' if mode == '2d' else 'NO (1-D mode)'}")
+    reporter.log("=" * 80)
+
+    pwc.plot_from_pipeline(
+        selected_output=selected_output,
+        x_transect=x_transect,
+        depths0=depths0,
+        probe_x_coords=probe_x_coords,
+        probe_y_coords=probe_y_coords,   # local frame -- XZ probe markers only
+        probe_depths=probe_depths,        # Z axis (unchanged)
+        output_dir=output_dir,
+        scenario_name=scenario_name,
+        timelapse=timelapse,
+        survey_labels=None,
+        utm_x=utm_x,
+        utm_y=utm_y,
+        # FIX: without these, plot_from_pipeline's own fallback treated
+        # the LOCAL probe_x_coords/probe_y_coords above as if they were
+        # already absolute UTM, mislocating every probe marker on
+        # water_content_xy_{scenario}.png relative to the real UTM
+        # survey grid. probe_x_coords_utm/probe_y_coords_utm are the
+        # correct absolute-UTM counterparts computed earlier.
+        probe_utm_x=probe_x_coords_utm,
+        probe_utm_y=probe_y_coords_utm,
+        # Real TDR station names in real-data mode (overridden above),
+        # synthetic "P0","P1",... labels otherwise.
+        probe_ids=probe_labels,
+        xy_render_mode=xy_render_mode,
+        # Auto-sizes the extra water_content_xy_{scenario}_imshow.png
+        # raster's pixel size to 2 * window_m -- see plot_from_pipeline.
+        window_m=window_m,
+    )
+
+    # Ground-truth counterpart of the plot above (water_content_xz_<scenario>_truth.png
+    # / water_content_xy_<scenario>_truth.png) -- only available in synthetic mode,
+    # where theta_true_realization is the known ground truth used to generate the
+    # synthetic surveys. No truth exists for real field data, so this is skipped there.
+    if data_source == "synthetic" and theta_true_realization is not None:
+        try:
+            pwc.plot_truth_from_pipeline(
+                theta_true=theta_true_realization,
+                x_transect=x_transect,
+                depths0=depths0,
+                probe_x_coords=probe_x_coords,
+                probe_y_coords=probe_y_coords,
+                probe_depths=probe_depths,
+                output_dir=output_dir,
+                scenario_name=scenario_name,
+                timelapse=timelapse,
+                survey_labels=None,
+                utm_x=utm_x,
+                utm_y=utm_y,
+                # FIX: same probe_utm_x/y fix as plot_from_pipeline above --
+                # otherwise water_content_xy_{scenario}_truth.png mislocates
+                # every probe marker the same way.
+                probe_utm_x=probe_x_coords_utm,
+                probe_utm_y=probe_y_coords_utm,
+                probe_ids=probe_labels,
+                xy_render_mode=xy_render_mode,
+                window_m=window_m,
+            )
+            reporter.log(
+                f"[STEP 6] Ground-truth XZ (and XY, if 2-D) water-content "
+                f"plots -> {output_dir}/water_content_xz_"
+                f"{scenario_name}_truth.png"
+            )
+        except Exception as e:
+            reporter.log(f"[STEP 6][WARN] plot_truth_from_pipeline failed: {e}")
+
+        # Calculated-vs-truth error maps: MAE and RMSE (%VWC), XZ always
+        # and XY too in 2-D mode -- these supersede the old signed
+        # %-difference plot (water_content_xy_{scenario}_pctdiff.png),
+        # which is undefined/blows up wherever truth ~ 0. Also logs the
+        # pooled overall MAE/RMSE into the report's Metrics Summary so
+        # compare_scenarios.py can pull them into scenario comparisons.
+        try:
+            error_metrics = pwc.plot_error_metrics_from_pipeline(
+                selected_output=selected_output,
+                theta_true=theta_true_realization,
+                x_transect=x_transect,
+                depths0=depths0,
+                probe_x_coords=probe_x_coords,
+                probe_y_coords=probe_y_coords,
+                probe_depths=probe_depths,
+                output_dir=output_dir,
+                scenario_name=scenario_name,
+                timelapse=timelapse,
+                survey_labels=None,
+                utm_x=utm_x,
+                utm_y=utm_y,
+                probe_utm_x=probe_x_coords_utm,
+                probe_utm_y=probe_y_coords_utm,
+                xy_render_mode="imshow",
+                window_m=window_m,
+            )
+            reporter.log(f"[STEP 6] Calculated-vs-truth XZ RMSE map -> {error_metrics['xz_rmse_path']}")
+            reporter.log(f"[STEP 6] Calculated-vs-truth XZ MAE map  -> {error_metrics['xz_mae_path']}")
+            reporter.metric("Water Content MAE vs Truth (XZ)", f"{error_metrics['xz_mae_overall']:.3f} %VWC")
+            reporter.metric("Water Content RMSE vs Truth (XZ)", f"{error_metrics['xz_rmse_overall']:.3f} %VWC")
+            if "xy_rmse_path" in error_metrics:
+                reporter.log(f"[STEP 6] Calculated-vs-truth XY RMSE map -> {error_metrics['xy_rmse_path']}")
+                reporter.log(f"[STEP 6] Calculated-vs-truth XY MAE map  -> {error_metrics['xy_mae_path']}")
+                reporter.metric("Water Content MAE vs Truth (XY)", f"{error_metrics['xy_mae_overall']:.3f} %VWC")
+                reporter.metric("Water Content RMSE vs Truth (XY)", f"{error_metrics['xy_rmse_overall']:.3f} %VWC")
+        except Exception as e:
+            reporter.log(f"[STEP 6][WARN] plot_error_metrics_from_pipeline failed: {e}")
+
+        # Initial model (starting guess, conds0's layer MIN/MAX bounds) vs.
+        # ground truth -- a QC check for whether the inversion's starting
+        # point plausibly brackets reality, BEFORE any inversion runs.
+        # Two flavours: depth-resolved EC_bulk (XZ heatmap, same style as
+        # water_content_xz_*.png) and per-coil apparent conductivity (ECa),
+        # which isn't depth-resolved so gets its own per-coil panel style.
+        try:
+            _ec_true_path = _resolve_npy_path("synthetic_time_lapse_ec.npy", output_model_dir, output_dir)
+            _eca_true_path = _resolve_npy_path("synthetic_time_lapse_eca.npy", output_model_dir, output_dir)
+
+            if os.path.exists(_ec_true_path):
+                _ec_bulk_true = np.load(_ec_true_path)[realization_index]
+                ini_ec_path = pwc.plot_initial_model_vs_true_ec(
+                    cond_ranges=cond_ranges,
+                    depths0=depths0,
+                    x_coords=x_transect,
+                    ec_bulk_true=_ec_bulk_true,
+                    output_dir=output_dir,
+                    scenario_name=scenario_name,
+                    probe_x=probe_x_coords,
+                    probe_depths=probe_depths,
+                )
+                reporter.log(f"[STEP 6] Initial model vs. true EC_bulk -> {ini_ec_path}")
+            else:
+                reporter.log(
+                    "[STEP 6][WARN] 'synthetic_time_lapse_ec.npy' not found; "
+                    "skipping initial-model-vs-true-EC_bulk plot."
+                )
+
+            if os.path.exists(_eca_true_path):
+                _eca_true = np.load(_eca_true_path)[realization_index]
+                ini_eca_path = pwc.plot_initial_eca_vs_true_eca(
+                    cond_ranges=cond_ranges,
+                    depths0=depths0,
+                    x_coords=x_transect,
+                    eca_true=_eca_true,
+                    coils=coils_list,
+                    output_dir=output_dir,
+                    scenario_name=scenario_name,
+                    forward_model=forward_model,
+                )
+                if ini_eca_path is not None:
+                    reporter.log(f"[STEP 6] Initial model vs. true ECa -> {ini_eca_path}")
+            else:
+                reporter.log(
+                    "[STEP 6][WARN] 'synthetic_time_lapse_eca.npy' not found; "
+                    "skipping initial-model-vs-true-ECa plot."
+                )
+        except Exception as e:
+            reporter.log(f"[STEP 6][WARN] Initial-model-vs-truth diagnostics failed: {e}")
