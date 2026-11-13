@@ -61,7 +61,7 @@ import geometry_utils
 import quick_preset
 import stage_split
 import train_val_split as tvs
-from scenario_loader import load_scenario, ScenarioConfig
+from scenario_loader import load_scenario, ScenarioConfig, check_ws_start_values
 import plot_water_content as pwc
 import plot_emagpy_diagnostics as pediag
 import plot_em_diagnostics_real as pediag_real
@@ -1925,6 +1925,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     write_run_marker(OUTPUT_DIR, reporter.run_id, reporter.report_path)
     reporter.set_manifest_extra(
         stage=STAGE,
+        ws_start_warnings=check_ws_start_values(cfg) if cfg is not None else [],
         seeds={"inversion_seed": DEFAULT_INVERSION_SEED,
                "random_xy_seed": getattr(cfg, "random_xy_seed", None),
                "ws_xy_seed": getattr(cfg, "ws_xy_seed", None)},
@@ -6084,6 +6085,8 @@ if __name__ == "__main__":
         print(f" [PIPELINE] Coordinates     : {effective_coord_file}")
     print(f" [PIPELINE] Spatial mode    : {effective_mode.upper()}")
     print(cfg.summary())
+    for _w in check_ws_start_values(cfg):
+        print(f" [WARN] WS start values: {_w}")
     print("=" * 80 + "\n")
 
     try:

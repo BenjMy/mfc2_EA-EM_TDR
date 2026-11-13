@@ -29,6 +29,7 @@ from __future__ import annotations
 import bisect
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -512,6 +513,15 @@ class ScenarioConfig:
     def cache_path(self) -> str:
         return os.path.join(self.output_dir, self.cache_filename)
 
+    def _forward_model_label(self) -> str:
+        """The forward model(s) the run really uses: the ``param_grid['forwardModel']``
+        sweep when present (the pipeline never reads the ``forward_model`` field)."""
+        grid = (self.param_grid or {}).get("forwardModel")
+        if grid:
+            return (f"{', '.join(str(g) for g in grid)}  (param_grid sweep; "
+                    f"the 'forward_model' field is not used)")
+        return str(self.forward_model)
+
     def summary(self) -> str:
         """One-block log string shown at pipeline start."""
         fd = self.fixed_depths
@@ -547,7 +557,7 @@ class ScenarioConfig:
             f"  Output dir      : {self.output_dir}",
             f"  Layers          : {self.n_layers}  (depths0 = {self.depths0})",
             f"  Interfaces      : {fd_str}",
-            f"  Forward model   : {self.forward_model}",
+            f"  Forward model   : {self._forward_model_label()}",
             f"  Gamma (TL)      : {self.gamma}",
             f"  Param grid      : {self.param_grid}",
             f"  Alpha sweep     : {alpha_str}",
@@ -1384,6 +1394,26 @@ def _resolve_extends(scenarios: dict) -> dict:
     return {_name: resolved[_name] for _name in scenarios}
 
 
+def _configs_defining(scenario_name: str, config_path: str) -> list:
+    """Names of the other ``ensemble_scenarios*.json`` files (next to the loader and next
+    to ``config_path``) that define ``scenario_name`` -- used for the "wrong config" hint."""
+    import glob
+    dirs = {os.path.dirname(os.path.abspath(__file__)),
+            os.path.dirname(os.path.abspath(config_path))}
+    this = os.path.abspath(config_path)
+    found = []
+    for d in sorted(dirs):
+        for path in sorted(glob.glob(os.path.join(d, "ensemble_scenarios*.json"))):
+            if os.path.abspath(path) == this or os.path.basename(path) in found:
+                continue
+            try:
+                if scenario_name in list_scenarios(path):
+                    found.append(os.path.basename(path))
+            except (OSError, ValueError):
+                continue
+    return found
+
+
 def load_scenario(
     scenario_name: str = "default",
     config_path: str | None = None,
@@ -1435,8 +1465,11 @@ def load_scenario(
 
     if scenario_name not in scenarios:
         available = sorted(scenarios.keys())
+        elsewhere = _configs_defining(scenario_name, config_path)
+        hint = (f" It is defined in {', '.join(elsewhere)}: pass that file as the "
+                f"scenario config (-c / --config)." if elsewhere else "")
         raise KeyError(
-            f"Scenario '{scenario_name}' not found in '{config_path}'. "
+            f"Scenario '{scenario_name}' not found in '{config_path}'.{hint} "
             f"Available scenarios: {available}"
         )
 
@@ -1602,6 +1635,56 @@ def list_scenarios(config_path: str | None = None) -> list[str]:
     ))
 
 
+_WS_NAMES = ("a", "m", "sigma_w", "sigma_s")
+
+
+def check_ws_start_values(cfg) -> list:
+    """Warnings about where the Waxman-Smits start values sit relative to the bounds.
+
+    Compares ``lab_p0`` (or ``DEFAULT_WS_P0`` when unset), and for synthetic runs
+    the true ``ws_layer_params``, with the effective bounds (``WS_BOUNDS`` plus the
+    scenario's ``ws_bounds``). Reported:
+
+    * a value OUTSIDE the bounds (a free fit starts out of range; a truth outside the
+      bounds can never be recovered);
+    * a FREE parameter starting exactly ON a bound (L-BFGS-B / curve_fit then clips
+      most ensemble members onto it: zero spread, see the free4 case in to-do.md).
+
+    Informational only: nothing is changed. Empty list = all inside.
+    """
+    import numpy as np
+    from em_methodology import DEFAULT_WS_P0, resolve_ws_bounds
+
+    lo, hi = resolve_ws_bounds(getattr(cfg, "ws_bounds", None))
+    fixed = getattr(cfg, "ws_fixed_params", None) or {}
+    p0 = getattr(cfg, "lab_p0", None)
+    arr = np.atleast_2d(np.asarray(DEFAULT_WS_P0 if p0 is None else p0, dtype=float))
+    msgs: list = []
+    for h, row in enumerate(arr):
+        tag = "lab_p0" + (f" (horizon {h})" if len(arr) > 1 else
+                          "" if p0 is not None else " (default DEFAULT_WS_P0)")
+        for i, name in enumerate(_WS_NAMES):
+            v, is_fixed = float(row[i]), bool(fixed.get(name, False))
+            state = "fixed" if is_fixed else "free"
+            if v < lo[i] or v > hi[i]:
+                msgs.append(f"{tag}: {name}={v:g} is OUTSIDE the WS bounds "
+                            f"[{lo[i]:g}, {hi[i]:g}] ({state}).")
+            elif not is_fixed and v in (lo[i], hi[i]):
+                side = "lower" if v == lo[i] else "upper"
+                msgs.append(f"{tag}: free {name}={v:g} starts ON the {side} bound; "
+                            f"ensemble members will pile up there (zero spread). "
+                            f"Move the start value or set 'ws_bounds'.")
+    for h, params in sorted((getattr(cfg, "ws_layer_params", None) or {}).items(),
+                            key=lambda kv: int(kv[0])):
+        for name, v in params.items():
+            i = _WS_NAMES.index(name)
+            if not lo[i] <= float(v) <= hi[i]:
+                msgs.append(f"ws_layer_params[{h}]: true {name}={float(v):g} is OUTSIDE the "
+                            f"WS bounds [{lo[i]:g}, {hi[i]:g}] and cannot be recovered by "
+                            f"the calibration.")
+    return msgs
+
+
 def validate_all(config_path: str | None = None) -> None:
     """
     Validate every scenario in the file and print a pass/fail report.
@@ -1624,6 +1707,11 @@ def validate_all(config_path: str | None = None) -> None:
         try:
             _validate(name, raw)
             print(f"  ✓  {name}")
+            try:
+                for _w in check_ws_start_values(load_scenario(name, config_path=config_path)):
+                    print(f"       ⚠ {_w}")
+            except Exception:  # the check is informational; never fail validation on it
+                pass
         except (ValueError, TypeError) as exc:
             print(f"  ✗  {name}: {exc}")
             all_ok = False
@@ -1662,8 +1750,19 @@ if __name__ == "__main__":
                     help="list scenario names with their description")
     ap.add_argument("--config", default=None,
                     help="scenario JSON (default: ensemble_scenarios.json)")
+    ap.add_argument("--field", default=None,
+                    help="print one resolved field of the scenario (empty if unset); "
+                         "exit 3 with the reason on stderr if the scenario cannot be loaded")
     args = ap.parse_args()
-    if args.list_:
+    if args.field is not None and args.scenario:
+        try:
+            _cfg = load_scenario(args.scenario, config_path=args.config)
+        except (KeyError, ValueError) as _e:
+            print(str(_e.args[0]) if _e.args else str(_e), file=sys.stderr)
+            raise SystemExit(3)
+        _val = getattr(_cfg, args.field, "")
+        print("" if _val is None else _val)
+    elif args.list_:
         for _n, _d in describe_scenarios(args.config):
             print(f"{_n}\t{_d}" if _d else _n)
     elif args.scenario:

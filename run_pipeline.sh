@@ -727,20 +727,21 @@ fi
 # values when explicitly supplied, but the two must not disagree.
 _SCENARIO_JSON_PATH="${CONFIG_FILE:-${SCENARIO_JSON}}"
 
+# Fields are read through scenario_loader.py, so 'extends', generated sweeps and
+# defaults are resolved exactly as in the pipeline. A scenario that cannot be
+# loaded (typically: a real-data scenario run without -c ensemble_scenarios_real.json)
+# stops here with the loader's reason instead of silently falling back to
+# data_source='synthetic' / '1d'.
+if ! _SCENARIO_ERR="$("${PYTHON}" "${SCRIPT_DIR}/scenario_loader.py" "${SCENARIO}" \
+        --config "${_SCENARIO_JSON_PATH}" --field name 2>&1 >/dev/null)"; then
+    die "${_SCENARIO_ERR%% Available scenarios:*}
+  Config used : ${_SCENARIO_JSON_PATH}
+  List the scenarios of a config with: python scenario_loader.py --list-scenarios --config <file>"
+fi
+
 _read_scenario_field() {
-    local field="$1"
-    "${PYTHON}" - <<PYEOF 2>/dev/null
-import json, sys
-try:
-    data = json.load(open('${_SCENARIO_JSON_PATH}'))
-    scenarios = {k: v for k, v in data.items() if k not in ('_comment', '_schema')}
-    s = scenarios.get('${SCENARIO}', {})
-    val = s.get('${field}', '')
-    if val:
-        print(val)
-except Exception:
-    pass
-PYEOF
+    "${PYTHON}" "${SCRIPT_DIR}/scenario_loader.py" "${SCENARIO}" \
+        --config "${_SCENARIO_JSON_PATH}" --field "$1" 2>/dev/null
 }
 
 SCENARIO_DS="$(_read_scenario_field data_source)"
