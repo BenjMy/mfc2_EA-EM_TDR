@@ -81,6 +81,7 @@ import data_synthetic as step0
 import step2_petro as step2
 import step3_average as step3
 import step4_select as step4_5
+from steps import step1_diagnostics as steps_step1
 from steps import step6_plots as steps_step6  # Phase 6: step functions extracted from main()
 
 
@@ -3354,104 +3355,24 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.metric("EM_SENS — layer weights (McNeill)", np.round(EM_LAYER_WEIGHTS, 4).tolist())
 
         # -----------------------------------------------------------------------
-        # STEP 1b — REAL-DATA EM DIAGNOSTICS
-        #   Common-point footprint + ECa plan-view maps.
-        #   Only runs in real-data mode; wrapped in try/except so a plot
-        #   failure never aborts the pipeline.
+        # STEPS 1b-1d — REAL-DATA PRE-INVERSION DIAGNOSTICS (steps/step1_diagnostics.py)
+        #   EM footprint/ECa maps, raw TDR QC, initial model + initial EC/WS.
+        #   Plot failures are warnings; they never abort the pipeline.
         # -----------------------------------------------------------------------
         if data_source == "real":
-            reporter.step("Step 1b", "Real-data EM diagnostic plots")
-            reporter.log(" [PIPELINE] STEP 1b: REAL-DATA EM DIAGNOSTICS")
-            reporter.log(f"            Common points (min_pts) : {num_measured_points}")
-            reporter.log(f"            Raw EM files            : {len(RAW_EM_FNAMES)}")
-            try:
-                _diag_saved = pediag_real.plot_real_em_diagnostics(
-                    raw_em_files=RAW_EM_FNAMES,
-                    min_pts=num_measured_points,
-                    probe_table=probe_table,
-                    output_dir=OUTPUT_DIR,
-                    em_unit=EM_UNIT,
-                )
-                reporter.log(f"[STEP 1b] {len(_diag_saved)} diagnostic figure(s) written "
-                             f"to '{os.path.join(OUTPUT_DIR, 'diagnostics')}'")
-                reporter.metric("Real-data EM diagnostic figures", len(_diag_saved))
-            except Exception as _diag_exc:
-                reporter.log(f"[STEP 1b][WARN] Diagnostic plots failed (pipeline continues): "
-                             f"{type(_diag_exc).__name__}: {_diag_exc}")
-            reporter.end_step("Step 1b")
-
-        # -----------------------------------------------------------------------
-        # STEP 1c — REAL-DATA TDR IMPORT DIAGNOSTICS
-        #   Raw, unaligned/unaveraged per-station TDR time series + QC flags
-        #   (NaN gaps, un-normalized >1.0 values, implausible VWC, stuck/
-        #   flat-lined sensor runs). Only runs in real-data mode; wrapped in
-        #   try/except so a plot failure never aborts the pipeline.
-        # -----------------------------------------------------------------------
-        if data_source == "real":
-            reporter.step("Step 1c", "Real-data TDR import diagnostic plots")
-            reporter.log(" [PIPELINE] STEP 1c: REAL-DATA TDR IMPORT DIAGNOSTICS")
-            try:
-                _tdr_diag_saved = ptdrdiag.plot_tdr_diagnostics(
-                    tdr_dir=tdr_dir,
-                    coord_file=coord_file,
-                    em_dates=EM_DATES,
-                    time_tolerance_days=getattr(cfg, "time_tolerance_days", 1.0),
-                    output_dir=OUTPUT_DIR,
-                )
-                reporter.log(f"[STEP 1c] {len(_tdr_diag_saved)} diagnostic file(s) written "
-                             f"to '{os.path.join(OUTPUT_DIR, 'diagnostics')}'")
-                reporter.metric("Real-data TDR diagnostic figures", len(_tdr_diag_saved))
-            except Exception as _tdr_diag_exc:
-                reporter.log(f"[STEP 1c][WARN] TDR diagnostic plots failed (pipeline continues): "
-                             f"{type(_tdr_diag_exc).__name__}: {_tdr_diag_exc}")
-            reporter.end_step("Step 1c")
-
-        # -----------------------------------------------------------------------
-        # STEP 1d — INITIAL MODEL DIAGNOSTICS (raw field inputs, pre-inversion)
-        #   Quick ECa (plan-view) and SWC (plan-view) scatter maps built
-        #   directly from the raw GEM-2 EM survey CSV and the raw TDR field
-        #   data — i.e. the "initial model" the rest of the pipeline starts
-        #   from, produced BEFORE any inversion or calibration step runs.
-        #   Only runs in real-data mode; wrapped in try/except so a plot
-        #   failure never aborts the pipeline.
-        # -----------------------------------------------------------------------
-        if data_source == "real":
-            reporter.step("Step 1d", "Initial model diagnostics (raw field inputs)")
-            reporter.log(" [PIPELINE] STEP 1d: INITIAL MODEL DIAGNOSTICS (raw field inputs)")
-            try:
-                _ini_model_paths = pim.plot_initial_model(
-                    em_dir=em_dir,
-                    tdr_dir=tdr_dir,
-                    coord_file=coord_file,
-                    output_dir=OUTPUT_DIR,
-                    em_unit=EM_UNIT,
-                    em_date_index=0,
-                )
-                reporter.log(
-                    "[STEP 1d] Initial-model plots written -> "
-                    f"ECa: {_ini_model_paths['eca_plot']}, "
-                    f"SWC: {_ini_model_paths['swc_plot']}, "
-                    f"combined: {_ini_model_paths['combined_plot']}"
-                )
-                reporter.metric("Initial model diagnostic figures", len(_ini_model_paths))
-            except Exception as _ini_exc:
-                reporter.log(f"[STEP 1d][WARN] Initial model plots failed (pipeline continues): "
-                             f"{type(_ini_exc).__name__}: {_ini_exc}")
-            # Initial EC range (ECmin/ECmax) + initial WS values, one subplot
-            # per horizon (real-data counterpart of ws_distribution.py).
-            try:
-                _ini_ec_ws = initial_ec_ws_real.plot_initial_ec_ws_real(
-                    OUTPUT_DIR, cond_ranges=COND_RANGES, depths0=DEPTHS0,
-                    lab_p0=LAB_P0, ws_fixed_params=WS_FIXED_PARAMS,
-                    ws_bounds=EMmethod.resolve_ws_bounds(WS_BOUNDS_OVERRIDE),
-                    observations=observations_list, probe_table=probe_table,
-                )
-                reporter.log(f"[STEP 1d] Initial EC range / WS per horizon -> "
-                             f"{_ini_ec_ws['ec']}, {_ini_ec_ws['ws']}")
-            except Exception as _ini_ws_exc:
-                reporter.log(f"[STEP 1d][WARN] initial EC/WS plots failed (pipeline continues): "
-                             f"{type(_ini_ws_exc).__name__}: {_ini_ws_exc}")
-            reporter.end_step("Step 1d")
+            steps_step1.run_step1b_em_diagnostics(
+                reporter, raw_em_files=RAW_EM_FNAMES, min_pts=num_measured_points,
+                probe_table=probe_table, output_dir=OUTPUT_DIR, em_unit=EM_UNIT)
+            steps_step1.run_step1c_tdr_diagnostics(
+                reporter, tdr_dir=tdr_dir, coord_file=coord_file, em_dates=EM_DATES,
+                time_tolerance_days=getattr(cfg, "time_tolerance_days", 1.0),
+                output_dir=OUTPUT_DIR)
+            steps_step1.run_step1d_initial_model(
+                reporter, em_dir=em_dir, tdr_dir=tdr_dir, coord_file=coord_file,
+                output_dir=OUTPUT_DIR, em_unit=EM_UNIT, cond_ranges=COND_RANGES,
+                depths0=DEPTHS0, lab_p0=LAB_P0, ws_fixed_params=WS_FIXED_PARAMS,
+                ws_bounds=EMmethod.resolve_ws_bounds(WS_BOUNDS_OVERRIDE),
+                observations=observations_list, probe_table=probe_table)
 
         reporter.end_step("Step 0")
         reporter.step("Step 1", "Parallel multi-inversion ensemble generation")

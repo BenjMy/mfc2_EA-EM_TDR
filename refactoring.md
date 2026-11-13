@@ -24,6 +24,8 @@ Everything below is based on reading the repo at commit `10a4c9a`. Line numbers 
 
 Regression check 2026-11-12 (phases 5 `plot_truth_tdr`, 8 sweeps, 9 manifest; cloud environment, Python 3.13): `1d_surface_tdr --mode 1d --num-swc-positions 5` run at `3d065d9` (before) and at the branch HEAD (after): all 20 arrays of `output_model/` bit-identical, `final_rmse` 0.032468 both (runtime ~4.4 min on 2 cores), no traceback, `run_manifest.json` written and read by `compare_scenarios`. Different environment from your machine (0.031212 there), so compare only within one environment.
 
+Phase 6, Steps 1b-1d (2026-11-13): moved to `steps/step1_diagnostics.py` (`run_step1b_em_diagnostics`, `run_step1c_tdr_diagnostics`, `run_step1d_initial_model`), unit-tested with stubs (`tests/test_step1_diagnostics.py`). These blocks only run for `data_source == "real"`, so the synthetic `1d_surface_tdr` e2e comparison does not exercise them; check with one real-scenario run on your machine.
+
 Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20 saved arrays bit-identical to the pre-refactor reference. Phases 1-4 touched no scientific code.
 
 Not refactoring (behaviour changes, separate commits): 1d_* EC bound 60 -> 300 mS/m; `ws_layer_params` + `hetero` scenarios + `extends`. See `to-do.md`.
