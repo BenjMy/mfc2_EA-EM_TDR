@@ -82,6 +82,7 @@ import step2_petro as step2
 import step3_average as step3
 import step4_select as step4_5
 from steps import step1_diagnostics as steps_step1
+from steps import step5b_validation as steps_step5b
 from steps import step5c_footprint as steps_step5c
 from steps import step6_plots as steps_step6  # Phase 6: step functions extracted from main()
 
@@ -4960,139 +4961,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # `split.train`, so this is the first and only time the validation
         # observations are touched.
         if split is not None and theta_obs_val is not None and len(theta_obs_val):
-            reporter.step("Step 5b", "Held-out validation (Sec. 2.6)")
-            reporter.log("\n" + "=" * 80)
-            reporter.log(" [PIPELINE] STEP 5b: HELD-OUT VALIDATION")
-            reporter.log("=" * 80)
-
-            # -----------------------------------------------------------
-            # Validation RMSE at EVERY candidate stack depth K, not just
-            # the selected one -- needed for the train-vs-val RMSE-vs-K
-            # overfitting curve (train_val/rmse_vs_K.png). Same "pin every
-            # WS param to its train-fitted value" trick as before, just
-            # looped across all K instead of stopping at selected_output.K.
-            # Cheap: fixed_params turns each L-BFGS-B call into a no-op
-            # forward pass, so this is len(fits_step4) forward evaluations,
-            # not len(fits_step4) real optimizations.
-            # -----------------------------------------------------------
-            val_rmse_by_k = []
-            val_fit = None
-            for _k in range(len(fits_step4)):
-                _train_params_k = fits_step4[_k].params  # (num_layers, 4)
-                _val_fit_k = step2.run_petro(
-                    # averaged_models[_k] already has the ensemble axis
-                    # collapsed (Step 3); wrap it back into a length-1
-                    # ensemble since run_petro/calibrate_petrophysical_
-                    # relationship call `.ndim` on `models` directly.
-                    models=np.stack([averaged_models[_k]]),
-                    sample_positions=sample_positions_val, sample_times=sample_times_val,
-                    theta_obs=theta_obs_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
-                    generate_plots=False,   # diagnostic-only pass, skip Step 2's plot set
-                    probe_layer_indices=probe_layer_val,
-                    depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
-                    fixed_params={"a": True, "m": True, "sigma_w": True, "sigma_s": True},
-                    probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
-                    lab_p0=_train_params_k,   # pin to TRAIN-fitted values at this K, not LAB_P0
-                    theta_obs_std=_theta_obs_std_step2,
-                )[0]
-                val_rmse_by_k.append(_val_fit_k.rmse)
-                if _k == selected_output.K - 1:
-                    # Keep the fit at the SELECTED K -- this is what the
-                    # scalar metrics/parity plot below use, identical to
-                    # the single-K evaluation this loop replaces.
-                    val_fit = _val_fit_k
-            val_rmse_by_k = np.array(val_rmse_by_k)
-
-            if val_fit is None:
-                # Defensive fallback -- should be unreachable since
-                # selected_output.K is always in range(1, len(fits_step4)+1),
-                # but avoids a confusing AttributeError below if that ever
-                # changes upstream.
-                reporter.log(
-                    "[STEP 5b][WARN] selected_output.K was not covered by "
-                    "the per-K validation loop -- re-evaluating it directly."
-                )
-                val_fit = step2.run_petro(
-                    models=np.stack([averaged_models[selected_output.K - 1]]),
-                    sample_positions=sample_positions_val, sample_times=sample_times_val,
-                    theta_obs=theta_obs_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
-                    generate_plots=False,
-                    probe_layer_indices=probe_layer_val,
-                    depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
-                    fixed_params={"a": True, "m": True, "sigma_w": True, "sigma_s": True},
-                    probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
-                    lab_p0=fits_step4[selected_output.K - 1].params,
-                    theta_obs_std=_theta_obs_std_step2,
-                )[0]
-
-            # Train RMSE per K was already computed above at Step 4
-            # (`_rmse4_all = [f.rmse for f in fits_step4]`) -- reuse it
-            # rather than recomputing, so both curves are guaranteed to
-            # come from the exact same fits_step4 list, index for index.
-            train_rmse_by_k = np.array(_rmse4_all)
-
-            # `fits_step4` (Step 4's recalibration of the K-averaged models)
-            # is what selected_output.K was actually picked on -- these are
-            # the TRAIN-fitted parameters frozen for reporting below.
-            train_fitted_params = fits_step4[selected_output.K - 1].params  # (num_layers, 4)
-
-            train_rmse = selected_output.rmse
-            val_rmse = val_fit.rmse
-            reporter.log(
-                f"[STEP 5b] Train RMSE (K={selected_output.K}, n={len(split.train)}): "
-                f"{train_rmse:.5f} m³/m³"
-            )
-            reporter.log(
-                f"[STEP 5b] Val   RMSE (K={selected_output.K}, n={len(split.val)}): "
-                f"{val_rmse:.5f} m³/m³"
-            )
-            _gap = val_rmse - train_rmse
-            reporter.metric("Train RMSE", f"{train_rmse:.5f} m³/m³")
-            reporter.metric("Validation RMSE", f"{val_rmse:.5f} m³/m³")
-            reporter.metric("Train↔Val RMSE gap", f"{_gap:+.5f} m³/m³")
-            if not split.independent:
-                reporter.log(
-                    f"[STEP 5b][NOTE] split method='{split.method}' is not "
-                    f"fully independent (see [SPLIT][WARN] above) -- a "
-                    f"small train/val gap here is expected and does not by "
-                    f"itself rule out overfitting the way it would for an "
-                    f"independent split."
-                )
-            if abs(_gap) > 0.3 * train_rmse:
-                reporter.log(
-                    "[STEP 5b][WARN] Val RMSE diverges >30% from train RMSE "
-                    "-- possible overfitting in K selection, or val subset "
-                    "too small to be representative. Treat the selected K "
-                    "with caution."
-                )
-
-            # -----------------------------------------------------------
-            # Train/val diagnostic plots -> <OUTPUT_DIR>/train_val/
-            # -----------------------------------------------------------
-            _train_val_dir = os.path.join(OUTPUT_DIR, "train_val")
-            try:
-                os.makedirs(_train_val_dir, exist_ok=True)
-                ptv.plot_rmse_vs_k(
-                    train_rmse_by_k=train_rmse_by_k,
-                    val_rmse_by_k=val_rmse_by_k,
-                    selected_K=selected_output.K,
-                    output_dir=_train_val_dir,
-                )
-                ptv.plot_parity_train_val(
-                    train_obs=fits_step4[selected_output.K - 1].observed_theta,
-                    train_pred=fits_step4[selected_output.K - 1].predicted_theta,
-                    val_obs=val_fit.observed_theta,
-                    val_pred=val_fit.predicted_theta,
-                    output_dir=_train_val_dir,
-                )
-                reporter.log(f"[STEP 5b] Train/val diagnostic plots -> {_train_val_dir}")
-            except Exception as _tv_plot_exc:
-                reporter.log(
-                    f"[STEP 5b][WARN] Train/val diagnostic plots failed "
-                    f"(pipeline continues): {type(_tv_plot_exc).__name__}: {_tv_plot_exc}"
-                )
-
-            reporter.end_step("Step 5b")
+            steps_step5b.run_step5b_validation(
+                reporter, split=split, selected_output=selected_output,
+                fits_step4=fits_step4, train_rmse_by_k=_rmse4_all,
+                averaged_models=averaged_models, sample_positions_val=sample_positions_val,
+                sample_times_val=sample_times_val, theta_obs_val=theta_obs_val,
+                probe_layer_val=probe_layer_val, depths0=DEPTHS0, output_dir=OUTPUT_DIR,
+                fixed_depths=FIXED_DEPTHS,
+                probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
+                theta_obs_std=_theta_obs_std_step2)
 
         # -----------------------------------------------------------------------
         # STEP 6 — WATER CONTENT VISUALISATIONS  (XZ always; XY in 2-D mode)

@@ -28,6 +28,8 @@ Phase 6, Steps 1b-1d (2026-11-13): moved to `steps/step1_diagnostics.py` (`run_s
 
 Phase 6, Step 5c (2026-11-13): moved to `steps/step5c_footprint.py` (`run_step5c_footprint`, returns discrepancies and both RMSEs), `tests/test_step5c_footprint.py`. Synthetic e2e `1d_surface_tdr --em-footprint-diagnostic`: no traceback, hard-routed footprint RMSE 0.03247 = baseline final_rmse 0.032468.
 
+Phase 6, Step 5b (2026-11-13): moved to `steps/step5b_validation.py` (`run_step5b_validation`), `tests/test_step5b_validation.py`. Before/after e2e (`1d_surface_tdr --train-val-split alternate_sorted`, fd89775 vs now): train 0.02682 / val 0.04870 identical, all 20 `output_model` arrays bit-identical.
+
 Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20 saved arrays bit-identical to the pre-refactor reference. Phases 1-4 touched no scientific code.
 
 Not refactoring (behaviour changes, separate commits): 1d_* EC bound 60 -> 300 mS/m; `ws_layer_params` + `hetero` scenarios + `extends`. See `to-do.md`.
