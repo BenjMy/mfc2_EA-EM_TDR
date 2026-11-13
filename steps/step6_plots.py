@@ -13,6 +13,7 @@ import numpy as np
 import plot_emagpy_diagnostics as pediag
 import plot_solution_diagnostics as psol
 import plot_water_content as pwc
+import swc_uncertainty as swcu
 from steps._common import resolve_npy_path as _resolve_npy_path
 
 
@@ -423,3 +424,52 @@ def run_step6_water_content(reporter, *, mode, data_source, selected_output, x_t
                 )
         except Exception as e:
             reporter.log(f"[STEP 6][WARN] Initial-model-vs-truth diagnostics failed: {e}")
+
+
+def run_step6f_swc_uncertainty(reporter, *, models_clean, ranking, member_fits,
+                               fits_step4, selected_output, layer_centers,
+                               output_dir, output_model_dir, theta_true,
+                               scenario_name, nsigmas=(1.0, 2.0)):
+    """STEP 6f: SWC uncertainty (ensemble spread of theta at the chosen K).
+
+    Saves ``theta_std_total.npy`` / ``theta_std_ec.npy`` / ``theta_std_ws.npy``
+    in ``output_model_dir`` and the figure ``solution/solution_swc_uncertainty.png``.
+    Synthetic runs (``theta_true`` given) also log how often the truth lies
+    within +-1/+-2 sigma.  Diagnostic only: never raises, never changes a result.
+    Returns the figure path or None.
+    """
+    reporter.step("Step 6f", "SWC uncertainty (ensemble spread)")
+    try:
+        K = int(selected_output.K)
+        u = swcu.theta_ensemble_uncertainty(models_clean, ranking, K, member_fits,
+                                            fits_step4[K - 1])
+        for key in ("std_total", "std_ec", "std_ws"):
+            np.save(os.path.join(output_model_dir, f"theta_{key}.npy"), u[key])
+        cov = None
+        if theta_true is not None:
+            tt = np.asarray(theta_true, float)
+            if tt.size == u["theta_mean"].size:
+                tt = tt.reshape(u["theta_mean"].shape)
+                cov = swcu.uncertainty_coverage(tt, u["theta_mean"], u["std_total"], nsigmas)
+                reporter.log("[STEP 6f] truth within +-1/+-2 sigma: "
+                             f"{cov['within_1sigma']:.0%} / {cov['within_2sigma']:.0%} "
+                             f"(RMSE {cov['rmse']:.4f}, mean sigma {cov['mean_std']:.4f} m3/m3)")
+            else:
+                tt = None
+                reporter.log(f"[STEP 6f][WARN] truth shape {np.shape(theta_true)} != "
+                             f"{u['theta_mean'].shape}; truth overlay/coverage skipped.")
+        else:
+            tt = None
+        reporter.log(f"[STEP 6f] mean sigma_theta: total {np.nanmean(u['std_total']):.4f}, "
+                     f"EM-only {np.nanmean(u['std_ec']):.4f}, "
+                     f"calibration share {np.nanmean(u['std_ws']):.4f} m3/m3")
+        path = swcu.plot_swc_uncertainty(
+            u["theta_mean"], u["std_total"], u["std_ec"], layer_centers, output_dir,
+            theta_true=tt, scenario_name=scenario_name, K=K, coverage=cov)
+        reporter.log(f"[STEP 6f] SWC uncertainty figure -> {path}")
+        return path
+    except Exception as e:  # diagnostic only
+        reporter.log(f"[STEP 6f][WARN] SWC uncertainty skipped: {e}")
+        return None
+    finally:
+        reporter.end_step("Step 6f")

@@ -5046,6 +5046,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             timelapse=timelapse,
         )
 
+        # STEP 6f — SWC UNCERTAINTY (ensemble spread of theta; diagnostic only)
+        steps_step6.run_step6f_swc_uncertainty(
+            reporter, models_clean=models_clean, ranking=ranking, member_fits=fits_step2,
+            fits_step4=fits_step4, selected_output=selected_output,
+            layer_centers=synthetic_geometry["layer_centers"], output_dir=OUTPUT_DIR,
+            output_model_dir=OUTPUT_MODEL_DIR,
+            theta_true=theta_true_realization if data_source == "synthetic" else None,
+            scenario_name=cfg.name if cfg else "default")
+
         # -----------------------------------------------------------------------
         # STEP 6e — FORWARD-SIMULATE ECa FROM THE OPTIMAL MODEL
         #   Same "inject the weighted-average EC model" idea used by
