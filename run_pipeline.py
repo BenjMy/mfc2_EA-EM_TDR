@@ -81,6 +81,7 @@ import data_synthetic as step0
 import step2_petro as step2
 import step3_average as step3
 import step4_select as step4_5
+from steps import step6_plots as steps_step6  # Phase 6: step functions extracted from main()
 
 
 # ===========================================================================
@@ -114,17 +115,7 @@ def _collect_npy_into_output_model(output_dir: str, output_model_dir: str) -> li
     return moved
 
 
-def _resolve_npy_path(filename: str, output_model_dir: str, output_dir: str) -> str:
-    """
-    Resolve the path to a ``.npy`` array, preferring ``output_model_dir``
-    (where this pipeline now consolidates arrays) and falling back to the
-    legacy top-level ``output_dir`` location for backward compatibility
-    with older runs/caches.
-    """
-    preferred = os.path.join(output_model_dir, filename)
-    if os.path.isfile(preferred):
-        return preferred
-    return os.path.join(output_dir, filename)
+from steps._common import resolve_npy_path as _resolve_npy_path  # noqa: E402  (moved in Phase 6)
 
 
 class PipelineReporter:
@@ -5607,51 +5598,20 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   checked at a glance. Real-data runs get the same plots without the
         #   ground-truth overlay (none exists in the field).
         # -----------------------------------------------------------------------
-        reporter.step("Step 6d", "Solution SWC / EC_bulk summary plots")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 6d: SOLUTION SUMMARY PLOTS (SWC + EC_bulk)")
-        reporter.log("=" * 80)
-
-        theta_true_for_plot   = None
-        ec_bulk_true_for_plot = None
-        if data_source == "synthetic":
-            theta_true_for_plot = theta_true_realization
-            _ec_true_path = _resolve_npy_path("synthetic_time_lapse_ec.npy", OUTPUT_MODEL_DIR, OUTPUT_DIR)
-            if os.path.exists(_ec_true_path):
-                ec_bulk_true_for_plot = np.load(_ec_true_path)[REALIZATION_INDEX]
-            else:
-                reporter.log(
-                    "[STEP 6d][WARN] 'synthetic_time_lapse_ec.npy' not found in "
-                    f"'{OUTPUT_DIR}' — EC_bulk ground-truth overlay skipped."
-                )
-
-        swc_fig_path = psol.plot_solution_swc(
-            theta_calc      = selected_output.theta_calc,
-            depths0         = DEPTHS0,
-            layer_centers   = synthetic_geometry["layer_centers"],
-            output_dir      = OUTPUT_DIR,
-            theta_true      = theta_true_for_plot,
-            K               = selected_output.K,
-            rmse            = selected_output.rmse,
-            scenario_name   = cfg.name if cfg else "default",
-            timelapse       = timelapse,
+        steps_step6.run_step6d_solution_plots(
+            reporter,
+            data_source=data_source,
+            theta_true_realization=theta_true_realization,
+            output_model_dir=OUTPUT_MODEL_DIR,
+            output_dir=OUTPUT_DIR,
+            realization_index=REALIZATION_INDEX,
+            selected_output=selected_output,
+            averaged_models=averaged_models,
+            depths0=DEPTHS0,
+            layer_centers=synthetic_geometry["layer_centers"],
+            cfg=cfg,
+            timelapse=timelapse,
         )
-        reporter.log(f"[STEP 6d] Solution SWC profiles      → {swc_fig_path}")
-
-        ec_fig_path = psol.plot_solution_ec_bulk(
-            ec_optimal      = averaged_models[selected_output.K - 1],
-            depths0         = DEPTHS0,
-            layer_centers   = synthetic_geometry["layer_centers"],
-            output_dir      = OUTPUT_DIR,
-            ec_bulk_true    = ec_bulk_true_for_plot,
-            K               = selected_output.K,
-            rmse            = selected_output.rmse,
-            scenario_name   = cfg.name if cfg else "default",
-            timelapse       = timelapse,
-        )
-        reporter.log(f"[STEP 6d] Solution EC_bulk profiles  → {ec_fig_path}")
-
-        reporter.end_step("Step 6d")
 
         # -----------------------------------------------------------------------
         # STEP 6e — FORWARD-SIMULATE ECa FROM THE OPTIMAL MODEL

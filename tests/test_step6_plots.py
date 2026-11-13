@@ -1,0 +1,76 @@
+"""steps/step6_plots.run_step6d_solution_plots: wiring, synthetic truth overlay, warning."""
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from steps import step6_plots
+
+
+class FakeReporter:
+    def __init__(self):
+        self.lines, self.started, self.ended = [], [], []
+
+    def step(self, name, title=""):
+        self.started.append(name)
+
+    def end_step(self, name):
+        self.ended.append(name)
+
+    def log(self, msg):
+        self.lines.append(msg)
+
+
+@pytest.fixture
+def calls(monkeypatch):
+    rec = {}
+
+    def fake_swc(**kw):
+        rec["swc"] = kw
+        return "swc.png"
+
+    def fake_ec(**kw):
+        rec["ec"] = kw
+        return "ec.png"
+
+    monkeypatch.setattr(step6_plots.psol, "plot_solution_swc", fake_swc)
+    monkeypatch.setattr(step6_plots.psol, "plot_solution_ec_bulk", fake_ec)
+    return rec
+
+
+def _run(tmp_path, data_source, rep, **over):
+    sel = SimpleNamespace(theta_calc=np.zeros((2, 3)), K=2, rmse=0.03)
+    kw = dict(data_source=data_source, theta_true_realization="THETA",
+              output_model_dir=str(tmp_path / "output_model"), output_dir=str(tmp_path),
+              realization_index=1, selected_output=sel,
+              averaged_models=[np.zeros(1), np.ones(1)], depths0=np.array([0.2, 0.5]),
+              layer_centers=np.array([0.1, 0.35, 0.8]), cfg=SimpleNamespace(name="sc"),
+              timelapse=True)
+    kw.update(over)
+    return step6_plots.run_step6d_solution_plots(rep, **kw)
+
+
+def test_synthetic_overlays_truth_and_returns_paths(tmp_path, calls):
+    (tmp_path / "output_model").mkdir()
+    ec = np.arange(24, dtype=float).reshape(3, 2, 4)
+    np.save(tmp_path / "output_model" / "synthetic_time_lapse_ec.npy", ec)
+    rep = FakeReporter()
+    assert _run(tmp_path, "synthetic", rep) == ("swc.png", "ec.png")
+    assert calls["swc"]["theta_true"] == "THETA" and calls["swc"]["K"] == 2
+    np.testing.assert_array_equal(calls["ec"]["ec_bulk_true"], ec[1])
+    np.testing.assert_array_equal(calls["ec"]["ec_optimal"], np.ones(1))  # K - 1 = 1
+    assert calls["swc"]["scenario_name"] == "sc"
+    assert rep.started == ["Step 6d"] and rep.ended == ["Step 6d"]
+
+
+def test_synthetic_without_ec_file_warns_and_skips_overlay(tmp_path, calls):
+    rep = FakeReporter()
+    _run(tmp_path, "synthetic", rep)
+    assert calls["ec"]["ec_bulk_true"] is None
+    assert any("[STEP 6d][WARN]" in line for line in rep.lines)
+
+
+def test_real_data_has_no_truth_and_default_scenario_name(tmp_path, calls):
+    _run(tmp_path, "real", FakeReporter(), cfg=None)
+    assert calls["swc"]["theta_true"] is None and calls["ec"]["ec_bulk_true"] is None
+    assert calls["swc"]["scenario_name"] == "default"
