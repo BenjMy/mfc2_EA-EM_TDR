@@ -40,6 +40,38 @@ VARIANT=hetero ./run_1d_surface_vs_full.sh   # same study, two-zone vertical tru
 
 Results: `comparison_output/1d_surface_vs_full_free{K}/` and `comparison_output/1d_surface_vs_full_all/`.
 
+## Number / distribution of SWC probes study (1-D synthetic)
+
+`study_swc_design.py` generates the scenarios, runs them, scores `theta_calc` against the synthetic truth and draws the comparison figures. Factors: number of SWC positions `n` (1, 2, 3, 5, 10), their distribution (`spread` / `clustered` / `random`), truth soil moisture (`smc` homo / hetero), truth Waxman-Smits parameters (`ws` homo / hetero), number of free WS parameters `K` (1-4) and the EMagPy regularisation (`noreg` / `beta` / `gamma` / `both`).
+
+```bash
+python study_swc_design.py --dry-run                      # write + validate the scenarios, print the commands
+python study_swc_design.py --preset smoke --fast          # smoke test of the whole chain (8 short runs)
+python study_swc_design.py --preset oat                   # one factor at a time around the reference (15 runs)
+python study_swc_design.py --preset main --keep-going --resume   # truth x K x n, + distribution and reg at n = 5 (160 runs)
+python study_swc_design.py --analyze-only                 # redo summary + figures from the run log
+python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10   # any subset of the levels
+```
+
+Presets: `smoke` 8, `oat` 15, `main` 160, `full` 704 runs. A synthetic run always repeats Step 1 (the ensemble cache is real-data only), so each run costs a full pipeline run (3-5 min; `--fast` passes `--quick`, a smoke test and never a result).
+
+Definitions: `smc homo` = `homogeneous: true`; `ws homo` = `ws_xy_variation: false` (true a, m, sigma_w, sigma_s = 0.5, 3, 500, 100 everywhere); `ws hetero` = m and sigma_s vary along x and a, sigma_w change below horizon 1 (`sweeps.HETERO_LAYER_PARAMS`); `beta` = `param_grid.beta`, `gamma` = temporal smoothing (3 epochs); freed in the order sigma_s, m, sigma_w, a as in the surface-vs-full study. Probe layouts are written to `probes/*.csv` and passed with `--probe-xyz`; the pipeline re-anchors a probe file at the survey origin, so every layout contains x = 0 (`clustered` = the first n survey points, `random` = x = 0 plus n-1 seeded random points). Layouts that coincide (n = 1, n = 10) are run once. The calibration start of the free m, sigma_w, sigma_s is shifted by `--p0-bias` (default +20 %): with a homogeneous WS truth the repo default `lab_p0` is the truth itself.
+
+Outputs in `comparison_output/swc_design_study/`: `study_summary.csv` (RMSE / MAE / bias / R2 vs truth, error at and away from probe positions, per layer), `study_report.md`, and
+
+| Figure | Shows |
+|---|---|
+| `fig_rmse_vs_nswc.png` | RMSE vs number of probes, one line per distribution; rows = truth, columns = K |
+| `fig_rmse_vs_k.png` | RMSE vs K, one line per number of probes; rows = truth, columns = distribution |
+| `fig_heatmap_n_vs_k.png` | RMSE grid n x K per truth |
+| `fig_distribution_effect.png` | spread vs clustered vs random at fixed n |
+| `fig_regularisation_effect.png` | noreg / beta / gamma / both at fixed n |
+| `fig_truth_heterogeneity_effect.png` | homogeneous vs heterogeneous SMC and WS truth |
+| `fig_error_at_vs_away_from_probes.png` | error at probe positions vs elsewhere, vs n |
+| `fig_residual_distribution.png` | distribution of theta_calc - theta_true by n |
+
+Tests: `pytest tests/test_study_swc_design.py`.
+
 ## Truth-vs-optimal 1:1 validation (synthetic runs)
 
 ```bash
