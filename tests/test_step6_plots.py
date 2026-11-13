@@ -20,6 +20,10 @@ class FakeReporter:
     def log(self, msg):
         self.lines.append(msg)
 
+    def metric(self, name, value):
+        self.metrics = getattr(self, "metrics", {})
+        self.metrics[name] = value
+
 
 @pytest.fixture
 def calls(monkeypatch):
@@ -74,3 +78,25 @@ def test_real_data_has_no_truth_and_default_scenario_name(tmp_path, calls):
     _run(tmp_path, "real", FakeReporter(), cfg=None)
     assert calls["swc"]["theta_true"] is None and calls["ec"]["ec_bulk_true"] is None
     assert calls["swc"]["scenario_name"] == "default"
+
+
+def test_step6e_forwards_arguments_and_records_one_metric_per_time(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_forward(**kw):
+        seen.update(kw)
+        return [(0, 1.25), (1, 0.5)]
+
+    monkeypatch.setattr(step6_plots.psol, "forward_simulate_eca_optimal", fake_forward)
+    rep = FakeReporter()
+    out = step6_plots.run_step6e_forward_eca(
+        rep, em_fnames=["a.csv"], averaged_models=[1], selected_output="SEL",
+        depths0=[0.2], output_dir=str(tmp_path), x_transect=[0.0], forward_model="FSlin",
+        cfg=None, coils_list=["HCP05"], matched_indices=None)
+    assert out == [(0, 1.25), (1, 0.5)]
+    assert seen["csv_paths"] == ["a.csv"] and seen["forward_model"] == "FSlin"
+    assert seen["coils_list"] == ["HCP05"] and seen["matched_indices"] is None
+    assert seen["scenario_name"] == "default"
+    assert rep.metrics == {"Forward ECa RMSE (optimal, t=0)": "1.2500 mS/m",
+                           "Forward ECa RMSE (optimal, t=1)": "0.5000 mS/m"}
+    assert rep.started == ["Step 6e"] and rep.ended == ["Step 6e"]

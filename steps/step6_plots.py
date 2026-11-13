@@ -74,3 +74,66 @@ def run_step6d_solution_plots(reporter, *, data_source, theta_true_realization,
 
     reporter.end_step("Step 6d")
     return swc_fig_path, ec_fig_path
+
+
+def run_step6e_forward_eca(reporter, *, em_fnames, averaged_models, selected_output,
+                           depths0, output_dir, x_transect, forward_model, cfg,
+                           coils_list, matched_indices):
+    """STEP 6e: FORWARD-SIMULATE ECa FROM THE OPTIMAL MODEL.
+
+    The weighted-average EC model is forward-simulated (emagpy
+    ``Problem.forward()``, mirroring data_synthetic.py's ground-truth
+    generation) to obtain predicted ECa, compared with the raw survey ECa that
+    was fed to the inversion: a direct forward-model check of the pipeline's
+    final output. Records one ``Forward ECa RMSE (optimal, t=...)`` metric per
+    survey time.
+
+    ``coils_list``: ``step0.COILS_LIST`` for synthetic data, else None.
+    ``matched_indices``: ``REAL_DATA_MATCHED_INDICES`` for real time-lapse runs,
+    else None (synthetic and real single-survey runs, where the raw CSV row
+    order already IS the model's order). INDEXING_AUDIT_REPORT.md finding #5:
+    for real time-lapse data ``averaged_models[K-1]``'s spatial axis is the
+    reference grid (``geometry_utils.match_epochs_to_reference_grid``), so the
+    observed ECa must be gathered through the per-epoch row -> reference-grid
+    map in the SAME order.
+
+    Returns the list of ``(time_index, rmse_mS_per_m)`` pairs.
+    """
+    reporter.step("Step 6e", "Forward-simulate ECa from optimal model")
+    reporter.log("\n" + "=" * 80)
+    reporter.log(" [PIPELINE] STEP 6e: FORWARD-SIMULATE ECa FROM OPTIMAL MODEL")
+    reporter.log("=" * 80)
+
+    # INDEXING_AUDIT_REPORT.md finding #5: for real-data, time-lapse
+    # runs, averaged_models[K-1]'s spatial axis is the reference grid
+    # (geometry_utils.match_epochs_to_reference_grid), not any one
+    # epoch's own raw-CSV row order/count. forward_simulate_eca_optimal
+    # forward-simulates ECa from that reference-grid-ordered model, so
+    # the observed ECa it's compared against must be gathered in the
+    # SAME reference-grid order -- REAL_DATA_MATCHED_INDICES (built
+    # alongside REAL_DATA_REFERENCE_XY, see Step 1 above) is exactly
+    # that per-epoch row->reference-grid-index map, and
+    # plot_solution_diagnostics.forward_simulate_eca_optimal now
+    # accepts it and gathers eca_obs/xpos through it accordingly.
+    #
+    # None for synthetic data and for real single-survey (non-time-
+    # lapse) runs, where raw CSV order already IS the model's own
+    # order and no remap ever happened -- forward_simulate_eca_optimal
+    # keeps reading raw CSV rows directly in that case.
+    eca_forward_results = psol.forward_simulate_eca_optimal(
+        csv_paths       = em_fnames,
+        averaged_models = averaged_models,
+        selected_output = selected_output,
+        depths0         = depths0,
+        output_dir      = output_dir,
+        coils_list      = coils_list,
+        x_transect      = x_transect,
+        forward_model   = forward_model,
+        scenario_name   = cfg.name if cfg else "default",
+        matched_indices = matched_indices,
+    )
+    for _t_idx, _rmse_eca in eca_forward_results:
+        reporter.metric(f"Forward ECa RMSE (optimal, t={_t_idx})", f"{_rmse_eca:.4f} mS/m")
+
+    reporter.end_step("Step 6e")
+    return eca_forward_results

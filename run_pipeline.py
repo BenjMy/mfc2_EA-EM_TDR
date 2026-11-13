@@ -5623,46 +5623,22 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   that was actually fed to the inversion. This is a direct
         #   forward-model check of the full pipeline's final output.
         # -----------------------------------------------------------------------
-        reporter.step("Step 6e", "Forward-simulate ECa from optimal model")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 6e: FORWARD-SIMULATE ECa FROM OPTIMAL MODEL")
-        reporter.log("=" * 80)
-
-        # INDEXING_AUDIT_REPORT.md finding #5: for real-data, time-lapse
-        # runs, averaged_models[K-1]'s spatial axis is the reference grid
-        # (geometry_utils.match_epochs_to_reference_grid), not any one
-        # epoch's own raw-CSV row order/count. forward_simulate_eca_optimal
-        # forward-simulates ECa from that reference-grid-ordered model, so
-        # the observed ECa it's compared against must be gathered in the
-        # SAME reference-grid order -- REAL_DATA_MATCHED_INDICES (built
-        # alongside REAL_DATA_REFERENCE_XY, see Step 1 above) is exactly
-        # that per-epoch row->reference-grid-index map, and
-        # plot_solution_diagnostics.forward_simulate_eca_optimal now
-        # accepts it and gathers eca_obs/xpos through it accordingly.
-        #
-        # None for synthetic data and for real single-survey (non-time-
-        # lapse) runs, where raw CSV order already IS the model's own
-        # order and no remap ever happened -- forward_simulate_eca_optimal
-        # keeps reading raw CSV rows directly in that case.
-        eca_forward_results = psol.forward_simulate_eca_optimal(
-            csv_paths       = EM_FNAMES,
-            averaged_models = averaged_models,
-            selected_output = selected_output,
-            depths0         = DEPTHS0,
-            output_dir      = OUTPUT_DIR,
-            coils_list      = step0.COILS_LIST if data_source == "synthetic" else None,
-            x_transect      = x_transect,
-            forward_model   = _base_inv_kwargs.get("forwardModel", "CS"),
-            scenario_name   = cfg.name if cfg else "default",
-            matched_indices = (
+        steps_step6.run_step6e_forward_eca(
+            reporter,
+            em_fnames=EM_FNAMES,
+            averaged_models=averaged_models,
+            selected_output=selected_output,
+            depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR,
+            x_transect=x_transect,
+            forward_model=_base_inv_kwargs.get("forwardModel", "CS"),
+            cfg=cfg,
+            coils_list=step0.COILS_LIST if data_source == "synthetic" else None,
+            matched_indices=(
                 REAL_DATA_MATCHED_INDICES
                 if (data_source == "real" and timelapse) else None
             ),
         )
-        for _t_idx, _rmse_eca in eca_forward_results:
-            reporter.metric(f"Forward ECa RMSE (optimal, t={_t_idx})", f"{_rmse_eca:.4f} mS/m")
-
-        reporter.end_step("Step 6e")
 
         reporter.end_step("Step 6")
 
