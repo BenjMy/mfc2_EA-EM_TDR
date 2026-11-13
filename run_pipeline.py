@@ -4654,6 +4654,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter, models_clean=models_clean, fits_step2=fits_step2, depths0=DEPTHS0,
             output_dir=OUTPUT_DIR, timelapse=timelapse)
 
+        # Persist the Step 2/3 member ranking + per-member TDR misfit next to
+        # ensemble_members.npz (needed to re-select stacks offline).
+        try:
+            np.save(os.path.join(OUTPUT_MODEL_DIR, "member_ranking.npy"), np.asarray(ranking))
+            np.save(os.path.join(OUTPUT_MODEL_DIR, "member_rmse.npy"),
+                    np.array([f.rmse for f in fits_step2], dtype=float))
+        except Exception as _e:
+            print(f"[ENSEMBLE][WARN] could not save member ranking/rmse: {_e}")
+
         # -----------------------------------------------------------------------
         # STEP 4 — RECALIBRATE PETROPHYSICAL RELATIONSHIPS
         # -----------------------------------------------------------------------
