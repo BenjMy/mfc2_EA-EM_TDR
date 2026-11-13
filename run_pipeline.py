@@ -82,6 +82,7 @@ import step2_petro as step2
 import step3_average as step3
 import step4_select as step4_5
 from steps import step1_diagnostics as steps_step1
+from steps import step3_4_average_recalibrate as steps_step34
 from steps import step5b_validation as steps_step5b
 from steps import step5c_footprint as steps_step5c
 from steps import step6_plots as steps_step6  # Phase 6: step functions extracted from main()
@@ -4628,103 +4629,23 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # -----------------------------------------------------------------------
         reporter.end_step("Step 2")
 
-        reporter.step("Step 3", "RMSE-weighted ranking-averaging engine")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 3: RMSE-WEIGHTED RANKING-AVERAGING ENGINE")
-        reporter.log("=" * 80)
-
-        averaged_models, ranking = step3.run_average(
-            models=models_clean, fits_step2=fits_step2,
-            depths0=DEPTHS0, output_dir=OUTPUT_DIR,
-        )
-
-        # ------------------------------------------------------------------
-        # Report Step 3 averaging details
-        # ------------------------------------------------------------------
-        _ranked_rmse = [fits_step2[i].rmse for i in ranking]
-        reporter.log(
-            f"[STEP 3] Ranked {len(ranking)} ensemble members by RMSE (ascending)."
-        )
-        reporter.log(
-            f"[STEP 3] Best  member  : index {ranking[0]},  RMSE = {_ranked_rmse[0]:.5f} m³/m³"
-        )
-        reporter.log(
-            f"[STEP 3] Worst member  : index {ranking[-1]}, RMSE = {_ranked_rmse[-1]:.5f} m³/m³"
-        )
-        reporter.log(
-            f"[STEP 3] Cumulative averaged models produced: {len(averaged_models)} "
-            f"(one averaged stack per K from 1 to {len(averaged_models)})"
-        )
-        if timelapse:
-            _avg_shape = averaged_models[0].shape
-            reporter.log(
-                f"[STEP 3] Each averaged_model shape: {_avg_shape}  →  "
-                f"(n_time={_avg_shape[0]}, n_measured_points={_avg_shape[1]}, n_layers={_avg_shape[2]})"
-            )
-        else:
-            _avg_shape = averaged_models[0].shape
-            reporter.log(
-                f"[STEP 3] Each averaged_model shape: {_avg_shape}  →  "
-                f"(n_measured_points={_avg_shape[0]}, n_layers={_avg_shape[1]})"
-            )
+        averaged_models, ranking = steps_step34.run_step3_average(
+            reporter, models_clean=models_clean, fits_step2=fits_step2, depths0=DEPTHS0,
+            output_dir=OUTPUT_DIR, timelapse=timelapse)
 
         # -----------------------------------------------------------------------
         # STEP 4 — RECALIBRATE PETROPHYSICAL RELATIONSHIPS
         # -----------------------------------------------------------------------
         reporter.end_step("Step 3")
 
-        reporter.step("Step 4", "Recalibrate petrophysical relationships")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 4: RECALIBRATE PETROPHYSICAL RELATIONSHIPS")
-        reporter.log("=" * 80)
-
-        fits_step4 = EMmethod.recalibrate_petrophysical_relationship(
-            averaged_models=averaged_models, sample_positions=sample_positions,
-            sample_times=sample_times, theta_obs=theta_obs,
-            depths0=DEPTHS0, probe_layer_indices=probe_layer_indices,
-            depths_are_fixed=FIXED_DEPTHS if isinstance(FIXED_DEPTHS, bool) else all(FIXED_DEPTHS),
-            fixed_params=WS_FIXED_PARAMS,
+        fits_step4, _rmse4_all = steps_step34.run_step4_recalibrate(
+            reporter, averaged_models=averaged_models, sample_positions=sample_positions,
+            sample_times=sample_times, theta_obs=theta_obs, depths0=DEPTHS0,
+            probe_layer_indices=probe_layer_indices, fixed_depths=FIXED_DEPTHS,
+            ws_fixed_params=WS_FIXED_PARAMS,
             probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
-            lab_p0=LAB_P0,
-            theta_obs_std=_theta_obs_std_step2,  # same resolved value used in Step 2, see fix note there
-            ws_bounds=WS_BOUNDS_OVERRIDE,
-        )
-
-        # ------------------------------------------------------------------
-        # Report Step 4 recalibration details
-        # ------------------------------------------------------------------
-        _n_fits4   = len(fits_step4)
-        _rmse4_all = [f.rmse for f in fits_step4]
-        reporter.log(
-            f"[STEP 4] Recalibrated {_n_fits4} Waxman-Smits fits "
-            f"(one per cumulative averaged model K=1…{_n_fits4})."
-        )
-        reporter.log(
-            f"[STEP 4] RMSE across K — mean: {np.nanmean(_rmse4_all):.5f}  "
-            f"std: {np.nanstd(_rmse4_all):.5f}  "
-            f"min: {np.nanmin(_rmse4_all):.5f} (best K)  "
-            f"max: {np.nanmax(_rmse4_all):.5f}  [m³/m³]"
-        )
-        _best4 = fits_step4[int(np.nanargmin(_rmse4_all))]
-        _hz4_rows: dict[str, str] = {}
-        for _hz in _best4.horizon_fits:
-            if _hz.is_calibrated:
-                _hz4_rows[f"Hz {_hz.horizon} — a / m / σ_w / σ_s / RMSE"] = (
-                    f"{_hz.a:.4f} / {_hz.m:.4f} / "
-                    f"{_hz.sigma_w:.2f} mS/m / {_hz.sigma_s:.2f} mS/m / "
-                    f"{_hz.rmse:.5f} m³/m³"
-                )
-            else:
-                _hz4_rows[f"Hz {_hz.horizon} — a / m / σ_w / σ_s / RMSE"] = (
-                    f"UNCALIBRATED — no TDR probe in this horizon; showing prior "
-                    f"p0 only: {_hz.a:.4f} / {_hz.m:.4f} / "
-                    f"{_hz.sigma_w:.2f} mS/m / {_hz.sigma_s:.2f} mS/m / RMSE=N/A"
-                )
-        reporter.args_table(
-            f"Step 4 — Best recalibrated fit (K={int(np.nanargmin(_rmse4_all))+1}, "
-            f"RMSE={np.nanmin(_rmse4_all):.5f} m³/m³)",
-            _hz4_rows,
-        )
+            lab_p0=LAB_P0, theta_obs_std=_theta_obs_std_step2,  # same value as Step 2
+            ws_bounds_override=WS_BOUNDS_OVERRIDE)
 
         # -----------------------------------------------------------------------
         # STEP 5 — CONVERGENCE SELECTION & RELIABILITY MAPPING

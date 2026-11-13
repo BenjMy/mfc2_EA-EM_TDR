@@ -32,6 +32,8 @@ Phase 6, Step 5b (2026-11-13): moved to `steps/step5b_validation.py` (`run_step5
 
 Phase 6, Step 6 main block (2026-11-13): moved to `steps/step6_plots.py::run_step6_water_content` (opens "Step 6"; `main()` closes it after 6b-6e), 3 tests added. Before/after e2e `1d_surface_tdr` (previous commit vs now): 20/20 arrays bit-identical, same 107 PNG files. Step 6 is now fully out of `main()`.
 
+Phase 6, Steps 3 and 4 (2026-11-13): moved to `steps/step3_4_average_recalibrate.py` (`run_step3_average`, `run_step4_recalibrate`), `tests/test_step3_4.py`. Before/after e2e `1d_surface_tdr`: 20/20 arrays bit-identical, same 107 PNG files.
+
 Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20 saved arrays bit-identical to the pre-refactor reference. Phases 1-4 touched no scientific code.
 
 Not refactoring (behaviour changes, separate commits): 1d_* EC bound 60 -> 300 mS/m; `ws_layer_params` + `hetero` scenarios + `extends`. See `to-do.md`.
