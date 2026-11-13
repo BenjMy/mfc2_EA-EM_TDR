@@ -82,6 +82,7 @@ import step2_petro as step2
 import step3_average as step3
 import step4_select as step4_5
 from steps import step1_diagnostics as steps_step1
+from steps import step5c_footprint as steps_step5c
 from steps import step6_plots as steps_step6  # Phase 6: step functions extracted from main()
 
 
@@ -4801,121 +4802,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 + ("  [WARN] CALIBRATION DRIFT -- consider redoing --stage calibrate." if _drift["warn"] else "  (OK)"))
 
         if em_footprint_diagnostic:
-            reporter.step("Step 5c", "EM footprint discrepancy (McNeill depth weighting)")
-
-            # theta_calc is ALWAYS (n_time, num_measured_points, num_layers) --
-            # SelectionOutput guarantees this (step4_select.py
-            # normalises `if theta_calc.ndim == 2: theta_calc = theta_calc[np.newaxis, ...]`
-            # right before returning), so t_idx = 0 covers the single-time
-            # case directly -- no separate timelapse-conditional 2-D branch.
-            _footprint_theta_calc = selected_output.theta_calc
-            _eff_theta = emsens.effective_theta(_footprint_theta_calc, EM_LAYER_WEIGHTS)
-            # _eff_theta shape: (n_time, num_measured_points) -- one depth-weighted
-            # "what the coil actually saw" value per position per time step.
-
-            _footprint_discrepancies = []
-            for _fp_i, (_fp_pos, _fp_li, _fp_obs) in enumerate(
-                zip(sample_positions, probe_layer_indices, theta_obs)
-            ):
-                _fp_t_idx = sample_times[_fp_i] if timelapse else 0
-                _fp_hard_routed = _footprint_theta_calc[_fp_t_idx, _fp_pos, _fp_li]
-                _fp_weighted = _eff_theta[_fp_t_idx, _fp_pos]
-                _footprint_discrepancies.append({
-                    "probe": _fp_i, "pos": int(_fp_pos), "obs": _fp_obs,
-                    # 'horizon' -- the probe's own routed layer index, same
-                    # as used for _fp_hard_routed above -- carried through
-                    # so plot_footprint_spatial_discrepancy_xz can place
-                    # this record on the depth axis without re-deriving it.
-                    "horizon": int(_fp_li),
-                    "hard_routed": _fp_hard_routed, "weighted": _fp_weighted,
-                    "hard_routed_err": _fp_hard_routed - _fp_obs,
-                    "weighted_err": _fp_weighted - _fp_obs,
-                })
-
-            _hr_rmse = np.sqrt(np.nanmean([d["hard_routed_err"] ** 2 for d in _footprint_discrepancies]))
-            _w_rmse = np.sqrt(np.nanmean([d["weighted_err"] ** 2 for d in _footprint_discrepancies]))
-            reporter.log(
-                f"[STEP 5c] RMSE vs TDR — hard-routed (nearest layer): {_hr_rmse:.5f} m³/m³  "
-                f"|  depth-weighted (McNeill {_COIL_ORIENTATION if data_source == 'real' else 'multi-coil avg'}): "
-                f"{_w_rmse:.5f} m³/m³"
-            )
-            reporter.metric("Footprint RMSE — hard-routed layer", f"{_hr_rmse:.5f} m³/m³")
-            reporter.metric("Footprint RMSE — McNeill-weighted", f"{_w_rmse:.5f} m³/m³")
-            reporter.table(
-                "Step 5c — EM footprint discrepancy (per probe)",
-                ["Probe #", "TDR obs [m³/m³]", "Hard-routed θ", "Weighted θ",
-                 "Hard-routed err", "Weighted err"],
-                [
-                    [d["probe"], f"{d['obs']:.4f}", f"{d['hard_routed']:.4f}", f"{d['weighted']:.4f}",
-                     f"{d['hard_routed_err']:+.4f}", f"{d['weighted_err']:+.4f}"]
-                    for d in _footprint_discrepancies
-                ],
-                note=(
-                    "'Hard-routed' = theta_calc at the probe's single assigned layer "
-                    "(current Step 2/4 calibration routing, unchanged). 'Weighted' = "
-                    "McNeill depth-weighted blend across all layers (EM_LAYER_WEIGHTS). "
-                    "Diagnostic only -- neither RMSE feeds back into calibration or "
-                    "K-selection."
-                ),
-            )
-            if _w_rmse < _hr_rmse:
-                reporter.log(
-                    "[STEP 5c] Depth-weighted comparison fits TDR better than the "
-                    "hard-routed layer -- the current nearest-layer probe routing "
-                    "may be discarding real cross-layer signal contribution. "
-                    "See the explainer's Step D for what it would take to fold "
-                    "this into calibration itself, and note the caveats there "
-                    "before doing so."
-                )
-            else:
-                reporter.log(
-                    "[STEP 5c] Hard-routed layer already matches TDR at least as "
-                    "well as the McNeill-weighted blend -- either your layers are "
-                    "thick relative to the coil spacing used (weight concentrates in "
-                    "one layer anyway) or CS/high-frequency LIN departure is "
-                    "degrading the kernel here. Check EM_LAYER_WEIGHTS -- if one "
-                    "layer already carries >90% of the weight, this result is "
-                    "expected and the current routing is fine."
-                )
-
-            try:
-                pef.plot_footprint_probe_comparison(
-                    discrepancies=_footprint_discrepancies,
-                    output_dir=OUTPUT_DIR,
-                    hr_rmse=_hr_rmse, w_rmse=_w_rmse,
-                )
-                pef.plot_footprint_spatial_discrepancy(
-                    discrepancies=_footprint_discrepancies,
-                    survey_df=survey_df,
-                    output_dir=OUTPUT_DIR,
-                    probe_x=np.array([r.probe_x for r in CALIB_POSITION_RESULTS]),
-                    probe_y=np.array([r.probe_y for r in CALIB_POSITION_RESULTS]),
-                )
-                # XZ (depth) counterpart to the XY map above -- same
-                # per-(position, horizon) improvement metric
-                # (|err_hard| - |err_weighted|), but placed on the depth
-                # axis via each record's own 'horizon' instead of the
-                # survey's y/utm_y coordinate. Directly comparable to
-                # water_content_xz_*.png and plot_ws_params_xz's XZ
-                # figures elsewhere in this pipeline. Uses
-                # EFFECTIVE_DEPTHS0 (not the static DEPTHS0), same reason
-                # as the Step 2 LOCALIZED XZ call above: it's what this
-                # run's actual (possibly fitted) interfaces are.
-                pef.plot_footprint_spatial_discrepancy_xz(
-                    discrepancies=_footprint_discrepancies,
-                    survey_df=survey_df,
-                    depths0=EFFECTIVE_DEPTHS0,
-                    output_dir=OUTPUT_DIR,
-                    probe_x=np.array([r.probe_x for r in CALIB_POSITION_RESULTS]),
-                    probe_depths=np.array([r.probe_depth for r in CALIB_POSITION_RESULTS]),
-                )
-            except Exception as _footprint_plot_exc:
-                reporter.log(
-                    f"[STEP 5c][WARN] Footprint diagnostic plots failed "
-                    f"(pipeline continues): {type(_footprint_plot_exc).__name__}: {_footprint_plot_exc}"
-                )
-
-            reporter.end_step("Step 5c")
+            steps_step5c.run_step5c_footprint(
+                reporter, selected_output=selected_output,
+                em_layer_weights=EM_LAYER_WEIGHTS, sample_positions=sample_positions,
+                probe_layer_indices=probe_layer_indices, theta_obs=theta_obs,
+                sample_times=sample_times, timelapse=timelapse, data_source=data_source,
+                coil_orientation=_COIL_ORIENTATION if data_source == "real" else None,
+                survey_df=survey_df,
+                calib_position_results=CALIB_POSITION_RESULTS,
+                effective_depths0=EFFECTIVE_DEPTHS0, output_dir=OUTPUT_DIR)
 
         # ------------------------------------------------------------------
         # Report Step 5 selection and uncertainty details
