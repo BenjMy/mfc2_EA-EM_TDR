@@ -3191,6 +3191,27 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             n_time = 1
 
         # -----------------------------------------------------------------------
+        # PERSIST THE RAW ENSEMBLE MEMBERS (to-do: surface-only / pinned-layer
+        # analysis). Until now the members only lived in the real-data pickle
+        # cache; synthetic runs kept just the averaged ec_optimal.npy. Saved as
+        # a new file only -- no existing output or result changes.
+        # -----------------------------------------------------------------------
+        try:
+            _mem_dir = OUTPUT_MODEL_DIR
+            os.makedirs(_mem_dir, exist_ok=True)
+            np.savez_compressed(
+                os.path.join(_mem_dir, "ensemble_members.npz"),
+                models_clean=np.asarray(models_clean),
+                depths_clean=np.asarray(depths_clean),
+                param_metadata_json=np.array(json.dumps(
+                    [{k: (v.tolist() if hasattr(v, "tolist") else v)
+                      for k, v in dict(m).items()} for m in param_metadata],
+                    default=str)),
+            )
+        except Exception as _e:  # never let a diagnostic dump break a run
+            print(f"[ENSEMBLE][WARN] could not save ensemble_members.npz: {_e}")
+
+        # -----------------------------------------------------------------------
         # MCMC POSTERIOR UNCERTAINTY  (FIX: "use the full MCMC, not just a
         # single selected model")
         #   emagpy's MCMC-family methods (MCMC/ROPE/DREAM/SCEUA) sample a
