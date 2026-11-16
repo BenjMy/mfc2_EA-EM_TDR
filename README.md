@@ -102,6 +102,8 @@ Presets: `smoke` 8, `oat` 15, `main` 160, `full` 704 runs. A synthetic run alway
 
 Definitions: `smc homo` = `homogeneous: true`; `ws homo` = `ws_xy_variation: false` (true a, m, sigma_w, sigma_s = 0.5, 3, 500, 100 everywhere); `ws hetero` = m and sigma_s vary along x and a, sigma_w change below horizon 1 (`sweeps.HETERO_LAYER_PARAMS`); `beta` = `param_grid.beta`, `gamma` = temporal smoothing (3 epochs); freed in the order sigma_s, m, sigma_w, a as in the surface-vs-full study. Probe layouts are written to `probes/*.csv` and passed with `--probe-xyz`; the pipeline re-anchors a probe file at the survey origin, so every layout contains x = 0 (`clustered` = the first n survey points, `random` = x = 0 plus n-1 seeded random points). Layouts that coincide (n = 1, n = 10) are run once. The calibration start of the free m, sigma_w, sigma_s is shifted by `--p0-bias` (default +20 %): with a homogeneous WS truth the repo default `lab_p0` is the truth itself.
 
+Run log: the study writes to its own `mfc2_outputs/run_log_swc_study.csv` (override with `--log-file`), so its synthetic runs stay out of the shared real-data `mfc2_outputs/run_log.csv`; `compare_scenarios.sh` only sees the shared log unless you pass `--log-file mfc2_outputs/run_log_swc_study.csv`.
+
 Outputs in `comparison_output/swc_design_study/`: `study_summary.csv` (RMSE / MAE / bias / R2 vs truth, error at and away from probe positions, per layer), `study_report.md`, and
 
 | Figure | Shows |

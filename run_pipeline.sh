@@ -108,6 +108,7 @@ QUICK=false
 QUICK_EPOCHS=""
 STAGE=""
 CALIBRATION=""
+LOG_FILE=""
 TRAIN_VAL_SPLIT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/run_pipeline.py"
@@ -260,6 +261,8 @@ Inversion options (override the scenario JSON's param_grid / gamma):
       --calibration PATH  With --stage map: stage_calibration.json or the
                           '*_calibrate' run folder. Default: newest
                           '*_calibrate' run under the scenario's output_dir.
+      --log-file PATH     Shared run-log CSV that gets one row per run.
+                          Default: mfc2_outputs/run_log.csv.
       --quick-epochs N    With --quick (real data only): also keep only
                           N evenly spaced survey epochs (first and last
                           always included), e.g. 3 of 7 -> 12 tasks.
@@ -640,6 +643,8 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         --calibration)
             CALIBRATION="${2:?'--calibration requires a path'}"; shift 2 ;;
+        --log-file)
+            LOG_FILE="${2:?'--log-file requires a path'}"; shift 2 ;;
         --quick-epochs)
             QUICK_EPOCHS="${2:?'--quick-epochs requires a positive integer'}"
             [[ "${QUICK_EPOCHS}" =~ ^[1-9][0-9]*$ ]] \
@@ -987,6 +992,8 @@ fi
 STAGE_ARGS=()
 [[ -n "${STAGE}" ]] && STAGE_ARGS+=(--stage "${STAGE}")
 [[ -n "${CALIBRATION}" ]] && STAGE_ARGS+=(--calibration "${CALIBRATION}")
+LOG_ARGS=()
+[[ -n "${LOG_FILE}" ]] && LOG_ARGS+=(--log-file "${LOG_FILE}")
 
 EM_FOOTPRINT_ARGS=()
 if ${EM_FOOTPRINT_DIAGNOSTIC}; then
@@ -1099,6 +1106,7 @@ set +e
     "${EM_FOOTPRINT_ARGS[@]+"${EM_FOOTPRINT_ARGS[@]}"}" \
     "${QUICK_ARGS[@]+"${QUICK_ARGS[@]}"}" \
     "${STAGE_ARGS[@]+"${STAGE_ARGS[@]}"}" \
+    "${LOG_ARGS[@]+"${LOG_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
     2>&1 | tee "${RUN_LOG_TMP}"
 EXIT_CODE=${PIPESTATUS[0]}

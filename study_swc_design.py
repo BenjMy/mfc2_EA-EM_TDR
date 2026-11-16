@@ -56,6 +56,10 @@ Usage
     python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10
     python study_swc_design.py --preset oat -- --em-footprint-diagnostic   # after '--' -> run_pipeline.sh
 
+Run log: the study has its own, ``mfc2_outputs/run_log_swc_study.csv`` (``--log-file`` to change),
+so its many synthetic runs do not mix with the shared real-data log ``mfc2_outputs/run_log.csv``.
+It is passed to every ``run_pipeline.sh`` call and read back by the analysis.
+
 Outputs (``--out-dir``, default comparison_output/swc_design_study/)
     study_scenarios.json   generated scenarios (each ``extends`` one parent)
     probes/*.csv           explicit probe layouts passed with --probe-xyz
@@ -92,7 +96,9 @@ BASE_CONFIG = "ensemble_scenarios.json"
 BASE_SCENARIO = "1d_full_depth_ref"      # probes in every horizon; "1d_surface_tdr" = surface only
 OUT_DIR = os.path.join("comparison_output", "swc_design_study")
 RUNS_DIR = os.path.join("mfc2_outputs", "swc_design_study")
-RUN_LOG = os.path.join("mfc2_outputs", "run_log.csv")
+# The study has its own run log, so its (many, synthetic) rows never mix with the
+# shared real-data log mfc2_outputs/run_log.csv (override with --log-file).
+RUN_LOG = os.path.join("mfc2_outputs", "run_log_swc_study.csv")
 
 SURVEY_N = 10            # survey points of the synthetic 1-D transect
 SURVEY_DX = 2.0          # spacing [m]
@@ -291,8 +297,9 @@ def build_study_config(parent_raw: dict, designs: list[Design], *, runs_dir: str
 
 
 def pipeline_command(d: Design, config_path: str, probe_csv: str, mode: str, fast: bool,
-                     extra: list[str]) -> list[str]:
-    cmd = ["./run_pipeline.sh", "-s", d.name, "-c", config_path, "--mode", mode, "--probe-xyz", probe_csv]
+                     extra: list[str], log_file: str = RUN_LOG) -> list[str]:
+    cmd = ["./run_pipeline.sh", "-s", d.name, "-c", config_path, "--mode", mode, "--probe-xyz", probe_csv,
+           "--log-file", log_file]
     if fast:
         cmd.append("--quick")
     return cmd + list(extra)
@@ -723,9 +730,10 @@ def realization_from_config(cfg_path: str) -> int:
         return 0
 
 
-def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_ref: str) -> list[dict]:
+def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_ref: str,
+            log_file: str = RUN_LOG) -> list[dict]:
     """Collect the latest run of every design from the run log, write summary/report/plots."""
-    latest = latest_rows_by_scenario(RUN_LOG)
+    latest = latest_rows_by_scenario(log_file)
     rows = [summary_row(d, latest.get(d.name), out_dir, survey, realization) for d in designs]
     write_summary(rows, os.path.join(out_dir, "study_summary.csv"))
     df = load_summary(os.path.join(out_dir, "study_summary.csv"))
@@ -765,6 +773,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mode", default="1d", choices=["1d", "2d"])
     ap.add_argument("--out-dir", default=OUT_DIR)
     ap.add_argument("--runs-dir", default=RUNS_DIR)
+    ap.add_argument("--log-file", default=RUN_LOG, help="run-log CSV the study writes to and reads from "
+                                                      "(default: %(default)s, separate from the shared mfc2_outputs/run_log.csv)")
     ap.add_argument("--reg-ref", default="noreg", help="regularisation shown in the n / K plots")
     ap.add_argument("--fast", action="store_true", help="pass --quick to every run (smoke test, not a result)")
     ap.add_argument("--dry-run", action="store_true", help="write config + probes, validate, print the plan")
@@ -810,29 +820,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Study config : {cfg_path}  ({len(designs)} designs, preset '{args.preset}', base '{args.base}')")
         print(f"Probe depths : {depths} m   survey x = {survey.tolist()}")
         for d in designs:
-            print(f"  $ {' '.join(pipeline_command(d, cfg_path, probe_csv[d.name], args.mode, args.fast, extra))}")
+            print(f"  $ {' '.join(pipeline_command(d, cfg_path, probe_csv[d.name], args.mode, args.fast, extra, args.log_file))}")
         if args.dry_run:
             return 0
 
-        done = latest_rows_by_scenario(RUN_LOG) if args.resume else {}
+        done = latest_rows_by_scenario(args.log_file) if args.resume else {}
         failed = []
         for d in designs:
             if args.resume and done.get(d.name, {}).get("status", "") not in ("", "FAIL", "ERROR", "FAILED"):
                 print(f"[study] skip {d.name} (already run)")
                 continue
             t0 = time.time()
-            rc = subprocess.call(pipeline_command(d, cfg_path, probe_csv[d.name], args.mode, args.fast, extra))
-            analyze(designs, args.out_dir, survey, realization, args.reg_ref)      # summary/plots after every run
+            rc = subprocess.call(pipeline_command(d, cfg_path, probe_csv[d.name], args.mode, args.fast, extra, args.log_file))
+            analyze(designs, args.out_dir, survey, realization, args.reg_ref, args.log_file)      # summary/plots after every run
             if rc != 0:
                 failed.append(d.name)
                 print(f"!!! {d.name} failed (exit {rc}) after {time.time() - t0:.0f} s")
                 if not args.keep_going:
                     print("stopping (use --keep-going to continue)")
                     break
-        analyze(designs, args.out_dir, survey, realization, args.reg_ref)
+        analyze(designs, args.out_dir, survey, realization, args.reg_ref, args.log_file)
         return 1 if failed else 0
 
-    analyze(designs, args.out_dir, survey, realization_from_config(cfg_path), args.reg_ref)
+    analyze(designs, args.out_dir, survey, realization_from_config(cfg_path), args.reg_ref, args.log_file)
     return 0
 
 
