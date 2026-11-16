@@ -40,9 +40,11 @@ FAST_SUBSAMPLE = {"mode": "probes", "radius_m": 5.0}
 
 # --stage: the hypotheses are about the CALIBRATION (RMSE at the TDR probes), which
 # the 'calibrate' stage computes on the probe neighbourhoods only. 'none' = full run.
-STAGES = ("calibrate", "none")
+# 'both' = per scenario, --stage calibrate and then --stage map on that calibration
+# (the map run inverts only the K selected members, on all EM points).
+STAGES = ("calibrate", "both", "none")
 
-COMMON_COLUMNS = ["scenario", "status", "final_rmse", "cv_mean", "ensemble_size",
+COMMON_COLUMNS = ["scenario", "stage", "status", "final_rmse", "cv_mean", "ensemble_size",
                   "runtime_s", "quality_level", "output_dir", "error"]
 
 
@@ -77,11 +79,32 @@ def make_parent(base_raw: dict, *, cache_tag: str, out_dir: str, description: st
     return parent
 
 
+def stages_to_run(stage: str, fast: bool = False) -> list[str]:
+    """The ``run_one_scenario.sh --stage`` values executed for one scenario.
+
+    ``both`` = calibrate, then map. ``--stage map`` cannot be combined with
+    ``--quick``, so a ``--fast`` smoke test only does the calibrate half.
+    """
+    if stage == "both":
+        return ["calibrate"] if fast else ["calibrate", "map"]
+    return [stage]
+
+
 def pipeline_command(name: str, config_path: str, mode: str, fast: bool,
-                     extra: list[str], stage: str = "calibrate") -> list[str]:
+                     extra: list[str], stage: str = "calibrate",
+                     calibration: str | None = None) -> list[str]:
+    """``stage`` is calibrate / map / none (``both`` is expanded by stages_to_run).
+
+    ``calibration`` (map only): the calibrate run folder or its stage_calibration.json;
+    without it run_one_scenario.sh takes the newest ``*_calibrate`` run of the scenario.
+    """
+    if stage == "both":
+        raise ValueError("'both' is expanded with stages_to_run(); pass calibrate or map")
     cmd = ["./run_one_scenario.sh", "-s", name, "-c", config_path, "--mode", mode]
     if stage != "none":
         cmd += ["--stage", stage]
+    if stage == "map" and calibration:
+        cmd += ["--calibration", calibration]
     if fast:
         cmd += ["--quick", "--quick-epochs", str(FAST_EPOCHS)]
     return cmd + list(extra)
@@ -111,7 +134,8 @@ def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> Non
     ap.add_argument("--mode", default="2d", choices=["1d", "2d"])
     ap.add_argument("--stage", default="calibrate", choices=STAGES,
                     help="calibrate (default): probe neighbourhoods only, Steps 0-5; "
-                         "none: the full run")
+                         "both: calibrate, then map (Step 6, all EM points) for every "
+                         "scenario; none: the full run")
     ap.add_argument("--out-dir", default=default_out_dir)
     ap.add_argument("--fast", action="store_true",
                     help=f"smoke test: --quick, {FAST_EPOCHS} epochs, probe points only")
@@ -156,30 +180,45 @@ def execute(*, tag: str, cfg: dict, names: list[str], args: argparse.Namespace,
     if args.fast:
         print(f"[{tag}] >>> FAST smoke test: --quick --quick-epochs {FAST_EPOCHS}, "
               f"em_subsample={FAST_SUBSAMPLE}")
+    run_stages = stages_to_run(args.stage, args.fast)
+    if args.stage == "both" and args.fast:
+        print(f"[{tag}] >>> --stage both with --fast: map skipped (--stage map cannot be combined with --quick)")
     for n in names:
-        print("  $", " ".join(pipeline_command(n, cfg_path, args.mode, args.fast, extra, args.stage)))
+        for st in run_stages:
+            cal = "<calibrate run folder>" if st == "map" else None
+            print("  $", " ".join(pipeline_command(n, cfg_path, args.mode, args.fast, extra, st, cal)))
     if args.dry_run:
         return 0
 
     rows, failed = [], []
     summary_path = os.path.join(args.out_dir, f"{tag}_summary.csv")
+    stop = False
     for n in names:
-        before = len(read_run_log())
-        t0 = time.time()
-        rc = subprocess.call(pipeline_command(n, cfg_path, args.mode, args.fast, extra, args.stage))
-        new = [r for r in read_run_log()[before:] if r.get("scenario", "").startswith(n)]
-        row = dict(new[-1]) if new else {"status": f"no run-log row (exit {rc})"}
-        row.update({"scenario": n, **((row_info or {}).get(n, {}))})
-        row.setdefault("runtime_s", round(time.time() - t0))
-        rows.append(row)
-        write_summary(rows, summary_path, extra_columns)   # after every run
-        if rc != 0:
-            failed.append(n)
-            if not args.keep_going:
-                print(f"!!! {n} failed (exit {rc}); stopping (use --keep-going to continue)")
-                break
+        calibration = None
+        for st in run_stages:
+            before = len(read_run_log())
+            t0 = time.time()
+            rc = subprocess.call(pipeline_command(n, cfg_path, args.mode, args.fast, extra, st, calibration))
+            new = [r for r in read_run_log()[before:] if r.get("scenario", "").startswith(n)]
+            row = dict(new[-1]) if new else {"status": f"no run-log row (exit {rc})"}
+            row.update({"scenario": n, "stage": st if args.stage == "both" else args.stage,
+                        **((row_info or {}).get(n, {}))})
+            row.setdefault("runtime_s", round(time.time() - t0))
+            rows.append(row)
+            write_summary(rows, summary_path, extra_columns)   # after every run
+            if rc != 0:
+                failed.append(f"{n}[{st}]")
+                if not args.keep_going:
+                    print(f"!!! {n} ({st}) failed (exit {rc}); stopping (use --keep-going to continue)")
+                    stop = True
+                break                  # never map a scenario whose calibration failed
+            if st == "calibrate":
+                calibration = row.get("output_dir") or None
+        if stop:
+            break
 
     print(f"\n[{tag}] summary: {summary_path}")
     for r in rows:
-        print(f"  {r['scenario']:34s} {str(r.get('status', '')):10s} final_rmse={r.get('final_rmse', '')}")
+        print(f"  {r['scenario']:34s} {str(r.get('stage', '')):10s} {str(r.get('status', '')):10s} "
+              f"final_rmse={r.get('final_rmse', '')}")
     return 1 if failed else 0
