@@ -554,6 +554,30 @@
     "drop_coils": [425],
     "cache_tag": "real_single_ws_free_sigmas"
   },
+  "real_single_ws_free_all": {
+    "extends": "real_single_base",
+    "description": "Real MFC2 field-data run, as real_single_base but ALL four Waxman-Smits parameters free (a, m, sigma_w, sigma_s). 'a' starts at 1.0 (not on the default lower bound 0.5) and ws_bounds lets it go down to 0.2, otherwise every ensemble member is clipped onto 0.5 (zero spread; see the free4 case in to-do.md). Caveat: 'a' is poorly identified (it enters through (sigma_w + sigma_s)/a and trades off with m and sigma_w), so read its spread in the WS histograms, not as a recovered value.",
+    "output_dir": "mfc2_outputs/real_single_ws_free_all",
+    "ws_fixed_params": {
+      "a": false,
+      "m": false,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      1.0,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "ws_bounds": {
+      "a": [
+        0.2,
+        5.0
+      ]
+    },
+    "cache_tag": "real_single_ws_free_all"
+  },
   "real_multi_base": {
     "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Base scenario for this layer group -- all other variants change exactly one axis relative to this one.",
     "output_dir": "mfc2_outputs/real_multi_base",

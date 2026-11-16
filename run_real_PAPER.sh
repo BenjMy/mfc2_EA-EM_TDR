@@ -171,8 +171,10 @@ run_pipeline -s real_multi_depth_free  -c "$REAL_CFG" --mode 2d
 # 4) WS_FIXED_PARAMS SWEEP (all fixed / free sigma_w / free sigma_s /
 #    free sigma_w & sigma_s) — both layer groups
 # =============================================================================
+# real_single_ws_free_all also frees 'a' (start 1.0, ws_bounds a >= 0.2; 'a' is
+# poorly identified, read its spread in the WS histograms).
 for s in real_single_ws_all_fixed real_single_ws_free_sigmaw \
-         real_single_ws_free_sigmas real_single_base
+         real_single_ws_free_sigmas real_single_base real_single_ws_free_all
 do
     run_pipeline -s "$s" -c "$REAL_CFG" --mode 2d
 done
