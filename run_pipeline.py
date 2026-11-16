@@ -1907,7 +1907,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # (_scenario_name was already set above, alongside OUTPUT_DIR)
     LOG_FILE = log_file or DEFAULT_RUN_LOG
     # Announce the resolved output_dir on stdout so a wrapper script (e.g.
-    # run_pipeline.sh) can pick it up and know exactly where this run's
+    # run_one_scenario.sh) can pick it up and know exactly where this run's
     # files are landing, instead of re-deriving/guessing it independently
     # (which can drift out of sync with what scenario_loader actually
     # resolved -- see next_run_output_dir).

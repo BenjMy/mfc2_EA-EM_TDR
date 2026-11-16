@@ -16,7 +16,7 @@ source, status, quality gate, runtime, git commit, seeds, the resolved scenario
 config, the headline ``metrics`` ({name: str}) and ``step_timing`` ({step: s}).
 ``compare_scenarios`` reads it instead of parsing ``pipeline_report_*.md``.
 
-Used by run_pipeline.py (writer), compare_scenarios.py, run_real_study.py and
+Used by run_pipeline.py (writer), compare_scenarios.py, hyp1_layers_ws_freedom.py and
 the study scripts (readers).
 """
 from __future__ import annotations

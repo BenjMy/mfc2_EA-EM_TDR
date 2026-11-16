@@ -2,7 +2,7 @@
   "_comment": [
     "Ensemble scenario configuration for REAL MFC2 field-data runs only.",
     "Companion file to 'ensemble_scenarios.json' (synthetic scenarios).",
-    "Pass via:  ./run_pipeline.sh -s <name> -c ensemble_scenarios_real.json",
+    "Pass via:  ./run_one_scenario.sh -s <name> -c ensemble_scenarios_real.json",
     "or:        python run_pipeline.py --scenario <name> --config ensemble_scenarios_real.json",
     "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "SCENARIO NAMING",
@@ -26,13 +26,16 @@
     "    ws_free_sigmaw   ws_fixed_params: only sigma_w floats (a,m,sigma_s fixed)",
     "    ws_free_sigmas   ws_fixed_params: only sigma_s floats (a,m,sigma_w fixed)",
     "",
-    "  14 scenarios total = 2 layer_groups x 7 variants.",
+    "  14 scenarios in the paper matrix = 2 layer_groups x 7 variants.",
+    "  + 5 extras (19 in total): real_single_ws_free_all, the two test scenarios",
+    "  real_single_test_grid / real_single_test_probes, and the 3-layer scenarios",
+    "  real_L3_base / real_single_test_probes_L3 (depths0 = [0.225, 0.6]).",
     "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "WS_LOCALIZED_BANDWIDTH_SWEEP -- ALWAYS SET, EVERY SCENARIO",
     "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "  Every scenario in this file sets ws_localized_bandwidth_sweep = [0.5, 1, 3, 5, 8, 12, 20] , so the leave-one-probe-out bandwidth",
     "  CV + the localized Step-2 diagnostic run automatically on every call in",
-    "  run_real_PAPER.sh -- no extra flag needed (same convention as '2d',",
+    "  run_real_all_scenarios.sh -- no extra flag needed (same convention as '2d',",
     "  '2d_intermediate', '2d_dense_tdr' in the synthetic scenarios file).",
     "  To try DIFFERENT candidate bandwidths for a one-off run without editing",
     "  this JSON, pass --ws-localized-bandwidth-sweep <c1> <c2> ... on the CLI",
@@ -41,12 +44,12 @@
     "WHAT ELSE IS CLI-ONLY (not baked into this JSON)",
     "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "  beta, gamma, and train_val_split are all CLI-sweepable per",
-    "  run_pipeline.sh and are driven from run_real_PAPER.sh instead of being",
+    "  run_one_scenario.sh and are driven from run_real_all_scenarios.sh / hyp2_train_val_split.py instead of being",
     "  set here. Only axes that CANNOT be set from the CLI (forward model,",
     "  fixed_depths, ws_fixed_params, layer geometry) get their own named",
     "  scenario in this file.",
     "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
-    "SHARED SETTINGS (same across all 14 scenarios unless noted)",
+    "SHARED SETTINGS (same across all 19 scenarios unless noted)",
     "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "  em_data_dir       ./data/EMI_MFC2/",
     "  tdr_data_dir      ./data/daily_MFC/",
@@ -62,7 +65,7 @@
     "                    time-lapse runs (no-op on single-epoch data regardless).",
     "",
     "  EDIT THE PATHS ABOVE (via gen_real_scenarios.py) if your real MFC2 data",
-    "  folders live somewhere else -- all 14 scenarios inherit them identically."
+    "  folders live somewhere else -- all scenarios inherit them identically."
   ],
   "_schema": {
     "required": [
@@ -1251,5 +1254,29 @@
       "mode": "probes",
       "radius_m": 5.0
     }
+  },
+  "real_single_test_probes_L3": {
+    "extends": "real_single_test_probes",
+    "description": "TEST / calibration stage, 3-LAYER design (L3): real_single_test_probes with depths0=[0.225, 0.6]. H0 (<0.225 m) holds the 15 cm TDR, H1 (0.225-0.6 m) the 30 cm TDR, H2 (>0.6 m) has NO sensor so it keeps the prior WS parameters (lab_p0).",
+    "output_dir": "mfc2_outputs/real_single_test_probes_L3",
+    "cache_tag": "real_single_test_probes_L3",
+    "depths0": [0.225, 0.6],
+    "cond_ranges": [
+      [0.01, 300.0],
+      [0.01, 300.0],
+      [0.01, 300.0]
+    ]
+  },
+  "real_L3_base": {
+    "extends": "real_single_base",
+    "description": "3-LAYER design (L3): real_single_base with depths0=[0.225, 0.6]. H0 (<0.225 m) holds the 15 cm TDR, H1 (0.225-0.6 m) the 30 cm TDR, H2 (>0.6 m) has NO sensor so it keeps the prior WS parameters (lab_p0). No em_subsample: use it for BOTH --stage calibrate and --stage map.",
+    "output_dir": "mfc2_outputs/real_L3_base",
+    "cache_tag": "real_L3_base",
+    "depths0": [0.225, 0.6],
+    "cond_ranges": [
+      [0.01, 300.0],
+      [0.01, 300.0],
+      [0.01, 300.0]
+    ]
   }
 }

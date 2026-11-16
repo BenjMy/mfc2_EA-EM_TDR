@@ -120,7 +120,7 @@ def test_probe_csv(parent, tmp_path):
 def test_command_and_reg():
     d = st.Design("homo", "homo", "both", "random", 3, 2)
     cmd = st.pipeline_command(d, "c.json", "p.csv", "1d", True, ["--em-footprint-diagnostic"])
-    assert cmd[:4] == ["./run_pipeline.sh", "-s", d.name, "-c"] and "--quick" in cmd
+    assert cmd[:4] == ["./run_one_scenario.sh", "-s", d.name, "-c"] and "--quick" in cmd
     assert cmd[-1] == "--em-footprint-diagnostic" and "--probe-xyz" in cmd
     with pytest.raises(ValueError):
         st.reg_fields("sigma")

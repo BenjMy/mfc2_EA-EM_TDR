@@ -8,19 +8,19 @@ Run from the repo root with the field data in `./data/`. The real scenarios in `
 
 ```bash
 # 1. Plumbing check: 1 alpha, 1 forward model, 3 epochs  ->  12 inversion tasks
-./run_pipeline.sh --data-source real -s real_single_test_probes \
+./run_one_scenario.sh --data-source real -s real_single_test_probes \
     -c ensemble_scenarios_real.json --mode 2d --quick --quick-epochs 3 \
     --em-dir ./data/EMI_MFC2/ --tdr-dir ./data/daily_MFC/ \
     --coord-file ./data/SOILNET_MFC2_coordinates_sensors.csv
 
 # 2. Same, with a regularly thinned map (use if you also want to show maps)
-./run_pipeline.sh --data-source real -s real_single_test_grid \
+./run_one_scenario.sh --data-source real -s real_single_test_grid \
     -c ensemble_scenarios_real.json --mode 2d --quick --quick-epochs 3 \
     --em-dir ./data/EMI_MFC2/ --tdr-dir ./data/daily_MFC/ \
     --coord-file ./data/SOILNET_MFC2_coordinates_sensors.csv
 
 # 3. Whole real-case script, reduced
-./run_real_PAPER.sh --quick --quick-epochs 3
+./run_real_all_scenarios.sh --quick --quick-epochs 3
 ```
 
 - `real_single_test_probes` keeps only the EM points within a radius of the TDR probes: fastest, enough to test calibration (Steps 2/4/5), not the maps.
@@ -49,22 +49,22 @@ For presentable results use the two-stage run (README, "Split for the final runs
 - The SWC uncertainty band is an ensemble spread, not a confidence interval. On a synthetic surface-only run the truth was inside +-1 / +-2 sigma only 27 % / 60 % of the time.
 - Acceptance check still open (README / `to-do.md`): a `grid` / `probes` run should reproduce the full run's optimal EC and theta at the probe-matched points, and the matching report should not get worse.
 
-## 4. `run_real_study.py` and `compare_scenarios.py` on the real data
+## 4. `hyp1_layers_ws_freedom.py` and `compare_scenarios.py` on the real data
 
-### `run_real_study.py` - layer design x Waxman-Smits freedom (real data only)
-Answers "how many layers can the real TDR sensors support, and how many WS parameters can be freed?". It copies `real_single_base`, loops over layer designs (`L2` = [0.225], `L3` = [0.225, 0.6], `L4` = [0.3, 0.6, 1.0]) and K = 1..4 free WS parameters, writes `mfc2_outputs/real_study/study_scenarios.json`, runs `./run_pipeline.sh` once per scenario and collects `run_log.csv` rows into `study_summary.csv`. All K of one design share one output dir and Step 1 cache, so the expensive inversion runs once per design.
+### `hyp1_layers_ws_freedom.py` - layer design x Waxman-Smits freedom (real data only)
+Answers "how many layers can the real TDR sensors support, and how many WS parameters can be freed?". It copies `real_single_base`, loops over layer designs (`L2` = [0.225], `L3` = [0.225, 0.6], `L4` = [0.3, 0.6, 1.0]) and K = 1..4 free WS parameters, writes `mfc2_outputs/real_study/study_scenarios.json`, runs `./run_one_scenario.sh` once per scenario and collects `run_log.csv` rows into `study_summary.csv`. All K of one design share one output dir and Step 1 cache, so the expensive inversion runs once per design.
 
 ```bash
-python run_real_study.py --fast --dry-run     # plan + sensor coverage per horizon, runs nothing (works without data)
-python run_real_study.py --fast               # smoke test: --quick, 2 epochs, EM points within 5 m of probes, K = 1 and 4
-python run_real_study.py --designs L2 --free-k 1 4   # a small real subset
-python run_real_study.py                      # full study (long)
+python hyp1_layers_ws_freedom.py --fast --dry-run     # plan + sensor coverage per horizon, runs nothing (works without data)
+python hyp1_layers_ws_freedom.py --fast               # smoke test: --quick, 2 epochs, EM points within 5 m of probes, K = 1 and 4
+python hyp1_layers_ws_freedom.py --designs L2 --free-k 1 4   # a small real subset
+python hyp1_layers_ws_freedom.py                      # full study (long)
 ```
 
 - Use `--fast --dry-run` first: it checked out here (6 scenarios: L2/L3/L4 x K=1,4) and shows which horizons have no sensor - L3 H2 and L4 H2, H3 have none, so those fall back to the prior WS parameters.
 - `--fast` is a smoke test (calibration works, maps do not): not a result.
 - It needs `./data` and `emagpy`; per `to-do.md` it has not been run end to end on the real data.
-- For a quick demonstration that the real data works, `run_real_study.py --fast --designs L2 --free-k 1` is a one-scenario alternative to section 1.
+- For a quick demonstration that the real data works, `hyp1_layers_ws_freedom.py --fast --designs L2 --free-k 1` is a one-scenario alternative to section 1.
 
 ### `compare_scenarios.py` - compare finished runs
 It only reads the `pipeline_report_*.md` files (plus optional CSVs) of runs already made, so it works on real runs too, but only part of it applies:

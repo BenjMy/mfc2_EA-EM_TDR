@@ -72,7 +72,7 @@ Baselines of `1d_surface_tdr` (`--mode 1d --num-swc-positions 5`), final_rmse / 
 ### Working rules
 4. **Regression check** (before touching anything, and after every phase): run `1d_surface_tdr` and `1d_full_depth_ref` and compare `final_rmse` in `run_log.csv`. Baseline from your current log: `0.034585` (surface) and `0.035992` (full) m³/m³ — but see Phase 0: these numbers are **probably not reproducible yet**, so Phase 0 comes first.
 5. **Move first, rewrite later.** Prefer `git mv` + import fixes over rewriting logic. Rewrites only where section 4 says so.
-6. The `run_*_PAPER.sh` scripts do **not** need to keep working with the old file names: rewrite them to the new names as part of Phase 3 (`run_synthetic_PAPER.sh`, `run_real_PAPER.sh`, `run_1d_surface_vs_full.sh`).
+6. The `run_*_PAPER.sh` scripts do **not** need to keep working with the old file names: rewrite them to the new names as part of Phase 3 (`run_synthetic_all_scenarios.sh`, `run_real_all_scenarios.sh`, `run_1d_surface_vs_full.sh`).
 
 ---
 
@@ -80,7 +80,7 @@ Baselines of `1d_surface_tdr` (`--mode 1d --num-swc-positions 5`), final_rmse / 
 
 | Category | Files | Notes |
 |---|---|---|
-| **Entry points / launchers** | `run_pipeline.sh` (1087 l), `run_pipeline.py` (5862 l), `compare_scenarios.sh/.py`, `run_1d_surface_vs_full.sh`, `run_synthetic_PAPER.sh`, `run_real_PAPER.sh` | `run_pipeline.py:main()` alone is ~4,400 lines (from l.1467), about 75% of the file |
+| **Entry points / launchers** | `run_one_scenario.sh` (1087 l), `run_pipeline.py` (5862 l), `compare_scenarios.sh/.py`, `run_1d_surface_vs_full.sh`, `run_synthetic_all_scenarios.sh`, `run_real_all_scenarios.sh` | `run_pipeline.py:main()` alone is ~4,400 lines (from l.1467), about 75% of the file |
 | **Scenario definition** | `ensemble_scenarios.json`, `ensemble_scenarios_real.json`, `scenario_loader.py`, `backup/ensemble_scenarios.json` | JSON entries are near-copies of each other; docs live in a `_comment` list of strings |
 | **Synthetic data** | `0_generate_synthetic_data.py`, `generate_synthetic_real_mirror.py`, `capture_synthetic_theta.py`, `score_against_truth.py`, `run_and_score.py` | "mirror" = synthetic twin of the real deployment |
 | **Real data** | `0_real_data_loader.py`, `0_realEM_data_loader.py`, `0_realTDR_data_loader.py`, `train_val_split.py` | three loaders with overlapping roles; the real branch is also inlined in `run_pipeline.py` (`_prepare_real_em_csv`, `_load_real_data`, l.559–1166) |
@@ -143,7 +143,7 @@ mfc2/                           # python package (import mfc2.xxx)
     validation.py               # 1:1 plots (ECa, EC, theta) — see section 6
     compare.py                  # cross-run comparison
   scoring/                      # score_against_truth, metrics
-cli/                            # thin scripts: run_pipeline.sh, compare_scenarios.sh, studies/
+cli/                            # thin scripts: run_one_scenario.sh, compare_scenarios.sh, studies/
 studies/
   surface_vs_full_1d/           # run_1d_surface_vs_full.sh + README.md
 tests/                          # pytest
@@ -187,7 +187,7 @@ Each phase: **what**, **how**, **done when**.
 - `git mv` the numbered files: `0_generate_synthetic_data.py → data_synthetic.py`, `0_real_data_loader.py → data_real.py`, `1_run_model_generation.py → step1_inversion.py`, `2_run_petro.py → step2_petro.py`, `3_run_average.py → step3_average.py`, `4_run_select_assess.py → step4_select.py`.
 - Replace `importlib.import_module("0_…")` (run_pipeline.py l.75–78) and the `spec_from_file_location` call (l.1004–1012) with plain `import`.
 - Update `run_and_score.py`/shell scripts that reference the old names (`grep -rn "run_petro\|run_average\|generate_synthetic"`).
-- Rewrite `run_synthetic_PAPER.sh`, `run_real_PAPER.sh` and `run_1d_surface_vs_full.sh` for the new names (no backward compatibility needed).
+- Rewrite `run_synthetic_all_scenarios.sh`, `run_real_all_scenarios.sh` and `run_1d_surface_vs_full.sh` for the new names (no backward compatibility needed).
 - **Done when:** `python -c "import step2_petro"` works and the regression check passes.
 
 ### Phase 4 — One copy of the plotting helpers (~1 h)
@@ -231,7 +231,7 @@ Do it in the order the steps already appear. For each block between two `# STEP 
 - Add an `"extends": "<name>"` key to `scenario_loader.py` (deep-merge parent then child). Then `1d_full_depth_ref` becomes ~5 lines instead of ~80.
 - Generate sweep families in code instead of pasting JSON. Example for the surface-vs-full study: `scenarios/sweeps.py` builds `1d_{surface,full}_free{K}` from `1d_surface_tdr`/`1d_full_depth_ref` + the freeing order `[sigma_s, m, sigma_w, a]` (the generator I used for the 8 entries added earlier is a starting point). `load_scenario` falls back to the generator when the name is not in the JSON.
 - Replace the `_comment` string list by a `description` per scenario (already present) and a generated `--list-scenarios` command.
-- Validate unknown keys (typos such as the `ws_localized_bandwidth_sweep_NULL` mentioned in `run_pipeline.sh` should fail loudly).
+- Validate unknown keys (typos such as the `ws_localized_bandwidth_sweep_NULL` mentioned in `run_one_scenario.sh` should fail loudly).
 - **Done when:** adding a sweep value is a one-line change, and `load_scenario` of every existing name returns the same config as before (write a test that compares old vs new for all names).
 
 ### Phase 9 — Run bookkeeping (~2 h)

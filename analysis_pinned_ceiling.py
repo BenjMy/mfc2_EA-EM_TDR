@@ -77,8 +77,8 @@ Needs the code with `ensemble_members.npz`, `member_ranking.npy` and `member_rms
 
 ```bash
 # 1. run the scenario (about 7 min on one CPU; 5 surface probes at 0.2 m, K=2 free WS parameters)
-./run_pipeline.sh -s 1d_surface_hetero_free2 --mode 1d --num-swc-positions 5   # two-zone vertical truth
-./run_pipeline.sh -s 1d_surface_free2        --mode 1d --num-swc-positions 5   # uniform-in-depth truth
+./run_one_scenario.sh -s 1d_surface_hetero_free2 --mode 1d --num-swc-positions 5   # two-zone vertical truth
+./run_one_scenario.sh -s 1d_surface_free2        --mode 1d --num-swc-positions 5   # uniform-in-depth truth
 # 2. analyse the run folder (the latest numbered folder under mfc2_outputs/field_survey_<scenario>/)
 python analysis_pinned_ceiling.py mfc2_outputs/field_survey_1d_surface_hetero_free2/<seq>_1d_surface_hetero_free2
 python analysis_pinned_ceiling.py mfc2_outputs/field_survey_1d_surface_free2/<seq>_1d_surface_free2

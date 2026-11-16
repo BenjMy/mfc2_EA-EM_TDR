@@ -30,8 +30,8 @@ latest_id() {   # latest run_id of a scenario in the run log (see run_log.py)
 
 if [[ "${SKIP_RUNS:-0}" != "1" ]]; then
     for K in 1 2 3 4; do
-        ./run_pipeline.sh -s "1d_surface${V}_free${K}" --mode 1d --num-swc-positions "${NPOS}"
-        ./run_pipeline.sh -s "1d_full${V}_free${K}"    --mode 1d --num-swc-positions "${NPOS}"
+        ./run_one_scenario.sh -s "1d_surface${V}_free${K}" --mode 1d --num-swc-positions "${NPOS}"
+        ./run_one_scenario.sh -s "1d_full${V}_free${K}"    --mode 1d --num-swc-positions "${NPOS}"
     done
 fi
 

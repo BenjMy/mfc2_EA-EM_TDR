@@ -3,7 +3,7 @@
 # compare_scenarios.sh — EA-EM scenario comparison launcher
 # =============================================================================
 # Thin wrapper around compare_scenarios.py -- same role for comparisons as
-# run_pipeline.sh plays for a single pipeline run: sane defaults, --help,
+# run_one_scenario.sh plays for a single pipeline run: sane defaults, --help,
 # and a virtualenv switch, without needing to remember Python flag names.
 #
 # Usage:

@@ -54,11 +54,11 @@ Usage
     python study_swc_design.py --preset main --keep-going --resume
     python study_swc_design.py --analyze-only                  # re-collect + re-plot only
     python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10
-    python study_swc_design.py --preset oat -- --em-footprint-diagnostic   # after '--' -> run_pipeline.sh
+    python study_swc_design.py --preset oat -- --em-footprint-diagnostic   # after '--' -> run_one_scenario.sh
 
 Run log: the study has its own, ``mfc2_outputs/run_log_swc_study.csv`` (``--log-file`` to change),
 so its many synthetic runs do not mix with the shared real-data log ``mfc2_outputs/run_log.csv``.
-It is passed to every ``run_pipeline.sh`` call and read back by the analysis.
+It is passed to every ``run_one_scenario.sh`` call and read back by the analysis.
 
 Outputs (``--out-dir``, default comparison_output/swc_design_study/)
     study_scenarios.json   generated scenarios (each ``extends`` one parent)
@@ -87,7 +87,7 @@ import numpy as np
 import geometry_utils
 import scenario_loader as sl
 import sweeps
-from run_real_study import ws_freedom
+from hyp1_layers_ws_freedom import ws_freedom
 
 # --------------------------------------------------------------------------
 # Study definition (edit here)
@@ -298,7 +298,7 @@ def build_study_config(parent_raw: dict, designs: list[Design], *, runs_dir: str
 
 def pipeline_command(d: Design, config_path: str, probe_csv: str, mode: str, fast: bool,
                      extra: list[str], log_file: str = RUN_LOG) -> list[str]:
-    cmd = ["./run_pipeline.sh", "-s", d.name, "-c", config_path, "--mode", mode, "--probe-xyz", probe_csv,
+    cmd = ["./run_one_scenario.sh", "-s", d.name, "-c", config_path, "--mode", mode, "--probe-xyz", probe_csv,
            "--log-file", log_file]
     if fast:
         cmd.append("--quick")
