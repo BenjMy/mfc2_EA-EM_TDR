@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mfc2-ea-em-tdr"
+version = "0.1.0"
+description = "EA-EM pipeline: ensemble EM (ECa) inversion + TDR-calibrated Waxman-Smits petrophysics -> soil water content"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "tqdm",
+    "emagpy",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+# The repo is a flat set of scripts, not a package: installing this only
+# pulls in the dependencies; run the scripts from the repository root.
+[tool.setuptools]
+py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
