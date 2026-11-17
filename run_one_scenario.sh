@@ -85,7 +85,8 @@ NX=10
 NY=5
 EM_DIR=""
 TDR_DIR=""
-COORD_FILE="./data/SOILNET_MFC2_coordinates_sensors.csv"
+COORD_FILE=""          # default comes from EA_EM_config.py (dataset)
+DATASET=""             # --dataset NAME (EA_EM_config.py); empty = scenario JSON / $EA_EM_DATASET / default
 DROP_COILS=()
 HOMOGENEOUS=false
 FULL_RANGE_GRADIENT=false
@@ -134,7 +135,10 @@ Real data options (when --data-source real):
       --tdr-dir PATH     Path to directory containing TDR Excel spreadsheets
                           (e.g., ./data/daily_MFC/)
       --coord-file PATH  Path to sensor coordinates CSV file
-                          (default: ./data/SOILNET_MFC2_coordinates_sensors.csv)
+                          (default: from the dataset in EA_EM_config.py)
+      --dataset NAME     Named input dataset defined in EA_EM_config.py (supplies the
+                          three paths above; explicit --em-dir/--tdr-dir/--coord-file win).
+                          List with: python EA_EM_config.py --list
 
 EM channel options:
       --drop-coils COIL [COIL ...]
@@ -534,6 +538,7 @@ VALIDATE_ONLY=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --data-source)  DATA_SOURCE="${2:?'--data-source requires synthetic or real'}"; shift 2 ;;
+        --dataset)      DATASET="${2:?'--dataset requires a name (see: python EA_EM_config.py --list)'}"; shift 2 ;;
         --em-dir)       EM_DIR="${2:?'--em-dir requires a path'}";                      shift 2 ;;
         --tdr-dir)      TDR_DIR="${2:?'--tdr-dir requires a path'}";                    shift 2 ;;
         --coord-file)   COORD_FILE="${2:?'--coord-file requires a path'}";              shift 2 ;;
@@ -807,7 +812,6 @@ SCENARIO_DS="$(_read_scenario_field data_source)"
 SCENARIO_EM_DIR="$(_read_scenario_field em_data_dir)"
 SCENARIO_TDR_DIR="$(_read_scenario_field tdr_data_dir)"
 SCENARIO_COORD_FILE="$(_read_scenario_field coord_file)"
-SCENARIO_COORD_FILE="${SCENARIO_COORD_FILE:-./data/SOILNET_MFC2_coordinates_sensors.csv}"
 
 # Default scenario data_source to 'synthetic' when not declared in JSON
 SCENARIO_DS="${SCENARIO_DS:-synthetic}"
@@ -831,14 +835,22 @@ fi
 
 # For real mode: CLI paths override JSON paths; both must resolve
 if [[ "${EFFECTIVE_DS}" == "real" ]]; then
-    EFFECTIVE_EM_DIR="${EM_DIR:-${SCENARIO_EM_DIR}}"
-    EFFECTIVE_TDR_DIR="${TDR_DIR:-${SCENARIO_TDR_DIR}}"
-    EFFECTIVE_COORD_FILE="${COORD_FILE:-${SCENARIO_COORD_FILE}}"
+    # Precedence (same as run_pipeline.py / EA_EM_config.py):
+    #   explicit CLI path > --dataset > scenario JSON > $EA_EM_DATASET / default dataset
+    _cfg_field() {
+        "${PYTHON}" "${SCRIPT_DIR}/EA_EM_config.py" ${DATASET:+--dataset "${DATASET}"} --field "$1"
+    }
+    if [[ -n "${DATASET}" ]]; then
+        SCENARIO_EM_DIR=""; SCENARIO_TDR_DIR=""; SCENARIO_COORD_FILE=""
+    fi
+    EFFECTIVE_EM_DIR="${EM_DIR:-${SCENARIO_EM_DIR:-$(_cfg_field em_dir)}}"
+    EFFECTIVE_TDR_DIR="${TDR_DIR:-${SCENARIO_TDR_DIR:-$(_cfg_field tdr_dir)}}"
+    EFFECTIVE_COORD_FILE="${COORD_FILE:-${SCENARIO_COORD_FILE:-$(_cfg_field coord_file)}}"
 
     [[ -z "${EFFECTIVE_EM_DIR}" ]]  && die "Real data mode requires an EM directory.
-  Set 'em_data_dir' in the scenario JSON or pass --em-dir."
+  Pass --em-dir / --dataset, set 'em_data_dir' in the scenario JSON, or define the dataset in EA_EM_config.py."
     [[ -z "${EFFECTIVE_TDR_DIR}" ]] && die "Real data mode requires a TDR directory.
-  Set 'tdr_data_dir' in the scenario JSON or pass --tdr-dir."
+  Pass --tdr-dir / --dataset, set 'tdr_data_dir' in the scenario JSON, or define the dataset in EA_EM_config.py."
     [[ ! -d "${EFFECTIVE_EM_DIR}" ]]  && die "EM directory not found: ${EFFECTIVE_EM_DIR}"
     [[ ! -d "${EFFECTIVE_TDR_DIR}" ]] && die "TDR directory not found: ${EFFECTIVE_TDR_DIR}"
     [[ ! -f "${EFFECTIVE_COORD_FILE}" ]] && die "Coordinate file not found: ${EFFECTIVE_COORD_FILE}"
@@ -909,6 +921,7 @@ if [[ "${EFFECTIVE_DS}" == "real" ]]; then
         --tdr-dir "${EFFECTIVE_TDR_DIR}"
         --coord-file "${EFFECTIVE_COORD_FILE}"
     )
+    [[ -n "${DATASET}" ]] && REAL_DATA_ARGS+=(--dataset "${DATASET}")
 fi
 
 DROP_COILS_ARGS=()

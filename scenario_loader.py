@@ -873,13 +873,18 @@ def _validate(name: str, raw: dict) -> None:
             f"or 'random' for synthetic scenarios."
         )
     if data_source == "real":
+        # The three paths may be omitted: run_pipeline.py then takes them from
+        # the selected dataset in EA_EM_config.py (--dataset / EA_EM_DATASET).
+        # When written, they must be non-empty strings.
         for field_name in ("em_data_dir", "tdr_data_dir", "coord_file"):
-            val = raw.get(field_name)
+            if field_name not in raw:
+                continue
+            val = raw[field_name]
             if not val or not isinstance(val, str):
                 raise ValueError(
-                    f"Scenario '{name}': data_source is 'real' but "
-                    f"'{field_name}' is missing or empty.  Set it to the "
-                    f"path of your {field_name.replace('_', ' ')}."
+                    f"Scenario '{name}': '{field_name}' is empty or not a string.  "
+                    f"Set it to the path of your {field_name.replace('_', ' ')}, "
+                    f"or remove the key to use the dataset defined in EA_EM_config.py."
                 )
         ttd = raw.get("time_tolerance_days", 1.0)
         if not isinstance(ttd, (int, float)) or ttd <= 0:

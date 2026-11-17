@@ -46,6 +46,19 @@ Scenarios are defined in `ensemble_scenarios.json` (synthetic) and `ensemble_sce
 
 Tests: `pytest tests`.
 
+## Input data paths (`EA_EM_config.py`)
+
+All input paths of the real-data branch live in `EA_EM_config.py`, grouped as a named *dataset* (`em_dir`, `tdr_dir`, `coord_file`). `mfc2` is the built-in default, so existing runs are unchanged. To use another site, add a dataset (edit `DATASETS`, or put it in `EA_EM_datasets.json` next to the file) and select it:
+
+```bash
+python EA_EM_config.py --list                 # known datasets
+python EA_EM_config.py --dataset my_site --check   # do the paths exist?
+./run_one_scenario.sh --mode 2d -s real_single_base -c ensemble_scenarios_real.json --dataset my_site
+EA_EM_DATASET=my_site ./run_one_scenario.sh ...    # same, through the environment
+```
+
+Precedence: explicit `--em-dir/--tdr-dir/--coord-file` > `--dataset` > paths written in the scenario JSON > `$EA_EM_DATASET` > `mfc2`. A real-data scenario may omit `em_data_dir`/`tdr_data_dir`/`coord_file` and take them from the dataset. `EA_EM_DATA_ROOT` relocates the default `./data` tree.
+
 ## Running several real-data scenarios
 
 The launchers form three levels. Each level only calls the one below it, and only `run_one_scenario.sh` does the computing:

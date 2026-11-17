@@ -169,7 +169,8 @@ def run_parallel_ensemble(
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
     # Fallback to current folder if relative path structure isn't present
-    EM_FNAME = "data/synthetic/data_Model 1.csv"
+    import EA_EM_config as cfgpaths
+    EM_FNAME = cfgpaths.SYNTHETIC_EM_FILE
     if not os.path.exists(EM_FNAME):
         EM_FNAME = "data_Model 1.csv"
 

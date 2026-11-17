@@ -55,6 +55,8 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
+import EA_EM_config as cfgpaths  # central input-data paths (datasets)
+
 import em_methodology as EMmethod
 import em_subsample
 import geometry_utils
@@ -5223,13 +5225,21 @@ if __name__ == "__main__":
             "a 1-D run on real data for a quick/lightweight check."
         ),
     )
+    parser.add_argument("--dataset", default=None, metavar="NAME",
+                        help="Named input dataset from EA_EM_config.py (real-data runs): "
+                             "supplies --em-dir/--tdr-dir/--coord-file. Known: "
+                             + ", ".join(sorted(cfgpaths.DATASETS))
+                             + f". Default: $EA_EM_DATASET or '{cfgpaths.DEFAULT_DATASET}'. "
+                             "Explicit --em-dir/--tdr-dir/--coord-file still win.")
     parser.add_argument("--em-dir",   default=None,      metavar="PATH",
-                        help="EM survey CSV directory (required for --data-source real).")
+                        help="EM survey CSV directory (real data; default: from the dataset "
+                             "in EA_EM_config.py / the scenario JSON).")
     parser.add_argument("--tdr-dir",  default=None,      metavar="PATH",
-                        help="TDR Excel data directory (required for --data-source real).")
-    parser.add_argument("--coord-file",
-                        default="./data/SOILNET_MFC2_coordinates_sensors.csv", metavar="PATH",
-                        help="Sensor coordinates CSV file (default: ./data/SOILNET_MFC2_coordinates_sensors.csv).")
+                        help="TDR Excel data directory (real data; default: from the dataset "
+                             "in EA_EM_config.py / the scenario JSON).")
+    parser.add_argument("--coord-file", default=None, metavar="PATH",
+                        help="Sensor coordinates CSV file (real data; default: from the dataset "
+                             "in EA_EM_config.py / the scenario JSON).")
     parser.add_argument(
         "--drop-coils", nargs="+", default=None, metavar="COIL",
         help="One or more coils/frequencies to exclude from every inversion "
@@ -5477,21 +5487,15 @@ if __name__ == "__main__":
         if args.quick_epochs < 1:
             parser.error("--quick-epochs must be >= 1")
 
-    # Validate real data requirements
-    if args.data_source == "real":
-        if not args.em_dir or not args.tdr_dir:
-            print("[ERROR] --data-source real requires --em-dir and --tdr-dir")
+    # Validate real data requirements. Paths not given on the CLI come from the
+    # dataset (EA_EM_config.py) or the scenario JSON and are checked after the
+    # scenario is loaded (see "Resolve effective data source and paths" below).
+    if args.dataset:
+        try:
+            cfgpaths.get_dataset(args.dataset)
+        except KeyError as _e:
+            print(f"[ERROR] {_e.args[0]}")
             sys.exit(1)
-        if not os.path.isdir(args.em_dir):
-            print(f"[ERROR] EM directory not found: {args.em_dir}")
-            sys.exit(1)
-        if not os.path.isdir(args.tdr_dir):
-            print(f"[ERROR] TDR directory not found: {args.tdr_dir}")
-            sys.exit(1)
-        if not os.path.isfile(args.coord_file):
-            print(f"[ERROR] Coordinate file not found: {args.coord_file}")
-            sys.exit(1)
-        print("[VALIDATION] Real data mode: all paths verified ✓")
 
     # Load scenario config — applies to both data sources. depths0,
     # cond_ranges, param_grid, and the SWC sensor layout (num_swc_positions /
@@ -5531,12 +5535,22 @@ if __name__ == "__main__":
     # Resolve effective data source and paths.
     # For real-data scenarios, CLI path overrides > JSON paths > error.
     effective_ds         = scenario_ds
-    effective_em_dir     = args.em_dir    or getattr(cfg, "em_data_dir",  None)
-    effective_tdr_dir    = args.tdr_dir   or getattr(cfg, "tdr_data_dir", None)
-    effective_coord_file = (args.coord_file
-                            if args.coord_file != "./data/SOILNET_MFC2_coordinates_sensors.csv"
-                            else None) or getattr(cfg, "coord_file", None) \
-                           or "./data/SOILNET_MFC2_coordinates_sensors.csv"
+    # Precedence: explicit CLI path > --dataset > scenario JSON > EA_EM_DATASET /
+    # default dataset (see EA_EM_config.resolve_real_paths).
+    _rp = cfgpaths.resolve_real_paths(
+        cli_em_dir=args.em_dir, cli_tdr_dir=args.tdr_dir,
+        cli_coord_file=args.coord_file, cli_dataset=args.dataset,
+        scenario_em_dir=getattr(cfg, "em_data_dir", None),
+        scenario_tdr_dir=getattr(cfg, "tdr_data_dir", None),
+        scenario_coord_file=getattr(cfg, "coord_file", None),
+    )
+    if effective_ds == "real":
+        effective_em_dir, effective_tdr_dir, effective_coord_file = (
+            _rp.em_dir, _rp.tdr_dir, _rp.coord_file)
+    else:   # synthetic runs do not read field data: keep the previous behaviour
+        effective_em_dir     = args.em_dir  or getattr(cfg, "em_data_dir", None)
+        effective_tdr_dir    = args.tdr_dir or getattr(cfg, "tdr_data_dir", None)
+        effective_coord_file = args.coord_file or getattr(cfg, "coord_file", None)
 
     if effective_ds == "real":
         missing = []
@@ -5586,6 +5600,7 @@ if __name__ == "__main__":
         print(f" [PIPELINE] EM directory    : {effective_em_dir}")
         print(f" [PIPELINE] TDR directory   : {effective_tdr_dir}")
         print(f" [PIPELINE] Coordinates     : {effective_coord_file}")
+        print(f" [PIPELINE] Dataset         : {_rp.dataset}")
     print(f" [PIPELINE] Spatial mode    : {effective_mode.upper()}")
     print(cfg.summary())
     for _w in check_ws_start_values(cfg):
