@@ -329,8 +329,14 @@ class ScenarioConfig:
     pin_source: str = "truth"
     """Where the pinned layers' EC comes from. 'truth' = the synthetic
     ground-truth bulk EC (ORACLE upper bound: how much could conditioning on
-    a perfectly known surface layer help; synthetic runs only). Only used
+    a perfectly known surface layer help; synthetic runs only). 'file' = an
+    .npy of shape (n_time, n_points, n_layers) in ``pin_ec_file`` (only the
+    pinned layers are read), e.g. the TDR-derived EC written by
+    ``run_pinned_tdr.py`` (pass 2 of the TDR-pinned experiment). Only used
     when ``pin_layers`` is set."""
+
+    pin_ec_file: str | None = None
+    """Path of the .npy read when ``pin_source == 'file'`` (mS/m)."""
 
     ws_bounds: dict | None = None
     """Optional override of the Waxman-Smits calibration bounds used by the
@@ -964,9 +970,15 @@ def _validate(name: str, raw: dict) -> None:
                 f"Scenario '{name}': pin_layers pins every layer; at least one "
                 f"layer must stay free for the inversion."
             )
-    if raw.get("pin_source", "truth") not in ("truth",):
+    if raw.get("pin_source", "truth") not in ("truth", "file"):
         raise ValueError(
-            f"Scenario '{name}': pin_source must be 'truth', got {raw.get('pin_source')!r}."
+            f"Scenario '{name}': pin_source must be 'truth' or 'file', "
+            f"got {raw.get('pin_source')!r}."
+        )
+    if (pin_layers is not None and raw.get("pin_source", "truth") == "file"
+            and not raw.get("pin_ec_file")):
+        raise ValueError(
+            f"Scenario '{name}': pin_source='file' needs 'pin_ec_file' (path of the .npy)."
         )
 
     ws_bounds = raw.get("ws_bounds", None)
@@ -1587,6 +1599,7 @@ def load_scenario(
         ws_fixed_params   = raw.get("ws_fixed_params", None),
         pin_layers        = raw.get("pin_layers", None),
         pin_source        = raw.get("pin_source", "truth"),
+        pin_ec_file       = raw.get("pin_ec_file", None),
         ws_bounds         = (
             {k: [float(v[0]), float(v[1])] for k, v in raw["ws_bounds"].items()}
             if raw.get("ws_bounds") is not None else None

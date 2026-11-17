@@ -1788,6 +1788,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
     # every layer free (default). 'truth' source = ORACLE (synthetic only).
     PIN_LAYERS = getattr(cfg, "pin_layers", None) if cfg is not None else None
     PIN_SOURCE = getattr(cfg, "pin_source", "truth") if cfg is not None else "truth"
+    PIN_EC_FILE = getattr(cfg, "pin_ec_file", None) if cfg is not None else None
 
     # Homogeneous mode: disable spatial gradients in synthetic generation.
     # CLI flag (if given) overrides scenario config.
@@ -2768,14 +2769,22 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # starts would only duplicate tasks).
             _pin_truth_ec = None
             if PIN_LAYERS is not None:
-                if data_source != "synthetic":
-                    raise ValueError("pin_layers with pin_source='truth' needs synthetic data "
-                                     "(there is no ground-truth EC for real data).")
-                _ec_truth_path = _resolve_npy_path("synthetic_time_lapse_ec.npy",
-                                                   OUTPUT_MODEL_DIR, OUTPUT_DIR)
-                if not os.path.exists(_ec_truth_path):
-                    raise FileNotFoundError(f"pin_layers needs {_ec_truth_path} (written by Step 0).")
-                _pin_truth_ec = np.load(_ec_truth_path)[REALIZATION_INDEX]
+                if PIN_SOURCE == "file":
+                    # EC of the pinned layers from an .npy (e.g. TDR-derived, run_pinned_tdr.py)
+                    if not PIN_EC_FILE or not os.path.exists(PIN_EC_FILE):
+                        raise FileNotFoundError(f"pin_source='file': pin_ec_file {PIN_EC_FILE!r} not found.")
+                    _pin_truth_ec = np.load(PIN_EC_FILE)
+                    reporter.log(f"[PIN] pinned-layer EC read from {PIN_EC_FILE} "
+                                 f"(shape {_pin_truth_ec.shape})")
+                else:
+                    if data_source != "synthetic":
+                        raise ValueError("pin_layers with pin_source='truth' needs synthetic data "
+                                         "(there is no ground-truth EC for real data).")
+                    _ec_truth_path = _resolve_npy_path("synthetic_time_lapse_ec.npy",
+                                                       OUTPUT_MODEL_DIR, OUTPUT_DIR)
+                    if not os.path.exists(_ec_truth_path):
+                        raise FileNotFoundError(f"pin_layers needs {_ec_truth_path} (written by Step 0).")
+                    _pin_truth_ec = np.load(_ec_truth_path)[REALIZATION_INDEX]
                 if _pin_truth_ec.ndim == 2:
                     _pin_truth_ec = _pin_truth_ec[np.newaxis, ...]
                 _n_layers_pin = len(DEPTHS0) + 1
@@ -2790,7 +2799,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                         _cs[_i] = float(COND_RANGES[_i][0])
                     if tuple(_cs) not in _seen:
                         _seen.add(tuple(_cs)); _dedup.append(_cs)
-                print(f"[INFO] Layer pinning (ORACLE truth EC) on layers {_pinned_idx}: "
+                print(f"[INFO] Layer pinning (EC source: {PIN_SOURCE}) on layers {_pinned_idx}: "
                       f"{len(cond_sets)} -> {len(_dedup)} starting-conductivity combinations.")
                 cond_sets = _dedup
 
@@ -4841,6 +4850,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         }
         if _tc is not None:
             _step5_capture["theta_calc"] = np.asarray(_tc)
+        # Calibration inputs/outputs for pass 2 of the TDR-pinned experiment
+        # (pin_from_tdr.py / run_pinned_tdr.py): train TDR obs + calibrated WS.
+        try:
+            _step5_capture["ws_params"] = np.asarray(selected_output.best_fit.params)
+            _step5_capture["tdr_train_theta"] = np.asarray(theta_obs, dtype=float)
+            _step5_capture["tdr_train_positions"] = np.asarray(sample_positions, dtype=int)
+            _step5_capture["tdr_train_times"] = np.asarray(sample_times, dtype=int)
+            if probe_layer_indices is not None:
+                _step5_capture["tdr_train_layers"] = np.asarray(probe_layer_indices, dtype=int)
+        except Exception as _e:
+            reporter.log(f"[STEP 5][WARN] could not capture WS params / TDR obs: {_e}")
         if getattr(selected_output, "coverage", None) is not None:
             _step5_capture["coverage"] = np.asarray(selected_output.coverage)
         if getattr(selected_output, "best_fit", None) is not None:
