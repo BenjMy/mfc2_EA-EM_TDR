@@ -1,5 +1,5 @@
 """scenario_loader CLI (--field), the 'wrong config' hint, the forward-model banner and
-the early stop of run_pipeline.sh for a scenario that is in another config file."""
+the early stop of run_one_scenario.sh for a scenario that is in another config file."""
 import os
 import shutil
 import subprocess
@@ -64,7 +64,7 @@ def test_banner_falls_back_to_field_without_a_grid_entry():
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 def test_launcher_stops_early_instead_of_defaulting_to_synthetic():
-    r = subprocess.run(["bash", os.path.join(ROOT, "run_pipeline.sh"), "-s", "real_single_base"],
+    r = subprocess.run(["bash", os.path.join(ROOT, "run_one_scenario.sh"), "-s", "real_single_base"],
                        capture_output=True, text=True, cwd=ROOT, timeout=60)
     out = r.stdout + r.stderr
     assert r.returncode != 0

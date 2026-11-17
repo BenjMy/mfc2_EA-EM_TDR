@@ -16,7 +16,7 @@
 #       below for those three scenarios -- no extra block needed.
 #     - CLI (ad hoc, no JSON edit): --ws-localized-bandwidth <c> or
 #       --ws-localized-bandwidth-sweep <c1> <c2> ..., e.g.
-#         ./run_pipeline.sh -s 2d --ws-localized-bandwidth-sweep 1 2 5 10 15 20
+#         ./run_one_scenario.sh -s 2d --ws-localized-bandwidth-sweep 1 2 5 10 15 20
 #       useful for scenarios that don't set either field in the JSON, or
 #       to try different candidate bandwidths without editing the JSON.
 #   - gamma now accepts multiple values in ONE run_pipeline.sh call, same
@@ -48,9 +48,9 @@
 set -euo pipefail
 
 # --- Baseline runs -----------------------------------------------------------
-./run_pipeline.sh -s 2d --em-footprint-diagnostic
-./run_pipeline.sh -s 2d_intermediate --em-footprint-diagnostic
-./run_pipeline.sh -s 2d_dense_tdr --em-footprint-diagnostic
+./run_one_scenario.sh -s 2d --em-footprint-diagnostic
+./run_one_scenario.sh -s 2d_intermediate --em-footprint-diagnostic
+./run_one_scenario.sh -s 2d_dense_tdr --em-footprint-diagnostic
 
 ./compare_scenarios.sh --list   # copy the 3 run numbers just produced, e.g.:
 #./compare_scenarios.sh --ids 2d:1 2d_intermediate:1 2d_dense_tdr:1 --position 0 0 
@@ -64,33 +64,33 @@ set -euo pipefail
 # it overrides the scenario's JSON value for that run, no config edit needed:
 
 
-./run_pipeline.sh -s 2d              --ws-localized-bandwidth 20 --em-footprint-diagnostic
+./run_one_scenario.sh -s 2d              --ws-localized-bandwidth 20 --em-footprint-diagnostic
 
 
 
-./run_pipeline.sh -s 2d              --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
-./run_pipeline.sh -s 2d_intermediate --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
-./run_pipeline.sh -s 2d_dense_tdr    --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
+./run_one_scenario.sh -s 2d              --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
+./run_one_scenario.sh -s 2d_intermediate --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
+./run_one_scenario.sh -s 2d_dense_tdr    --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --em-footprint-diagnostic
 
 ./compare_scenarios.sh --list
 ./compare_scenarios.sh --ids 2d:2 2d_intermediate:2 2d_dense_tdr:2 --position 5 0
 
 
 
-./run_pipeline.sh -s 2d_random_xy_drying --mode 2d
-./run_pipeline.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_2sensors)"
-./run_pipeline.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)"
+./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d
+./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_2sensors)"
+./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)"
 ./compare_scenarios.sh --ids 2d_random_xy_drying:1 2d_random_xy_drying:1 --position 5 0
 
 
-./run_pipeline.sh --mode 1d -s 2d_horizon_ws
+./run_one_scenario.sh --mode 1d -s 2d_horizon_ws
 
-./run_pipeline.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_2sensors)"
-./run_pipeline.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)"
+./run_one_scenario.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_2sensors)"
+./run_one_scenario.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)"
 
 
 
-./run_pipeline.sh -s 2d_xy_waxman --mode 2d \
+./run_one_scenario.sh -s 2d_xy_waxman --mode 2d \
     --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 \
     --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)" \
 
@@ -99,18 +99,18 @@ set -euo pipefail
 
 
 # --- Beta sweep ---------------------------------------------------------------
-#./run_pipeline.sh -s 2d              --beta 0 0.5 1
-#./run_pipeline.sh -s 2d_intermediate --beta 0 0.5 1
-#./run_pipeline.sh -s 2d_dense_tdr    --beta 0 0.5 1
+#./run_one_scenario.sh -s 2d              --beta 0 0.5 1
+#./run_one_scenario.sh -s 2d_intermediate --beta 0 0.5 1
+#./run_one_scenario.sh -s 2d_dense_tdr    --beta 0 0.5 1
 
 # --- Gamma sweep ---------------------------------------------------------------
 # gamma now sweeps in a single call, same as beta -- no more looping one
 # call per value. (Still: gamma only affects time-lapse/multi-epoch
 # inversions -- confirm your synthetic setup actually has multiple
 # epochs, otherwise this has no effect regardless of value.)
-./run_pipeline.sh -s 2d              --gamma 0 10
-./run_pipeline.sh -s 2d_intermediate --gamma 0 10
-./run_pipeline.sh -s 2d_dense_tdr    --gamma 0 10
+./run_one_scenario.sh -s 2d              --gamma 0 10
+./run_one_scenario.sh -s 2d_intermediate --gamma 0 10
+./run_one_scenario.sh -s 2d_dense_tdr    --gamma 0 10
 
 ./compare_scenarios.sh --list
 # ./compare_scenarios.sh --ids <scenario:number> <scenario:number> <scenario:number> ...
@@ -120,14 +120,14 @@ set -euo pipefail
 # value gets crossed with every gamma value (plus alpha/method/
 # forwardModel/starting-conductivities), so this is
 # len(beta) x len(gamma) x ... ensemble tasks, not len(beta) + len(gamma).
-#./run_pipeline.sh -s 2d              --beta 0 0.5 1 --gamma 0 10
-#./run_pipeline.sh -s 2d_intermediate --beta 0 0.5 1 --gamma 0 10
-#./run_pipeline.sh -s 2d_dense_tdr    --beta 0 0.5 1 --gamma 0 10
+#./run_one_scenario.sh -s 2d              --beta 0 0.5 1 --gamma 0 10
+#./run_one_scenario.sh -s 2d_intermediate --beta 0 0.5 1 --gamma 0 10
+#./run_one_scenario.sh -s 2d_dense_tdr    --beta 0 0.5 1 --gamma 0 10
 
 # --- train-val-split ------------------------------------
-#./run_pipeline.sh -s 2d --train-val-split alternate_sorted
-#./run_pipeline.sh -s 2d_intermediate --train-val-split alternate_sorted
-#./run_pipeline.sh -s 2d_dense_tdr --train-val-split alternate_sorted
+#./run_one_scenario.sh -s 2d --train-val-split alternate_sorted
+#./run_one_scenario.sh -s 2d_intermediate --train-val-split alternate_sorted
+#./run_one_scenario.sh -s 2d_dense_tdr --train-val-split alternate_sorted
 
 #./compare_scenarios.sh --list
 #./compare_scenarios.sh --ids 2d:3 2d_intermediate:3 2d_dense_tdr:3
@@ -141,8 +141,8 @@ set -euo pipefail
 # Truth m/sigma_s vary along x, identically at every depth. Probe count is swept
 # with --num-swc-positions; probes are spread along the 18 m transect.
 for N in 2 3 5 10; do
-    ./run_pipeline.sh -s 1d_surface_tdr    --mode 1d --num-swc-positions "$N"
-    ./run_pipeline.sh -s 1d_full_depth_ref --mode 1d --num-swc-positions "$N"
+    ./run_one_scenario.sh -s 1d_surface_tdr    --mode 1d --num-swc-positions "$N"
+    ./run_one_scenario.sh -s 1d_full_depth_ref --mode 1d --num-swc-positions "$N"
 done
 
 ./compare_scenarios.sh --list

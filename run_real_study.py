@@ -19,7 +19,7 @@ What it does
    sigma_s, m, sigma_w, a; the others stay at ``lab_p0``).
 4. Writes the resulting scenarios to ``<out-dir>/study_scenarios.json``
    (every scenario ``extends`` the base, so only the differences are listed)
-   and runs ``./run_pipeline.sh`` once per scenario.
+   and runs ``./run_one_scenario.sh`` once per scenario.
 5. Collects the rows of ``mfc2_outputs/run_log.csv`` into
    ``<out-dir>/study_summary.csv``.
 
@@ -35,7 +35,7 @@ Usage
     python run_real_study.py --designs L2 --free-k 1 2   # a subset
     python run_real_study.py --design L3b=0.2,0.5 --designs L3b   # own design
     python run_real_study.py --fast -- --em-footprint-diagnostic  # extra flags
-                                                  # (after '--') go to run_pipeline.sh
+                                                  # (after '--') go to run_one_scenario.sh
 
 ``--fast`` = ``--quick --quick-epochs 2`` (one alpha, one forward model, two
 epochs) + ``em_subsample = probes`` (only EM points within 5 m of a TDR probe).
@@ -175,7 +175,7 @@ def parent_name() -> str:
 
 
 def pipeline_command(name: str, config_path: str, mode: str, fast: bool, extra: list[str]) -> list[str]:
-    cmd = ["./run_pipeline.sh", "-s", name, "-c", config_path, "--mode", mode]
+    cmd = ["./run_one_scenario.sh", "-s", name, "-c", config_path, "--mode", mode]
     if fast:
         cmd += ["--quick", "--quick-epochs", str(FAST_EPOCHS)]
     return cmd + list(extra)
