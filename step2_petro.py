@@ -6,6 +6,7 @@ STEP 2 standalone runner — petrophysical calibration and TDR diagnostics.
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import os
 from typing import Sequence
 import numpy as np
@@ -22,7 +23,7 @@ def plot_petrophysical_calibration(
     ec_values: np.ndarray,
     theta_obs: np.ndarray,
     petro_fit: EMmethod.PetroFit,
-    output_path: str = "mfc2_outputs/petro_calibration.png",
+    output_path: str = OUTPUT_ROOT + "/petro_calibration.png",
     probe_layer_indices: np.ndarray = None  # <-- Añadimos este parámetro
 ) -> None:
     """
@@ -233,7 +234,7 @@ def plot_dual_depth_profile(ec_profile, depths0, petro_fit, output_path, depths_
 def plot_one_to_one_validation(
     theta_obs: np.ndarray,
     theta_pred: np.ndarray,
-    output_path: str = "mfc2_outputs/parity_validation.png"
+    output_path: str = OUTPUT_ROOT + "/parity_validation.png"
 ) -> None:
     """Generates a diagnostic parity plot validating prediction mapping."""
     fig, ax = plt.subplots(figsize=(5, 5))
@@ -287,7 +288,7 @@ def plot_one_to_one_validation_by_sensor(
     probe_x_coords: Sequence[float] | None = None,
     probe_y_coords: Sequence[float] | None = None,
     sensor_ids: Sequence[str] | None = None,
-    output_path: str = "mfc2_outputs/parity_validation_by_sensor.png",
+    output_path: str = OUTPUT_ROOT + "/parity_validation_by_sensor.png",
     min_points_per_sensor: int = 2,
     max_labelled_sensors: int = 20,
 ) -> None:
@@ -664,7 +665,7 @@ def plot_localized_sigma_s_profile(
     probe_x_coords: Sequence[float] | None = None,
     probe_layer_indices: Sequence[int] | None = None,
     params: Sequence[str] = ("sigma_s",),
-    output_path: str = "mfc2_outputs/petro_calibration_localized.png",
+    output_path: str = OUTPUT_ROOT + "/petro_calibration_localized.png",
 ) -> None:
     """
     Diagnostic for kernel-localized calibration (spatial_calibration_alternatives.md
@@ -817,7 +818,7 @@ def plot_localized_sigma_s_map(
     probe_y_coords: Sequence[float] | None = None,
     probe_layer_indices: Sequence[int] | None = None,
     param: str = "sigma_s",
-    output_path: str = "mfc2_outputs/petro_calibration_localized_map.png",
+    output_path: str = OUTPUT_ROOT + "/petro_calibration_localized_map.png",
 ) -> None:
     """
     True 2-D map of a kernel-localized WS parameter (default sigma_s), one
@@ -1014,7 +1015,7 @@ def run_petro(
     sample_times: Sequence[int],
     theta_obs: np.ndarray,
     depths0: list[float] | None = None,
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     generate_plots: bool = True,
     probe_layer_indices: Sequence[int] | None = None,
     depths_are_fixed: bool = True,
@@ -1220,7 +1221,7 @@ def plot_petrophysical_calibration_localized_overlay(
     probe_x_coords: Sequence[float],
     probe_layer_indices: Sequence[int] | None = None,
     probe_y_coords: Sequence[float] | None = None,
-    output_path: str = "mfc2_outputs/petro_calibration_localized_overlay.png",
+    output_path: str = OUTPUT_ROOT + "/petro_calibration_localized_overlay.png",
 ) -> None:
     """
     Probe-level companion to ``petro_calibration.png``: draws the single
@@ -1398,7 +1399,7 @@ def run_petro_localized(
     bandwidth: float,
     point_y_coords: Sequence[float] | None = None,
     depths0: list[float] | None = None,
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     generate_plots: bool = True,
     probe_layer_indices: Sequence[int] | None = None,
     target_indices: Sequence[int] | None = None,
@@ -1649,7 +1650,7 @@ def run_petro_localized(
 
 def plot_bandwidth_sweep(
     sweep_results: list["EMmethod.BandwidthSweepResult"],
-    output_path: str = "mfc2_outputs/bandwidth_sweep.png",
+    output_path: str = OUTPUT_ROOT + "/bandwidth_sweep.png",
 ) -> None:
     """
     Plots pooled LOO-CV RMSE vs. candidate bandwidth, with the recommended
@@ -1698,7 +1699,7 @@ def run_bandwidth_sweep(
     point_x_coords: Sequence[float],
     bandwidths: Sequence[float],
     point_y_coords: Sequence[float] | None = None,
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     generate_plots: bool = True,
     probe_layer_indices: Sequence[int] | None = None,
     lab_p0: np.ndarray | list | None = None,

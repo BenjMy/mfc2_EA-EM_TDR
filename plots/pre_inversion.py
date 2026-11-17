@@ -18,6 +18,7 @@ PNG files in ``output_dir``; nothing is returned except the saved path(s).
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import os
 from typing import Sequence
 
@@ -31,7 +32,7 @@ from em_methodology import drop_coils_from_problem
 def plot_step1_ensemble_single_file(
     models: np.ndarray,
     depths0: Sequence[float],
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     depths_are_fixed: bool = True,
     depths_ensemble: np.ndarray | None = None,
 ) -> None:
@@ -166,7 +167,7 @@ def plot_step1_ensemble_single_file(
 def plot_step1_ensemble_by_point(
     models: np.ndarray,
     depths0: Sequence[float],
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     max_points: int = 12,
     point_labels: Sequence[str] | None = None,
 ) -> None:
@@ -261,7 +262,7 @@ def plot_step1_ensemble_by_point(
     plt.close()
 
 
-def plot_raw_apparent_conductivity(fname: str, output_dir: str = "mfc2_outputs",
+def plot_raw_apparent_conductivity(fname: str, output_dir: str = OUTPUT_ROOT,
                                    em_unit: str = "ppt", drop_coils=None) -> None:
     """
     Plot raw apparent conductivity / quadrature data from a survey CSV.
@@ -430,7 +431,7 @@ def plot_raw_apparent_conductivity(fname: str, output_dir: str = "mfc2_outputs",
               "Raw ECa plot skipped.")
 
 
-def plot_filtered_apparent_conductivity(fname: str, output_dir: str = "mfc2_outputs",
+def plot_filtered_apparent_conductivity(fname: str, output_dir: str = OUTPUT_ROOT,
                                         em_unit: str = "ppt", drop_coils=None,
                                         prefilter_fname: str | None = None) -> None:
     """

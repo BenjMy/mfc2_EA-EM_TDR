@@ -78,21 +78,21 @@ set -euo pipefail
 
 
 ./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d
-./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_2sensors.csv
-./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_8sensors.csv
+./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_2sensors)"
+./run_one_scenario.sh -s 2d_random_xy_drying --mode 2d --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)"
 ./compare_scenarios.sh --ids 2d_random_xy_drying:1 2d_random_xy_drying:1 --position 5 0
 
 
 ./run_one_scenario.sh --mode 1d -s 2d_horizon_ws
 
-./run_one_scenario.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_2sensors.csv
-./run_one_scenario.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz ./data/coord_TDR_mode2d_8sensors.csv
+./run_one_scenario.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_2sensors)"
+./run_one_scenario.sh --mode 2d -s 2d_horizon_ws --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)"
 
 
 
 ./run_one_scenario.sh -s 2d_xy_waxman --mode 2d \
     --ws-localized-bandwidth-sweep 0.5 1 3 5 8 12 20 \
-    --probe-xyz ./data/coord_TDR_mode2d_8sensors.csv \
+    --probe-xyz "$(python3 EA_EM_config.py --probe-xyz 2d_8sensors)" \
 
     
     

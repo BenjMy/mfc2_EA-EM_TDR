@@ -48,6 +48,7 @@ Outputs
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import argparse
 import os
 import numpy as np
@@ -407,7 +408,7 @@ def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str)
                 "epoch) and real 24-station TDR coordinates at 15/30 cm, "
                 "with known ground truth for scoring."
             ),
-            "output_dir": "mfc2_outputs/mfc2_real_synthetic_mirror",
+            "output_dir": OUTPUT_ROOT + "/mfc2_real_synthetic_mirror",
             "data_source": "real",
             "em_data_dir": em_dir,
             "em_unit": "ppm",

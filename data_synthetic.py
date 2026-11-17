@@ -1,3 +1,4 @@
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import numpy as np
 import os
 import pandas as pd
@@ -131,7 +132,7 @@ def _generate_random_xy_field(
 
 
 def generate_time_lapse_dataset(
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     point_spacing: float = 2.0,
     mode: str = "1d",
     num_x: int = 10,
@@ -743,7 +744,7 @@ def generate_time_lapse_dataset(
 
 
 def export_eca_surveys_to_csv(
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     realization_index: int = 0,
     csv_subdir: str = "synthetic_csv",
     point_spacing: float = 2.0,
@@ -807,7 +808,7 @@ def export_eca_surveys_to_csv(
     return csv_paths, theta_realization, tdr_noise_std
 
 
-def plot_ws_truth_xy_maps(output_dir: str = "mfc2_outputs", realization_index: int = 0) -> list:
+def plot_ws_truth_xy_maps(output_dir: str = OUTPUT_ROOT, realization_index: int = 0) -> list:
     """
     Plot the TRUE (ground-truth) Waxman-Smits petrophysical params (a, m,
     sigma_w, sigma_s) as spatial XY maps, for scenarios generated with
@@ -900,7 +901,7 @@ def plot_ws_truth_xy_maps(output_dir: str = "mfc2_outputs", realization_index: i
     return saved_paths
 
 
-def plot_synthetic_results(output_dir: str = "mfc2_outputs", realization_index: int = 0) -> None:
+def plot_synthetic_results(output_dir: str = OUTPUT_ROOT, realization_index: int = 0) -> None:
     import matplotlib.pyplot as plt
 
     ec_bulk_ensemble  = np.load(os.path.join(output_dir, "synthetic_time_lapse_ec.npy"))
@@ -985,7 +986,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Generate synthetic EM/TDR dataset for the EA-EM pipeline.")
     parser.add_argument("--mode", choices=["1d", "2d"], default="1d")
-    parser.add_argument("--out", default="mfc2_outputs")
+    parser.add_argument("--out", default=OUTPUT_ROOT)
     parser.add_argument("--num-x", type=int, default=10)
     parser.add_argument("--num-y", type=int, default=5)
     parser.add_argument("--spacing", type=float, default=2.0)

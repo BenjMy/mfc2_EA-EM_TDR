@@ -21,13 +21,14 @@ the study scripts (readers).
 """
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import csv
 import json
 import os
 import re
 import subprocess
 
-DEFAULT_RUN_LOG = "mfc2_outputs/run_log.csv"
+DEFAULT_RUN_LOG = OUTPUT_ROOT + "/run_log.csv"
 
 RUN_LOG_COLUMNS = [
     "run_id", "timestamp", "scenario", "mode", "data_source", "status",

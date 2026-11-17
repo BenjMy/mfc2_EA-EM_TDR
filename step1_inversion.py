@@ -7,6 +7,7 @@ and tqdm progress tracking. Handles multi-parameter grid combinations.
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import os
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
@@ -190,7 +191,7 @@ if __name__ == "__main__":
 
     DEPTHS0 = [0.3, 0.6, 1.0]
     FIXED_DEPTHS = True
-    OUTPUT_DIR = "mfc2_outputs"
+    OUTPUT_DIR = OUTPUT_ROOT
 
     # Set max_workers=None to leverage all available CPU threads automatically
     models = run_parallel_ensemble(

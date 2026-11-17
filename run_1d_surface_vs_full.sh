@@ -22,7 +22,7 @@ NPOS="${1:-5}"
 VARIANT="${VARIANT:-}"
 V="${VARIANT:+_${VARIANT}}"
 POSITION=(8 0)                       # truth point for depth-profile plots (x y)
-LOG="mfc2_outputs/run_log.csv"
+LOG="$(python3 "$(dirname "${BASH_SOURCE[0]}")/EA_EM_config.py" --output-root)/run_log.csv"
 
 latest_id() {   # latest run_id of a scenario in the run log (see run_log.py)
     python3 run_log.py latest "$1" --log "${LOG}"

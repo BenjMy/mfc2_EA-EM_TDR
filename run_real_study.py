@@ -43,6 +43,7 @@ It is a SMOKE TEST (the calibration stage works, maps do not): never a result.
 """
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import argparse
 import copy
 import csv
@@ -59,8 +60,8 @@ import scenario_loader as sl
 # --------------------------------------------------------------------------
 BASE_CONFIG = "ensemble_scenarios_real.json"
 BASE_SCENARIO = "real_single_base"
-OUT_DIR = os.path.join("mfc2_outputs", "real_study")
-RUN_LOG = os.path.join("mfc2_outputs", "run_log.csv")
+OUT_DIR = os.path.join(OUTPUT_ROOT, "real_study")
+RUN_LOG = os.path.join(OUTPUT_ROOT, "run_log.csv")
 
 # Depths [m] of the real SoilNet TDR sensors (data_real.load_tdr_dataframe
 # maps the '15' and '30' SWC columns to these two depths).

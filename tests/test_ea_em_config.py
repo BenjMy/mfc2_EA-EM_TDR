@@ -94,3 +94,26 @@ def test_scenario_may_omit_paths(tmp_path):
     f.write_text(json.dumps(raw))
     with pytest.raises(ValueError, match="em_data_dir"):
         sl.load_scenario("no_paths", config_path=str(f))
+
+
+def test_path_args_helpers():
+    import argparse
+    cfg.register_dataset("site_y", "y/em/", "y/tdr/", "y/c.csv")
+    ap = argparse.ArgumentParser()
+    cfg.add_path_args(ap)
+    r = cfg.paths_from_args(ap.parse_args(["--dataset", "site_y", "--tdr-dir", "mine"]))
+    assert (r.em_dir, r.tdr_dir, r.coord_file) == ("y/em/", "mine", "y/c.csv")
+    assert cfg.paths_from_args(ap.parse_args([])).dataset == "mfc2"
+
+
+def test_output_root_and_probe_cli():
+    run = lambda *a, **kw: subprocess.run([sys.executable, os.path.join(ROOT, "EA_EM_config.py"), *a],
+                                          capture_output=True, text=True, cwd=ROOT, **kw)
+    assert run("--output-root").stdout.strip() == "mfc2_outputs"
+    assert run("--probe-xyz", "2d_8sensors").stdout.strip().endswith("coord_TDR_mode2d_8sensors.csv")
+    env = dict(os.environ, EA_EM_OUTPUT_ROOT="/tmp/elsewhere")
+    assert run("--output-root", env=env).stdout.strip() == "/tmp/elsewhere"
+    chk = subprocess.run([sys.executable, "-c",
+                          "import run_log, hyp_common; print(run_log.DEFAULT_RUN_LOG)"],
+                         capture_output=True, text=True, cwd=ROOT, env=env)
+    assert chk.stdout.strip() == "/tmp/elsewhere/run_log.csv"

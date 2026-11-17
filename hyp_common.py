@@ -20,6 +20,7 @@ Nothing here needs the field data or emagpy except the run itself.
 """
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import argparse
 import copy
 import csv
@@ -32,8 +33,8 @@ import scenario_loader as sl
 
 BASE_CONFIG = "ensemble_scenarios_real.json"
 BASE_SCENARIO = "real_single_base"
-OUT_ROOT = os.path.join("mfc2_outputs", "hypotheses")
-RUN_LOG = os.path.join("mfc2_outputs", "run_log.csv")
+OUT_ROOT = os.path.join(OUTPUT_ROOT, "hypotheses")
+RUN_LOG = os.path.join(OUTPUT_ROOT, "run_log.csv")
 
 FAST_EPOCHS = 2
 FAST_SUBSAMPLE = {"mode": "probes", "radius_m": 5.0}

@@ -64,6 +64,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 #: Root of the input data tree. Override with the EA_EM_DATA_ROOT env variable.
 DATA_ROOT: str = os.environ.get("EA_EM_DATA_ROOT", "./data").rstrip("/") or "."
 
+#: Root folder for everything the pipeline writes (run folders, run_log.csv, ...).
+#: Override with EA_EM_OUTPUT_ROOT; the default keeps the historical name.
+OUTPUT_ROOT: str = os.environ.get("EA_EM_OUTPUT_ROOT", "mfc2_outputs").rstrip("/") or "."
+
+#: Central run log shared by run_pipeline.py and the comparison / study scripts.
+RUN_LOG: str = OUTPUT_ROOT + "/run_log.csv"
+
 #: Dataset used when nothing else selects one (kept = MFC2 for backward compatibility).
 DEFAULT_DATASET: str = "mfc2"
 
@@ -205,6 +212,27 @@ def resolve_real_paths(
     return ResolvedPaths(em, tdr, coord, ds.name)
 
 
+def add_path_args(parser) -> None:
+    """Add --dataset/--em-dir/--tdr-dir/--coord-file (all optional) to an argparse parser."""
+    parser.add_argument("--dataset", default=None, metavar="NAME",
+                        help="named input dataset from EA_EM_config.py "
+                             f"(default: $EA_EM_DATASET or '{DEFAULT_DATASET}')")
+    parser.add_argument("--em-dir", default=None, help="EM survey directory (overrides the dataset)")
+    parser.add_argument("--tdr-dir", default=None, help="TDR directory (overrides the dataset)")
+    parser.add_argument("--coord-file", default=None, help="sensor coordinates CSV (overrides the dataset)")
+
+
+def paths_from_args(args, cfg=None) -> ResolvedPaths:
+    """ResolvedPaths from parsed ``add_path_args`` options (+ an optional loaded scenario)."""
+    return resolve_real_paths(
+        cli_em_dir=args.em_dir, cli_tdr_dir=args.tdr_dir,
+        cli_coord_file=args.coord_file, cli_dataset=args.dataset,
+        scenario_em_dir=getattr(cfg, "em_data_dir", None),
+        scenario_tdr_dir=getattr(cfg, "tdr_data_dir", None),
+        scenario_coord_file=getattr(cfg, "coord_file", None),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Other input files that used to be hard-coded
 # ---------------------------------------------------------------------------
@@ -228,10 +256,20 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true", help="list known datasets")
     ap.add_argument("--dataset", default=None, help="dataset name (default: env / DEFAULT_DATASET)")
     ap.add_argument("--check", action="store_true", help="verify that the dataset's paths exist")
+    ap.add_argument("--probe-xyz", default=None, metavar="KEY", choices=sorted(PROBE_XYZ_FILES),
+                    help="print the path of a registered synthetic probe layout (PROBE_XYZ_FILES)")
+    ap.add_argument("--output-root", action="store_true", help="print OUTPUT_ROOT")
     ap.add_argument("--field", default=None,
                     choices=["em_dir", "tdr_dir", "coord_file", "probe_xyz", "name"],
                     help="print one value (for shell scripts)")
     args = ap.parse_args(argv)
+
+    if args.probe_xyz:
+        print(PROBE_XYZ_FILES[args.probe_xyz])
+        return 0
+    if args.output_root:
+        print(OUTPUT_ROOT)
+        return 0
 
     if args.list:
         cur = selected_dataset_name(args.dataset)

@@ -24,6 +24,7 @@ diagnostic always reflects exactly what the pipeline itself loaded.
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import os
 import importlib.util
 from pathlib import Path
@@ -104,7 +105,7 @@ def plot_tdr_diagnostics(
     coord_file: str,
     em_dates: Sequence | None = None,
     time_tolerance_days: float = 1.0,
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     max_stations_per_figure: int = 8,
 ) -> list[str]:
     """
@@ -269,18 +270,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Plot raw TDR time series check-plots right after import."
     )
-    parser.add_argument("--tdr-dir", required=True)
-    parser.add_argument("--coord-file", required=True)
-    parser.add_argument("--em-dir", default=None,
-                         help="Optional EM directory to derive survey dates "
-                              "for vertical reference lines (uses the same "
-                              "DDMMYY filename pattern as data_real.py).")
+    import EA_EM_config as cfgpaths
+    cfgpaths.add_path_args(parser)   # --dataset/--em-dir/--tdr-dir/--coord-file; the EM
+                                     # directory supplies survey dates for the reference lines
     parser.add_argument("--time-tolerance-days", type=float, default=1.0)
-    parser.add_argument("--output-dir", default="mfc2_outputs")
+    parser.add_argument("--output-dir", default=OUTPUT_ROOT)
     args = parser.parse_args()
+    rp = cfgpaths.paths_from_args(args)
+    args.em_dir, args.tdr_dir, args.coord_file = rp.em_dir, rp.tdr_dir, rp.coord_file
 
     em_dates = None
-    if args.em_dir:
+    if args.em_dir and os.path.isdir(args.em_dir):
         import glob as _glob
         import data_real as rdl
         em_dates = sorted(

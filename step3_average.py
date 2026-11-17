@@ -6,6 +6,7 @@ STEP 3 standalone runner — inverted model averaging and diagnostics.
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import os
 from typing import Sequence
 import numpy as np
@@ -166,7 +167,7 @@ def run_average(
     models: np.ndarray,
     fits_step2: Sequence[EMmethod.PetroFit],
     depths0: list[float] | None = None,
-    output_dir: str = "mfc2_outputs",
+    output_dir: str = OUTPUT_ROOT,
     generate_plots: bool = True
 ) -> tuple[list[np.ndarray], np.ndarray]:
     """Run STEP 3: rank and cumulatively average the ensemble models."""

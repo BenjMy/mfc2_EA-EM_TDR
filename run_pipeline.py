@@ -21,6 +21,7 @@ Spatial modes
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import argparse
 import datetime
 import hashlib
@@ -1701,7 +1702,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         EM_UNIT           = em_unit if em_unit is not None else getattr(cfg, "em_unit", "ppt")
     else:
         _scenario_name    = "default"
-        OUTPUT_DIR        = next_run_output_dir("mfc2_outputs", _scenario_name)
+        OUTPUT_DIR        = next_run_output_dir(OUTPUT_ROOT, _scenario_name)
         OUTPUT_MODEL_DIR  = os.path.join(OUTPUT_DIR, "output_model")
         os.makedirs(OUTPUT_MODEL_DIR, exist_ok=True)
         REALIZATION_INDEX = 0

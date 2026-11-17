@@ -1137,7 +1137,7 @@ set -e
 OUTPUT_DIR="$(grep -m1 '^\[OUTPUT_DIR\] ' "${RUN_LOG_TMP}" | sed -E 's/^\[OUTPUT_DIR\] //')"
 if [[ -z "${OUTPUT_DIR}" || ! -d "${OUTPUT_DIR}" ]]; then
     err "Could not determine this run's output_dir from the pipeline's console output (crashed before it was announced?). Saving the shell-level report/log under 'mfc2_outputs/' instead."
-    OUTPUT_DIR="mfc2_outputs"
+    OUTPUT_DIR="$("${PYTHON}" "${SCRIPT_DIR}/EA_EM_config.py" --output-root)"
     mkdir -p "${OUTPUT_DIR}"
 fi
 

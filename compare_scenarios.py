@@ -107,6 +107,7 @@ instead.
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import argparse
 import glob
 import os
@@ -983,7 +984,7 @@ def main() -> None:
                           "(e.g. field_survey_2d:7) to pin one, or pass the full "
                           "run_id string. Styles can be mixed. Combine with "
                           "--reports if given.")
-    ap.add_argument("--log-file", default="mfc2_outputs/run_log.csv",
+    ap.add_argument("--log-file", default=OUTPUT_ROOT + "/run_log.csv",
                      help="Path to the run-log CSV written by run_pipeline.py "
                           "(default: mfc2_outputs/run_log.csv). Only used when "
                           "--ids is given.")

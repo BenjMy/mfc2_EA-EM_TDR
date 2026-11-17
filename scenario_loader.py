@@ -26,6 +26,7 @@ guard against None.
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import bisect
 import json
 import os
@@ -1504,7 +1505,7 @@ def load_scenario(
     return ScenarioConfig(
         name              = scenario_name,
         description       = raw.get("description", ""),
-        output_dir        = raw.get("output_dir", f"mfc2_outputs/{scenario_name}"),
+        output_dir        = raw.get("output_dir", f"{OUTPUT_ROOT}/{scenario_name}"),
         realization_index = int(raw.get("realization_index", 0)),
         depths0           = [float(d) for d in raw["depths0"]],
         fixed_depths      = (

@@ -21,6 +21,7 @@ keeps working). Nothing is generated when the base scenarios are absent (e.g.
 """
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import copy
 
 FREE_ORDER = ("sigma_s", "m", "sigma_w", "a")  # order in which parameters are freed
@@ -59,7 +60,7 @@ def _free_entry(kind: str, k: int, base: dict) -> dict:
         f"Run with --mode 1d --num-swc-positions N; compare '1d_surface_free{k}' vs "
         f"'1d_full_free{k}' via run_1d_surface_vs_full.sh."
     )
-    entry["output_dir"] = f"mfc2_outputs/field_survey_{name}"
+    entry["output_dir"] = f"{OUTPUT_ROOT}/field_survey_{name}"
     entry["cache_tag"] = name
     entry["ws_fixed_params"] = {p: (p not in free) for p in ("a", "m", "sigma_w", "sigma_s")}
     if "a" in free:
@@ -82,7 +83,7 @@ def _hetero_entry(kind: str, k: int) -> dict:
             f"(0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the "
             f"base study."
         ),
-        "output_dir": f"mfc2_outputs/field_survey_1d_{kind}_hetero_free{k}",
+        "output_dir": f"{OUTPUT_ROOT}/field_survey_1d_{kind}_hetero_free{k}",
         "ws_layer_params": copy.deepcopy(HETERO_LAYER_PARAMS),
     }
 

@@ -10,6 +10,7 @@ pipeline, produced BEFORE any inversion/calibration step runs — i.e. the
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import os
 import sys
 import glob
@@ -115,7 +116,7 @@ def _scatter_map(ax, x, y, c, cmap, cbar_label, title, vmin=None, vmax=None):
 
 
 def plot_initial_model(em_dir: str, tdr_dir: str, coord_file: str, 
-                       output_dir: str = "mfc2_outputs", em_unit: str = "ppt", 
+                       output_dir: str = OUTPUT_ROOT, em_unit: str = "ppt", 
                        em_date_index: int = 0) -> dict[str, str]:
     """
     Exposed API function to be called from the run_pipeline pipeline.
@@ -175,16 +176,16 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--em-dir", required=True)
-    parser.add_argument("--tdr-dir", required=True)
-    parser.add_argument("--coord-file", required=True)
+    import EA_EM_config as cfgpaths
+    cfgpaths.add_path_args(parser)
     parser.add_argument("--em-unit", default="ppt", choices=["ppt", "ppm"])
     parser.add_argument("--em-date-index", type=int, default=0)
-    parser.add_argument("--output-dir", default="mfc2_outputs")
+    parser.add_argument("--output-dir", default=OUTPUT_ROOT)
     args = parser.parse_args()
+    rp = cfgpaths.paths_from_args(args)
 
     saved_paths = plot_initial_model(
-        em_dir=args.em_dir, tdr_dir=args.tdr_dir, coord_file=args.coord_file,
+        em_dir=rp.em_dir, tdr_dir=rp.tdr_dir, coord_file=rp.coord_file,
         output_dir=args.output_dir, em_unit=args.em_unit, em_date_index=args.em_date_index
     )
     print(f"\n[DONE] Initial-model plots written to: {os.path.abspath(os.path.dirname(saved_paths['swc_plot']))}")

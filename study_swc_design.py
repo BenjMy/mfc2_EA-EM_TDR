@@ -71,6 +71,7 @@ Run folders: mfc2_outputs/swc_design_study/<scenario>/<NNNN>_<scenario>/
 """
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import argparse
 import copy
 import csv
@@ -95,10 +96,10 @@ from hyp1_layers_ws_freedom import ws_freedom
 BASE_CONFIG = "ensemble_scenarios.json"
 BASE_SCENARIO = "1d_full_depth_ref"      # probes in every horizon; "1d_surface_tdr" = surface only
 OUT_DIR = os.path.join("comparison_output", "swc_design_study")
-RUNS_DIR = os.path.join("mfc2_outputs", "swc_design_study")
+RUNS_DIR = os.path.join(OUTPUT_ROOT, "swc_design_study")
 # The study has its own run log, so its (many, synthetic) rows never mix with the
 # shared real-data log mfc2_outputs/run_log.csv (override with --log-file).
-RUN_LOG = os.path.join("mfc2_outputs", "run_log_swc_study.csv")
+RUN_LOG = os.path.join(OUTPUT_ROOT, "run_log_swc_study.csv")
 
 SURVEY_N = 10            # survey points of the synthetic 1-D transect
 SURVEY_DX = 2.0          # spacing [m]

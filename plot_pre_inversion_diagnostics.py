@@ -62,6 +62,7 @@ Standalone CLI
 
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import os
 import importlib
 import importlib.util
@@ -1241,9 +1242,8 @@ if __name__ == "__main__":
                              "time_tolerance_days/spatial_match_tolerance_m/em_unit/"
                              "output_dir as defaults.")
     parser.add_argument("--config", default=None, metavar="PATH")
-    parser.add_argument("--em-dir", default=None)
-    parser.add_argument("--tdr-dir", default=None)
-    parser.add_argument("--coord-file", default=None)
+    import EA_EM_config as cfgpaths
+    cfgpaths.add_path_args(parser)
     parser.add_argument("--time-tolerance-days", type=float, default=None)
     parser.add_argument("--spatial-match-tolerance-m", type=float, default=None)
     parser.add_argument("--em-unit", default=None, choices=["ppm", "ppt"])
@@ -1270,21 +1270,14 @@ if __name__ == "__main__":
                 f"(data_source={getattr(cfg, 'data_source', None)!r})."
             )
 
-    em_dir = args.em_dir or (cfg.em_data_dir if cfg else None)
-    tdr_dir = args.tdr_dir or (cfg.tdr_data_dir if cfg else None)
-    coord_file = (args.coord_file or (cfg.coord_file if cfg else None)
-                  or "./data/SOILNET_MFC2_coordinates_sensors.csv")
-    if not em_dir or not tdr_dir:
-        raise SystemExit(
-            "Must supply --em-dir/--tdr-dir directly, or --scenario pointing to a "
-            "real-data scenario that defines em_data_dir/tdr_data_dir."
-        )
+    _rp = cfgpaths.paths_from_args(args, cfg)
+    em_dir, tdr_dir, coord_file = _rp.em_dir, _rp.tdr_dir, _rp.coord_file
 
     run_pre_inversion_diagnostics(
         em_dir=em_dir,
         tdr_dir=tdr_dir,
         coord_file=coord_file,
-        output_dir=args.output_dir or (cfg.output_dir if cfg else "mfc2_outputs"),
+        output_dir=args.output_dir or (cfg.output_dir if cfg else OUTPUT_ROOT),
         time_tolerance_days=(
             args.time_tolerance_days if args.time_tolerance_days is not None
             else (cfg.time_tolerance_days if cfg else 1.0)

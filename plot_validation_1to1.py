@@ -48,6 +48,7 @@ Usage
 """
 from __future__ import annotations
 
+from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
 import argparse
 import glob
 import os
@@ -262,7 +263,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ids", nargs="+", help="run_id(s) from the run log")
     ap.add_argument("--run-dirs", nargs="+", help="pipeline output dirs (alternative to --ids)")
-    ap.add_argument("--log-file", default="mfc2_outputs/run_log.csv")
+    ap.add_argument("--log-file", default=OUTPUT_ROOT + "/run_log.csv")
     ap.add_argument("--labels", nargs="+")
     ap.add_argument("--realization", type=int, default=0)
     ap.add_argument("--time-index", type=int, default=-1)
