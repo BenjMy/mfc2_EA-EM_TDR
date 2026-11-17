@@ -1,7 +1,9 @@
 """Synthetic train/validation example: whole probes held out (by_probe).
 
-Synthetic runs have one epoch, so by_time_block cannot be independent; the
-probe id of a synthetic observation is its survey position.
+The synthetic transect is time-lapse (3 epochs): by_time_block holds out an
+epoch but keeps the same probes in train and validation, so the spatially
+independent split is by_probe; the probe id of a synthetic observation is its
+survey position.
 """
 import os
 import sys
@@ -16,12 +18,12 @@ import scenario_loader as sl  # noqa: E402
 import train_val_split as tvs  # noqa: E402
 
 
-def _obs(n_pos=6, n_layers=4):
-    """Flattened (position, layer) observations of one epoch, as in run_pipeline."""
-    pos = np.repeat(np.arange(n_pos), n_layers)
-    layer = np.tile(np.arange(n_layers), n_pos)
-    theta = 0.2 + 0.01 * pos + 0.005 * layer
-    return theta, pos, np.zeros_like(pos), layer
+def _obs(n_pos=6, n_layers=4, n_time=1):
+    """Flattened (epoch, position, layer) observations, as in run_pipeline."""
+    t, pos, layer = (a.ravel() for a in np.meshgrid(
+        np.arange(n_time), np.arange(n_pos), np.arange(n_layers), indexing="ij"))
+    theta = 0.2 + 0.01 * pos + 0.005 * layer + 0.002 * t
+    return theta, pos, t, layer
 
 
 def test_probe_id_synthetic_is_position():
@@ -58,11 +60,19 @@ def test_by_probe_is_reproducible():
     assert np.array_equal(a.train, b.train) and np.array_equal(a.val, b.val)
 
 
-def test_by_time_block_not_possible_with_one_epoch():
-    """Why synthetic needs by_probe: one epoch -> the validation set is empty."""
-    theta, pos, t, layer = _obs()
-    sp = tvs.split_train_val(theta, pos, t, layer, method="by_time_block")
-    assert len(sp.val) == 0
+def test_by_time_block_shares_probes_but_by_probe_does_not():
+    """Why by_probe matters on the 3-epoch synthetic transect."""
+    theta, pos, t, layer = _obs(6, 1, n_time=3)
+    tb = tvs.split_train_val(theta, pos, t, layer, method="by_time_block")
+    bp = tvs.split_train_val(theta, pos, t, layer, probe_id=pos, method="by_probe")
+    assert set(pos[tb.train]) == set(pos[tb.val])             # same probes both sides
+    assert not set(pos[bp.train]) & set(pos[bp.val])          # disjoint probes
+    assert len(bp.train) == len(bp.val) == 9                  # 18 obs, as in the e2e run
+
+
+def test_by_time_block_has_no_validation_with_a_single_epoch():
+    theta, pos, t, layer = _obs(6, 4, n_time=1)
+    assert len(tvs.split_train_val(theta, pos, t, layer, method="by_time_block").val) == 0
 
 
 @pytest.mark.parametrize("name,n_obs", [("1d_surface_free2_tv_probe", 1),

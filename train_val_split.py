@@ -114,9 +114,9 @@ def probe_id_for_split(
     - synthetic data: the survey-point index of the probe (``sample_positions``).
       A synthetic probe is a pit at one survey position (one observation per
       horizon and epoch), so holding out whole positions holds out whole
-      probes. This is what makes an independent split possible with the few
-      points of a synthetic transect, where ``by_time_block`` cannot work
-      (single epoch).
+      probes. This gives a spatially independent split on a synthetic
+      transect: ``by_time_block`` only holds out epochs, so the same probes
+      stay in both subsets.
     """
     if data_source == "real":
         return None if real_probe_index is None else np.asarray(real_probe_index)
