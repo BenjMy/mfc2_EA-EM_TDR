@@ -21,7 +21,13 @@ Update 2026-11-12 (night): refactoring phases 8 (sweeps + golden equality test) 
 
 - [ ] Add a synthetic example with train/val (if possible as the nb of point is limited)
 
-
+- [ ] Merge / clean up branches (check first: `git branch -a --merged origin/main` and `git log --oneline main..<branch>`)
+  - `refactor/readability`: already an ancestor of `main` when I checked (2026-11-17), so it can be deleted once you confirm nothing is unpushed.
+  - `surface-tdr-work`: not checked. Compare it with `main` and merge the commits that are missing, or delete it.
+  - `todo/train-val-synthetic`: its first five commits are already on `origin/main`. The rest is `compare_pinned.py` and the K=2 oracle scenarios (patch 0007), plus `to-do.md` notes. Merge via PR, then delete.
+  - Fix `.gitignore` (`data` also ignores `tests/data/`) so `scenarios_golden.json` is committed, or `test_scenarios_golden.py` and `test_sweeps.py` fail on a fresh clone.
+  
+  
 - [x] Plot the WS **truth** spatial distribution (a, m, sigma_w, sigma_s per horizon along x) for the uniform-in-depth case (`1d_*_free{K}`) and the heterogeneous case (`1d_*_hetero_free{K}`). Source: `output_model/synthetic_ws_truth_{a,m,sigma_w,sigma_s}.npy` (check shapes first). Suggested: `plots/ws_distribution.py`, one figure per run, called from the study script.
 - [x] Plot the WS **initial** spatial distribution (starting values used in the calibration: `lab_p0` / per-horizon values, with free/fixed flag per parameter), same layout as the truth plot so both can be overlaid.
   Done for both (2026-11-12): `plots/ws_distribution.py` -> `<run>/synthetic_ws_truth_vs_initial.png`, one panel per parameter, colour = horizon, solid = truth along x, dashed = initial value, title says fixed/free and whether the truth varies in x / depth; called from Step 0 of every synthetic run; `tests/test_ws_distribution.py` (7 tests, uniform and hetero truth generated with real emagpy). A `1d_surface_tdr` run with the plot is bit-identical to one without. 1-D only is laid out along x; for 2-D grids it plots against the point index (maps per horizon not done).
