@@ -59,6 +59,19 @@ EA_EM_DATASET=my_site ./run_one_scenario.sh ...    # same, through the environme
 
 Precedence: explicit `--em-dir/--tdr-dir/--coord-file` > `--dataset` > paths written in the scenario JSON > `$EA_EM_DATASET` > `mfc2`. A real-data scenario may omit `em_data_dir`/`tdr_data_dir`/`coord_file` and take them from the dataset. `EA_EM_DATA_ROOT` relocates the default `./data` tree.
 
+## Calibration options (real data)
+
+What is calibrated, and over which units, is set **per scenario** in `ensemble_scenarios_real.json` (fields are inherited with `"extends"`); the input data come from `EA_EM_config.py` (see above). The Waxman-Smits (WS) parameters are `a`, `m`, `sigma_w`, `sigma_s`; horizons come from `depths0` and the probe depths (the real TDR sensors sit at 0.15 and 0.30 m).
+
+| Calibration unit | Status | Where to set it |
+|---|---|---|
+| **One parameter set per horizon, pooled over all stations** | Default. Used by Steps 2, 4, 5 and by the maps. | `ws_fixed_params` (`true` = fixed, `false` = free; freed in the order `sigma_s`, `m`, `sigma_w`, `a` by the `hyp1` scenarios), `lab_p0` (start / fixed values), `ws_bounds` (default `a` 0.5-5, `m` 1-4, `sigma_w` 1-1000, `sigma_s` 0-200), `depths0` + `cond_ranges` (layers) |
+| **Per EM point, kernel-weighted by the distance to the stations** (Gaspari-Cohn) | Diagnostic only: `petro_calibration_localized*.png`, bandwidth chosen by leave-one-probe-out CV. It does **not** reach Step 5 / the maps. | `ws_localized_bandwidth` or `ws_localized_bandwidth_sweep` in the scenario, or `--ws-localized-bandwidth[-sweep]`. The bandwidth is in metres: use values of the order of the station spacing (the MFC2 stations are 20-32 m apart, so a sweep below about 20 m cannot show anything) |
+| **Per station** | Not available in Step 5 / maps (see `to-do.md`). | - |
+| **Per zone (cluster of stations)** | Not available (see `to-do.md`). | - |
+
+**Train / validation split** (`train_val_split`, or `hyp2_train_val_split.py`): this is a way to *validate* the calibration, not another calibration unit. The training part drives the WS fit **and** the choice of K; the validation part is held out and used once at the end to report an unbiased RMSE (Loiseau et al., 2026, Sec. 2.3 and 2.6). It can be done **by sensor**: `by_probe` holds out whole stations (fully independent, needs real probe ids, so real data only). The other methods are `off`, `alternate_sorted` (every other observation by sorted theta: not independent, the same probe or time step can be in both parts), `by_time_block` and `random`. With `off` the reported RMSE is in-sample and optimistic (0.092 vs a leave-one-probe-out 0.112 in the first real run).
+
 ## Running several real-data scenarios
 
 The launchers form three levels. Each level only calls the one below it, and only `run_one_scenario.sh` does the computing:
