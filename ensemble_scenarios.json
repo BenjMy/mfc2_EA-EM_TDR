@@ -866,4 +866,21 @@
     "num_swc_positions": 6,
     "train_val_split": "by_probe"
   }
+,
+  "1d_surface_free2_pin0": {
+    "extends": "1d_surface_free2",
+    "description": "ORACLE headroom test (K=2): '1d_surface_free2' with layer 0 pinned to its TRUE bulk EC in the Step 1 inversion (see '1d_surface_hetero_free4_pin0'). Oracle row of the TDR-pinned comparison.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_free2_pin0",
+    "cache_tag": "1d_surface_free2_pin0",
+    "pin_layers": [true, false, false, false],
+    "pin_source": "truth"
+  },
+  "1d_surface_hetero_free2_pin0": {
+    "extends": "1d_surface_hetero_free2",
+    "description": "ORACLE headroom test (K=2): '1d_surface_hetero_free2' with layer 0 pinned to its TRUE bulk EC in the Step 1 inversion (see '1d_surface_hetero_free4_pin0'). Oracle row of the TDR-pinned comparison.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free2_pin0",
+    "cache_tag": "1d_surface_hetero_free2_pin0",
+    "pin_layers": [true, false, false, false],
+    "pin_source": "truth"
+  }
 }
