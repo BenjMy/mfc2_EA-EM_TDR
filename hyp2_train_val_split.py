@@ -11,7 +11,7 @@ Variants (one generated scenario each; ``train_val_split`` field, Loiseau et al.
     off               legacy: fit and select K on everything (in-sample reference)
     alternate_sorted  paper's fallback -- NOT fully independent (a probe or time step
                       can sit in both subsets)
-    by_probe          hold out whole probes -- fully independent in space (real data only)
+    by_probe          hold out whole probes -- fully independent in space
     by_time_block     hold out whole time blocks -- fully independent in time
     random            for comparison only
 
@@ -40,7 +40,7 @@ OUT_DIR = os.path.join(hc.OUT_ROOT, "hyp2_train_val_split")
 METHODS = {
     "off": "legacy, in-sample reference",
     "alternate_sorted": "NOT fully independent",
-    "by_probe": "fully independent (space), real data only",
+    "by_probe": "fully independent (space)",
     "by_time_block": "fully independent (time)",
     "random": "comparison only",
 }

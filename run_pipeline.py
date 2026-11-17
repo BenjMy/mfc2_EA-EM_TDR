@@ -4249,15 +4249,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # check after K is picked. "off" (default) preserves the legacy
         # behaviour: everything below sees the full observation set, same
         # as before this split existed.
-        _probe_id_for_split = None
-        if data_source == "real":
-            # obs['probe_index'] is the real TDR station's ordinal index,
-            # built in the exact same loop order as theta_obs_list above --
-            # this is the only case where a genuine per-observation probe
-            # identifier exists today, so it's the only case 'by_probe' can
-            # actually run fully independent (see tvs.split_train_val's
-            # fallback-to-alternate_sorted otherwise).
-            _probe_id_for_split = np.array([obs['probe_index'] for obs in observations_list])
+        # Real: the TDR station's ordinal index (obs['probe_index'], built in
+        # the same loop order as theta_obs_list above). Synthetic: the survey
+        # position of the probe, so 'by_probe' holds out whole pits there too
+        # (train_val_split.probe_id_for_split).
+        _real_probe_index = (
+            np.array([obs['probe_index'] for obs in observations_list])
+            if data_source == "real" else None
+        )
+        _probe_id_for_split = tvs.probe_id_for_split(
+            data_source, np.asarray(sample_positions), _real_probe_index
+        )
 
         sample_positions_val = sample_times_val = theta_obs_val = probe_layer_val = None
         split = None

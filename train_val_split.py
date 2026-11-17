@@ -47,7 +47,9 @@ def split_train_val(
                                  NOT fully independent -- both subsets can
                                  contain the same probe/time step).
         - "by_probe"          : hold out whole probes for validation
-                                 (needs probe_id). Fully independent.
+                                 (needs probe_id; synthetic runs use the
+                                 survey position, see probe_id_for_split).
+                                 Fully independent.
         - "by_time_block"     : hold out whole time steps for validation
                                  (what the paper used at Avignon: "using
                                  data from every other time step").
@@ -99,6 +101,26 @@ def split_train_val(
     train = order[0::2]
     val = order[1::2]
     return SplitIndices(np.sort(train), np.sort(val), method, independent=False)
+
+
+def probe_id_for_split(
+    data_source: str,
+    sample_positions: np.ndarray,
+    real_probe_index: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Per-observation probe identifier used by ``method="by_probe"``.
+
+    - real data: the TDR station's ordinal index (``real_probe_index``).
+    - synthetic data: the survey-point index of the probe (``sample_positions``).
+      A synthetic probe is a pit at one survey position (one observation per
+      horizon and epoch), so holding out whole positions holds out whole
+      probes. This is what makes an independent split possible with the few
+      points of a synthetic transect, where ``by_time_block`` cannot work
+      (single epoch).
+    """
+    if data_source == "real":
+        return None if real_probe_index is None else np.asarray(real_probe_index)
+    return np.asarray(sample_positions)
 
 
 def subset(arr: np.ndarray, idx: np.ndarray) -> np.ndarray:

@@ -483,9 +483,10 @@ class ScenarioConfig:
     validation subset (held out untouched, reported once in Step 5b) --
     see train_val_split.py. One of 'alternate_sorted' (paper's Larzac
     fallback -- NOT fully independent, both subsets can share a probe or
-    time step), 'by_probe' (fully independent, needs a per-observation
-    probe id; real-data mode only), 'by_time_block' (fully independent
-    w.r.t. time; paper's Avignon approach), 'random' (comparison only), or
+    time step), 'by_probe' (fully independent: whole probes held
+    out; the TDR station for real data, the survey position for synthetic
+    data), 'by_time_block' (fully independent w.r.t. time; paper's Avignon
+    approach; needs >= 2 epochs), 'random' (comparison only), or
     'off' (default -- legacy behaviour, fit and select K on the full
     observation set). A CLI --train-val-split flag, if given, overrides
     this field."""
@@ -861,17 +862,6 @@ def _validate(name: str, raw: dict) -> None:
         raise ValueError(
             f"Scenario '{name}': train_val_split must be one of "
             f"{_valid_tvs_methods}, got {tvs_method!r}."
-        )
-    if tvs_method == "by_probe" and data_source != "real":
-        # split_train_val() would just fall back to alternate_sorted with a
-        # warning at runtime (synthetic mode has no genuine per-observation
-        # probe id), but failing loudly at scenario-load time is clearer
-        # than a run silently not doing what the config says it's doing.
-        raise ValueError(
-            f"Scenario '{name}': train_val_split='by_probe' needs a real "
-            f"per-observation probe id, which only exists for "
-            f"data_source='real'. Use 'alternate_sorted', 'by_time_block', "
-            f"or 'random' for synthetic scenarios."
         )
     if data_source == "real":
         # The three paths may be omitted: run_pipeline.py then takes them from

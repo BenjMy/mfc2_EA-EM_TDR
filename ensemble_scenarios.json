@@ -849,5 +849,21 @@
     "cache_tag": "1d_surface_free4_pin0",
     "pin_layers": [true, false, false, false],
     "pin_source": "truth"
+  },
+  "1d_surface_free2_tv_probe": {
+    "extends": "1d_surface_free2",
+    "description": "Synthetic TRAIN/VALIDATION example on the 1-D transect (K=2 free WS parameters, TDR only at 0.2 m): 6 probe positions, whole probes held out (train_val_split=by_probe, the probe id is the survey position) -> 3 probes calibrate the WS parameters and select K, the other 3 are touched once in Step 5b. Few points on purpose: with one epoch only by_probe (not by_time_block) can be independent. In-sample reference = same scenario with --train-val-split off; compare held-out RMSE (Step 5b) with the truth RMSE of the synthetic run.",
+    "output_dir": "mfc2_outputs/field_survey_1d_surface_free2_tv_probe",
+    "cache_tag": "1d_surface_free2_tv_probe",
+    "num_swc_positions": 6,
+    "train_val_split": "by_probe"
+  },
+  "1d_full_free2_tv_probe": {
+    "extends": "1d_full_free2",
+    "description": "Full-depth counterpart of '1d_surface_free2_tv_probe' (TDR in all 4 horizons): 6 probe positions x 4 horizons = 24 observations, 3 probes (12 obs) train, 3 probes (12 obs) validate.",
+    "output_dir": "mfc2_outputs/field_survey_1d_full_free2_tv_probe",
+    "cache_tag": "1d_full_free2_tv_probe",
+    "num_swc_positions": 6,
+    "train_val_split": "by_probe"
   }
 }

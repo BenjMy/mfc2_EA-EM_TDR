@@ -318,11 +318,9 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                                              appear in both subsets.
                             by_probe         Hold out whole probes/pits
                                              for validation. Fully
-                                             independent. Falls back to
-                                             alternate_sorted (with a
-                                             loud warning) if the run
-                                             can't identify per-
-                                             observation probe IDs.
+                                             independent (real: TDR
+                                             station; synthetic: survey
+                                             position of the probe).
                             by_time_block    Hold out whole time steps
                                              for validation (paper's
                                              Avignon setup: "every other
