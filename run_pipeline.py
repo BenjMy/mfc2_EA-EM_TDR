@@ -4387,9 +4387,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
         # Count SWC sensors per horizon
         _probe_layer_arr = np.array(probe_layer_indices) if probe_layer_indices is not None else None
+        # distinct EM points that carry a probe (NUM_POSITIONS is only the config value
+        # and can differ, e.g. real data with 20 stations -> "4 spatial positions")
+        _n_probe_pts = int(len(np.unique(np.asarray(sample_positions))))
         reporter.log(
             f"[STEP 2] SWC sensors used for calibration: {len(theta_obs)} total observations "
-            f"across {NUM_POSITIONS} spatial positions × {n_time} time step(s)"
+            f"across {_n_probe_pts} distinct probe location(s) × {n_time} time step(s)"
+            + (f" (config num_swc_positions = {NUM_POSITIONS})" if _n_probe_pts != NUM_POSITIONS else "")
         )
         if _probe_layer_arr is not None:
             for _hz in range(_n_horizons):
@@ -4509,6 +4513,19 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 f"RMSE={fits_step2[0].rmse:.5f} m³/m³) "
                 f"({'2-D Euclidean (x, y)' if _localized_y is not None else '1-D along-transect (x)'} distance)."
             )
+            try:
+                # kernel support is 2c: warn when no candidate can reach a neighbouring probe
+                import bandwidth_sweep_check as _bwc
+                _sp = np.asarray(sample_positions, dtype=int)
+                _bw_warn = _bwc.sweep_spacing_warning(
+                    WS_LOCALIZED_BANDWIDTH_SWEEP,
+                    np.asarray(x_transect, dtype=float)[_sp],
+                    None if _localized_y is None else np.asarray(_localized_y, dtype=float)[_sp],
+                )
+                if _bw_warn:
+                    reporter.log(f"[STEP 2 LOCALIZED SWEEP][WARN] {_bw_warn}")
+            except Exception as _e:  # diagnostic only: never stop the run
+                reporter.log(f"[STEP 2 LOCALIZED SWEEP] spacing check skipped: {_e}")
             try:
                 _sigma_b_reference = models_clean[_sweep_ref_idx]
                 sweep_results, _recommended_bandwidth = step2.run_bandwidth_sweep(

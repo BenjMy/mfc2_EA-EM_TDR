@@ -1,0 +1,5993 @@
+{
+ "ensemble_scenarios.json": {
+  "1d_full_depth_ref": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_depth_ref",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Reference for '1d_surface_tdr' (run with --mode 1d): identical truth, noise and inversion settings, but one probe per layer centre at every probe position (all 4 horizons calibrated). Use the same --num-swc-positions N as the surface-only run.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_depth_ref",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_depth_ref",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_free1": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free1",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=1 free Waxman-Smits parameter(s): sigma_s (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free1' vs '1d_full_free1' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_free1",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_free1",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_free2": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free2",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=2 free Waxman-Smits parameter(s): sigma_s, m (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free2' vs '1d_full_free2' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_free2",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_free2",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_free2_tv_probe": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free2_tv_probe",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Full-depth counterpart of '1d_surface_free2_tv_probe' (TDR in all 4 horizons): 6 probe positions x 4 horizons x 3 epochs = 72 observations, 3 probes (36 obs) train, 3 probes (36 obs) validate.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_free2_tv_probe",
+   "num_swc_positions": 6,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_free2_tv_probe",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "by_probe",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_free3": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free3",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=3 free Waxman-Smits parameter(s): sigma_s, m, sigma_w (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free3' vs '1d_full_free3' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_free3",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_free3",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_free4": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free4",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=4 free Waxman-Smits parameter(s): sigma_s, m, sigma_w, a (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR probes in all 4 horizons (reference). Identical truth/noise/inversion to '1d_full_depth_ref'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free4' vs '1d_full_free4' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    1.0,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_free4",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_free4",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": {
+    "a": [
+     0.2,
+     5.0
+    ]
+   },
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_hetero_free1": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free1",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=1 free WS parameter(s) (same calibration as '1d_full_free1'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_hetero_free1",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free1",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_hetero_free2": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free2",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=2 free WS parameter(s) (same calibration as '1d_full_free2'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_hetero_free2",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free2",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_hetero_free3": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free3",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=3 free WS parameter(s) (same calibration as '1d_full_free3'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_hetero_free3",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free3",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_full_hetero_free4": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "1d_full_free4",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=4 free WS parameter(s) (same calibration as '1d_full_free4'; TDR in every horizon). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    1.0,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_full_hetero_free4",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_full_hetero_free4",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": {
+    "a": [
+     0.2,
+     5.0
+    ]
+   },
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_free1": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free1",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=1 free Waxman-Smits parameter(s): sigma_s (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free1' vs '1d_full_free1' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_free1",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_free1",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_free2": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free2",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=2 free Waxman-Smits parameter(s): sigma_s, m (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free2' vs '1d_full_free2' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_free2",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_free2",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_free2_pin0": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free2_pin0",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "ORACLE headroom test (K=2): '1d_surface_free2' with layer 0 pinned to its TRUE bulk EC in the Step 1 inversion (see '1d_surface_hetero_free4_pin0'). Oracle row of the TDR-pinned comparison.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_free2_pin0",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_free2_pin0",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_free2_tv_probe": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free2_tv_probe",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Synthetic TRAIN/VALIDATION example on the 1-D transect (K=2 free WS parameters, TDR only at 0.2 m): 6 probe positions, whole probes held out (train_val_split=by_probe, the probe id is the survey position) -> 3 probes calibrate the WS parameters and select K, the other 3 are touched once in Step 5b. Few points on purpose: 6 probes x 3 epochs = 18 observations. by_probe is the spatially independent split (by_time_block holds out an epoch but keeps the same probes in train and validation). In-sample reference = same scenario with --train-val-split off; compare held-out RMSE (Step 5b) with the truth RMSE of the synthetic run.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_free2_tv_probe",
+   "num_swc_positions": 6,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_free2_tv_probe",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "by_probe",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_free3": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free3",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=3 free Waxman-Smits parameter(s): sigma_s, m, sigma_w (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free3' vs '1d_full_free3' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_free3",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_free3",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_free4": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free4",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study, K=4 free Waxman-Smits parameter(s): sigma_s, m, sigma_w, a (freed in order sigma_s, m, sigma_w, a; the rest fixed at lab_p0). TDR ONLY at 0.2 m (horizon 0 calibrated; horizons 1-3 uncalibrated). Identical truth/noise/inversion to '1d_surface_tdr'. Run with --mode 1d --num-swc-positions N; compare '1d_surface_free4' vs '1d_full_free4' via run_1d_surface_vs_full.sh.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    1.0,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_free4",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_free4",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": {
+    "a": [
+     0.2,
+     5.0
+    ]
+   },
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_free4_pin0": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free4_pin0",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "ORACLE headroom test for conditioning on the uniform-in-depth truth: '1d_surface_free4' with layer 0 pinned to its TRUE bulk EC in the Step 1 inversion (see '1d_surface_hetero_free4_pin0').",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    1.0,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_free4_pin0",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_free4_pin0",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": {
+    "a": [
+     0.2,
+     5.0
+    ]
+   },
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_hetero_free1": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free1",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=1 free WS parameter(s) (same calibration as '1d_surface_free1'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_hetero_free1",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free1",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_hetero_free2": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free2",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=2 free WS parameter(s) (same calibration as '1d_surface_free2'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_hetero_free2",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free2",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_hetero_free2_pin0": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_hetero_free2_pin0",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "ORACLE headroom test (K=2): '1d_surface_hetero_free2' with layer 0 pinned to its TRUE bulk EC in the Step 1 inversion (see '1d_surface_hetero_free4_pin0'). Oracle row of the TDR-pinned comparison.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_hetero_free2_pin0",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free2_pin0",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_hetero_free3": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free3",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=3 free WS parameter(s) (same calibration as '1d_surface_free3'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_hetero_free3",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free3",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_hetero_free4": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_free4",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Surface-vs-full study with a TWO-ZONE vertical truth, K=4 free WS parameter(s) (same calibration as '1d_surface_free4'; TDR ONLY at 0.2 m). True a and sigma_w are the defaults (0.5, 500) in horizons 0-1 and change to (0.35, 700) in horizons 2-3; m and sigma_s still vary along x as in the base study.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    1.0,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_hetero_free4",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free4",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": {
+    "a": [
+     0.2,
+     5.0
+    ]
+   },
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_hetero_free4_pin0": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_hetero_free4_pin0",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "ORACLE headroom test for conditioning: same as '1d_surface_hetero_free4' (TDR only at 0.2 m) but the Step 1 inversion pins layer 0 to its TRUE bulk EC (pin_layers, pin_source=truth), so layers 1-3 are inverted conditioned on a perfectly known surface layer. Upper bound of what a TDR-derived layer-0 pin could give; compare vs '1d_surface_hetero_free4' (free) and '1d_full_hetero_free4' (full-depth TDR).",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    1.0,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_hetero_free4_pin0",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_hetero_free4_pin0",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": {
+    "a": [
+     0.2,
+     5.0
+    ]
+   },
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": {
+    "2": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    },
+    "3": {
+     "a": 0.35,
+     "sigma_w": 700.0
+    }
+   },
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "1d_surface_tdr": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": null,
+   "cache_tag": "1d_surface_tdr",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "1-D transect test of surface-only TDR (run with --mode 1d): 10 survey points along x (2 m spacing, y=0), truth m and sigma_s vary smoothly along x (same field at every depth), ECa noise 1%, TDR noise 0.01. TDR probes ONLY at 0.2 m (horizon 0 of depths0=[0.3,0.6,1.0]); horizons 1-3 are deliberately uncalibrated (prior lab_p0). Sweep the probe count with --num-swc-positions N (probes are spread along x). Reference: '1d_full_depth_ref' (identical except probes in all 4 horizons).",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "1d_surface_tdr",
+   "num_swc_positions": 5,
+   "output_dir": "mfc2_outputs/field_survey_1d_surface_tdr",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": [
+    0.2
+   ],
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 6.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  },
+  "2d": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "2d",
+   "cond_ranges": [
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "2-D UTM grid run with realistic observation noise, 2 TDR positions per layer, all interfaces free, and a narrow ECa conductivity range (1-60 mS/m) representative of resistive field soils.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "2d",
+   "num_swc_positions": 2,
+   "output_dir": "mfc2_outputs/field_survey_2d",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "2d_dense_tdr": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "2d_dense_tdr",
+   "cond_ranges": [
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Dense-TDR counterpart of the '2d' scenario: identical grid geometry, layer depths, WS priors and conductivity range, but with num_swc_positions raised from 2 -> 10 (40 total probes on the default 10x5 grid) for stronger per-horizon petrophysical calibration.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "2d_dense_tdr",
+   "num_swc_positions": 10,
+   "output_dir": "mfc2_outputs/field_survey_2d_dense_tdr",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "2d_horizon_ws": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "horizon_ws",
+   "cond_ranges": [
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Same '2d' family (2-D UTM grid, realistic noise, 2 TDR positions/layer, 1-60 mS/m conductivity range), but with per-horizon Waxman-Smits parameters instead of a single flat lab_p0. Encodes a plausible depth trend: cementation exponent m increases with depth (compaction/reduced porosity) while surface conductivity sigma_s decreases with depth (organic matter/clay content falls off below the topsoil). a and sigma_w held roughly constant across horizons. a and m are pinned (ws_fixed_params), so the per-horizon values directly control calibration; sigma_w/sigma_s are just per-horizon starting guesses since they float freely.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    [
+     0.5,
+     2.2,
+     500.0,
+     150.0
+    ],
+    [
+     0.5,
+     2.6,
+     500.0,
+     100.0
+    ],
+    [
+     0.5,
+     3.0,
+     500.0,
+     60.0
+    ],
+    [
+     0.5,
+     3.4,
+     500.0,
+     30.0
+    ]
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "2d_horizon_ws",
+   "num_swc_positions": 2,
+   "output_dir": "mfc2_outputs/field_survey_2d_horizon_ws",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "2d_intermediate": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "2d_intermediate",
+   "cond_ranges": [
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "2-D UTM grid run with realistic observation noise, 2 TDR positions per layer, all interfaces free, and a narrow ECa conductivity range (1-60 mS/m) representative of resistive field soils.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "2d_intermediate",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/field_survey_2d_intermediate",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "2d_random_xy_drying": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "2d_random_xy_drying",
+   "cond_ranges": [
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "2-D UTM grid run with a MORE RANDOM (patchy, non-linear) plan-view soil-moisture pattern instead of the simple diagonal ramp used by '2d': theta_xy is a smooth spatially-correlated random field (sum of random Gaussian wet/dry patches, see random_xy_* below), blended with a spatially-UNIFORM depth trend that dries out with depth (invert_z_gradient=true -> wet at the surface, progressively drier at depth, same rate everywhere in plan view). Same grid/inversion settings family as '2d', with a denser SWC network (8 positions) since a heterogeneous XY field needs more spatial sampling to calibrate well than a monotonic gradient does.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": true,
+   "gamma": 0.0,
+   "grid_num_x": 12,
+   "grid_num_y": 6,
+   "homogeneous": false,
+   "invert_z_gradient": true,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "2d_random_xy_drying",
+   "num_swc_positions": 8,
+   "output_dir": "mfc2_outputs/field_survey_2d_random_xy_drying",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": 5.0,
+   "random_xy_field": true,
+   "random_xy_n_blobs": 10,
+   "random_xy_seed": 7,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.6
+  },
+  "2d_xy_waxman": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": null,
+   "cache_tag": "2d_xy_waxman",
+   "cond_ranges": [
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ],
+    [
+     0.01,
+     60.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "synthetic",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Same '2d' family (2-D UTM grid, realistic noise, 1-60 mS/m conductivity range), but the ground-truth Waxman-Smits parameters themselves vary spatially in XY (ws_xy_variation), rather than theta as in '2d_random_xy_drying'. Cementation exponent m and surface conductivity sigma_s are drawn from a smooth, spatially-correlated random field (ws_xy_pattern='random'), independently seeded from the moisture pattern; a and sigma_w stay fixed at lab defaults everywhere. theta itself follows the same simple diagonal ramp as '2d' (random_xy_field is NOT set here), so the XY heterogeneity under test is purely petrophysical, not a moisture artifact. m and sigma_s float during calibration (ws_fixed_params) since they're the params that actually vary in the truth; a and sigma_w are pinned. Denser SWC network (4 positions) than the base '2d', since a spatially heterogeneous petrophysics field needs more spatial sampling to calibrate than a uniform lab_p0 does.",
+   "drop_coils": null,
+   "eca_noise_level": 0.01,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppt",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "2d_xy_waxman",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/field_survey_2d_xy_waxman",
+   "param_grid": {
+    "alpha": [
+     0.03,
+     0.1,
+     0.3
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 2.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": 4.0,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": [
+    "m",
+    "sigma_s"
+   ],
+   "ws_xy_pattern": "random",
+   "ws_xy_ranges": {
+    "m": [
+     2.0,
+     4.0
+    ],
+    "sigma_s": [
+     50.0,
+     200.0
+    ]
+   },
+   "ws_xy_seed": 21,
+   "ws_xy_variation": true,
+   "xy_z_blend": 0.5
+  }
+ },
+ "ensemble_scenarios_real.json": {
+  "real_L3_base": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_L3_base",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225,
+    0.6
+   ],
+   "depths_are_fixed": true,
+   "description": "3-LAYER design (L3): real_single_base with depths0=[0.225, 0.6]. H0 (<0.225 m) holds the 15 cm TDR, H1 (0.225-0.6 m) the 30 cm TDR, H2 (>0.6 m) has NO sensor so it keeps the prior WS parameters (lab_p0). No em_subsample: use it for BOTH --stage calibrate and --stage map.",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_L3_base",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_L3_base",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_multi_base": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_multi_base",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Base scenario for this layer group -- all other variants change exactly one axis relative to this one.",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_multi_base",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_multi_base",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_multi_cs": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_multi_cs",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_multi_base (forwardModel=['CS'] only).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_multi_cs",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_multi_cs",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_multi_depth_free": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_multi_depth_free",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": false,
+   "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FREE. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Depth-varying variant of real_multi_base (fixed_depths=false instead of true).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_multi_depth_free",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_multi_depth_free",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_multi_fslin": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_multi_fslin",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_multi_base (forwardModel=['FSlin'] only).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_multi_fslin",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_multi_fslin",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_multi_ws_all_fixed": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_multi_ws_all_fixed",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_multi_ws_all_fixed",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_multi_ws_all_fixed",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": true,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_multi_ws_free_sigmas": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_multi_ws_free_sigmas",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_multi_ws_free_sigmas",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_multi_ws_free_sigmas",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_multi_ws_free_sigmaw": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_multi_ws_free_sigmaw",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.3,
+    0.6,
+    1.0
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_multi_ws_free_sigmaw",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_multi_ws_free_sigmaw",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": true,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_base": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_base",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Base scenario for this layer group -- all other variants change exactly one axis relative to this one.",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_base",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_base",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_cs": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_cs",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_single_base (forwardModel=['CS'] only).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_cs",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_cs",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_depth_free": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_depth_free",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": false,
+   "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FREE. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Depth-varying variant of real_single_base (fixed_depths=false instead of true).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": false,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_depth_free",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_depth_free",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_fslin": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_fslin",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_single_base (forwardModel=['FSlin'] only).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_fslin",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_fslin",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_test_grid": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_test_grid",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "TEST: real_single_base with the EM surveys thinned to one point per 3 m cell (em_subsample.mode=grid). Same cells in every epoch; nearest EM point of every TDR probe kept. Fast check of the full pipeline.",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": {
+    "cell_m": 3.0,
+    "keep_probe_nearest": true,
+    "mode": "grid"
+   },
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_test_grid",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_test_grid",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_test_probes": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_test_probes",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "TEST / calibration stage: real_single_base keeping only EM points within 5 m of a TDR probe (em_subsample.mode=probes). Enough for WS calibration (Steps 2/4/5), not for maps.",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": {
+    "keep_probe_nearest": true,
+    "mode": "probes",
+    "radius_m": 5.0
+   },
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_test_probes",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_test_probes",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_test_probes_L3": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_test_probes_L3",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225,
+    0.6
+   ],
+   "depths_are_fixed": true,
+   "description": "TEST / calibration stage, 3-LAYER design (L3): real_single_test_probes with depths0=[0.225, 0.6]. H0 (<0.225 m) holds the 15 cm TDR, H1 (0.225-0.6 m) the 30 cm TDR, H2 (>0.6 m) has NO sensor so it keeps the prior WS parameters (lab_p0).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": {
+    "keep_probe_nearest": true,
+    "mode": "probes",
+    "radius_m": 5.0
+   },
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_test_probes_L3",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_test_probes_L3",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_ws_all_fixed": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_ws_all_fixed",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_ws_all_fixed",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_ws_all_fixed",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": true,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_ws_free_all": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_ws_free_all",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run, as real_single_base but ALL four Waxman-Smits parameters free (a, m, sigma_w, sigma_s). 'a' starts at 1.0 (not on the default lower bound 0.5) and ws_bounds lets it go down to 0.2, otherwise every ensemble member is clipped onto 0.5 (zero spread; see the free4 case in to-do.md). Caveat: 'a' is poorly identified (it enters through (sigma_w + sigma_s)/a and trades off with m and sigma_w), so read its spread in the WS histograms, not as a recovered value.",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    1.0,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_ws_free_all",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_ws_free_all",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": {
+    "a": [
+     0.2,
+     5.0
+    ]
+   },
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_ws_free_sigmas": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_ws_free_sigmas",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_ws_free_sigmas",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_ws_free_sigmas",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "real_single_ws_free_sigmaw": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "real_single_ws_free_sigmaw",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}).",
+   "drop_coils": [
+    425
+   ],
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "real_single_ws_free_sigmaw",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/real_single_ws_free_sigmaw",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin",
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 1.0,
+   "train_val_split": "off",
+   "window_m": 1.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": true,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": [
+    0.5,
+    1.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
+    20.0
+   ],
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  }
+ }
+}

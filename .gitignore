@@ -2,10 +2,11 @@ tmp
 IA.md
 bayesian_pipeline_refactor_spec.md
 mfc2_outputs
-data
+/data/
 
 # generated artefacts (refactoring.md, phase 1)
 __pycache__/
 *.pyc
 comparison_output/
 scoring.csv
+mfc2_outputs_vII
