@@ -148,6 +148,45 @@ python run_all_hypotheses.py --only 2 3 --base real_L3_base        # H2 and H3 w
 
 `run_pipeline.py` (the Python pipeline that `run_one_scenario.sh` calls) keeps its name.
 
+## Synthetic MFC2-like test dataset and scenario matrix
+
+A small deterministic twin of the real MFC2 deployment with a KNOWN truth (same 7 survey dates, 15/30 cm TDR depths, built-in 20-station layout unless a coordinate file is given), used to check every change before it touches real data.
+
+Generate it by hand (about 4 s for the default size; `--near-station-points` guarantees EM points within 1 m of each station on a thinned survey):
+
+```bash
+python generate_synthetic_real_mirror.py --outdir /tmp/mfc2_syn --scale 0.002 --max-points 40 \
+    --n-stations 8 --near-station-points 2 [--ws-truth gradient|two_zones|per_horizon] [--truth-forward-model FSlin]
+python run_pipeline.py --data-source real --scenario mfc2_syn_base \
+    --config ensemble_scenarios_synthetic_mfc2.json \
+    --em-dir /tmp/mfc2_syn/EMI_MFC2_synthetic/ --tdr-dir /tmp/mfc2_syn/daily_MFC_synthetic/ \
+    --coord-file /tmp/mfc2_syn/coordinates_sensors.csv --quick --quick-epochs 3
+```
+
+Truth arrays are written to `<outdir>/ground_truth/` (theta, and `ws_truth.json` + `em_epoch*_ws.npy` when `--ws-truth` is set); score a run with `run_and_score.py` / `score_against_truth.py`.
+
+Two test tiers (`pytest` deselects the slow one by default):
+
+```bash
+pytest tests                                              # fast tier, no inversion
+pytest -m slow tests/test_pipeline_mfc2_synthetic.py -v   # slow tier: needs the real emagpy, about 1 min per scenario
+pytest -m slow tests/test_pipeline_mfc2_synthetic.py -k base -x   # one scenario
+```
+
+Scenarios in `ensemble_scenarios_synthetic_mfc2.json` (all derived from `mfc2_syn_base` by `extends`, one axis changed each; EM rolling mean and percentile filter are off because on a thinned survey they move or drop the points next to the stations):
+
+| scenario | question it answers |
+|---|---|
+| `mfc2_syn_base` | reference: one interface at 0.225 m, CS, pooled WS with 2 free parameters, no split |
+| `mfc2_syn_free1` / `free3` / `free4` | how many WS parameters can the calibration recover (K = 1, 3, 4)? |
+| `mfc2_syn_kern_below` / `kern_at` / `kern_above` | localized (kernel) WS calibration with bandwidth 15 / 40 / 100 m vs the ~40 m station spacing |
+| `mfc2_syn_tv_probe` / `tv_time` / `tv_random` | train/validation split by whole stations / whole epochs / random (comparison only) |
+| `mfc2_syn_sub_probes` / `sub_grid` | EM subsampling near probes / one point per 20 m cell |
+| `mfc2_syn_fslin` | inversion with FSlin (use a dataset made with `--truth-forward-model FSlin` to avoid the inverse crime) |
+| `mfc2_syn_two_interfaces` | two interfaces (0.10 and 0.225 m); the top layer has no probe |
+
+The scenario file is golden-tested (`tests/data/scenarios_golden.json`; regenerate with `python tests/make_scenario_golden.py` after an intended change). The slow test also runs `--stage calibrate` then `--stage map` on the base scenario.
+
 ## Compare runs
 
 ```bash
