@@ -135,3 +135,63 @@ def test_ec_bulk_truth_follows_the_saved_truth_and_defaults_to_legacy(tmp_path):
     assert np.allclose(gen.ec_bulk_truth(theta, x, y), gen.forward_waxman_smits(theta))
     legacy = _small(tmp_path, "l")
     assert gen.load_ws_truth(legacy["ground_truth_dir"]) is None
+
+
+# ---------------------------------------------------------------------------
+# near_station_points (thinned survey: guarantee a point next to every station)
+# ---------------------------------------------------------------------------
+
+def _em_files(out):
+    return [pd.read_csv(os.path.join(out["em_dir"], f), sep=";")
+            for f in sorted(os.listdir(out["em_dir"]))]
+
+
+def _near(tmp_path, name, **kw):
+    return gen.build_dataset(str(tmp_path / name), scale=0.001, max_points=20, n_stations=6,
+                             tdr_freq_days=60, **kw)
+
+
+def test_near_station_points_default_off_is_unchanged(tmp_path):
+    a, b = _near(tmp_path, "a"), _near(tmp_path, "b", near_station_points=0)
+    for fa, fb in zip(_em_files(a), _em_files(b)):
+        pd.testing.assert_frame_equal(fa, fb)
+
+
+def test_near_station_points_cover_every_station_and_keep_the_original_points(tmp_path):
+    base = _near(tmp_path, "base")
+    near = _near(tmp_path, "near", near_station_points=2)
+    st = pd.read_csv(near["coord_file"], sep=";")
+    key = ["X", "Y", "GPSalt"]
+    for fb, fn in zip(_em_files(base), _em_files(near)):
+        assert len(fn) == len(fb) + 2 * len(st)
+        for r in st.itertuples():                      # >= 2 points within 1 m of each station
+            assert (np.hypot(fn["X"] - r.x, fn["Y"] - r.y) <= gen.NEAR_STATION_RADIUS_M).sum() >= 2
+        # the original points are all still there (separate RNG stream), only the order differs
+        merged = fb[key].merge(fn[key], on=key, how="left", indicator=True)
+        assert (merged["_merge"] == "both").all()
+
+
+def test_near_station_points_are_ordered_along_a_serpentine_path(tmp_path):
+    fn = _em_files(_near(tmp_path, "near", near_station_points=1))[0]
+    # consecutive points are much closer than the survey is wide (a random order is not)
+    step = np.hypot(np.diff(fn["X"]), np.diff(fn["Y"]))
+    assert np.median(step) < 0.35 * (fn["X"].max() - fn["X"].min())
+
+
+def test_near_station_points_need_station_coordinates():
+    with pytest.raises(ValueError, match="station_xy"):
+        gen.generate_em_surveys("/tmp/never", 0.001, 20, 0.0, 1, near_station_points=1)
+
+
+# ---------------------------------------------------------------------------
+# truth_forward_model (no inverse crime)
+# ---------------------------------------------------------------------------
+
+def test_truth_forward_model_changes_the_eca_but_not_the_geometry(tmp_path):
+    cs = _near(tmp_path, "cs")
+    fs = _near(tmp_path, "fs", truth_forward_model="FSlin")
+    for a, b in zip(_em_files(cs), _em_files(fs)):
+        pd.testing.assert_frame_equal(a[["X", "Y", "GPSalt"]], b[["X", "Y", "GPSalt"]])
+        q = [c for c in a.columns if c.startswith("Q_")]
+        assert not np.allclose(a[q].to_numpy(), b[q].to_numpy())
+        assert np.isfinite(b[q].to_numpy()).all()

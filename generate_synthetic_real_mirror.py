@@ -273,10 +273,51 @@ def _sample_points(n: int, x0, x1, y0, y1, rng: np.random.Generator):
     return x, y
 
 
+#: Radius [m] of the disc around a TDR station in which ``near_station_points`` are drawn
+#: (well inside the default ``spatial_match_tolerance_m`` of 3 m).
+NEAR_STATION_RADIUS_M = 1.0
+
+
+def _near_station_points(station_xy: np.ndarray, per_station: int, z0, z1,
+                         rng: np.random.Generator):
+    """``per_station`` extra survey points within ``NEAR_STATION_RADIUS_M`` of every station."""
+    st = np.repeat(np.asarray(station_xy, dtype=float), per_station, axis=0)
+    r = NEAR_STATION_RADIUS_M * np.sqrt(rng.uniform(0.0, 1.0, size=len(st)))
+    ang = rng.uniform(0.0, 2.0 * np.pi, size=len(st))
+    return (st[:, 0] + r * np.cos(ang), st[:, 1] + r * np.sin(ang),
+            rng.uniform(z0, z1, size=len(st)))
+
+
+def _serpentine_order(x: np.ndarray, y: np.ndarray, y0, y1) -> np.ndarray:
+    """Index order following a serpentine path (rows along x, alternating direction).
+
+    A real walked survey is ordered along the path; emagpy's rolling mean averages
+    neighbours *in file order* (including x/y), so a random order would mix points that are
+    far apart. Used when extra points are added, so the file keeps a path-like order.
+    """
+    n_bands = max(1, int(round(np.sqrt(len(x) / 2.0))))
+    band = np.clip(((y - y0) / (y1 - y0) * n_bands).astype(int), 0, n_bands - 1)
+    return np.lexsort((np.where(band % 2 == 0, x, -x), band))
+
+
 def generate_em_surveys(outdir: str, scale: float, max_points: int,
-                         eca_noise_level: float, seed: int, ws_truth=None) -> list[dict]:
+                         eca_noise_level: float, seed: int, ws_truth=None,
+                         station_xy=None, near_station_points: int = 0,
+                         truth_forward_model: str = "CS") -> list[dict]:
     """``ws_truth`` (None | mode | dict | WSTruth): Waxman-Smits truth; None = the original
-    constant WS_* parameters (output identical to earlier versions)."""
+    constant WS_* parameters (output identical to earlier versions).
+
+    ``near_station_points`` > 0 (needs ``station_xy``, an (n, 2) array) adds that many survey
+    points within ``NEAR_STATION_RADIUS_M`` of every TDR station (drawn from a separate RNG
+    stream, so the original points keep their positions) and orders the file along a serpentine
+    path. A thinned survey (points tens of metres apart) otherwise has no point close to
+    most stations and nothing can be matched. 0 = unchanged output.
+
+    ``truth_forward_model``: emagpy forward model that makes the ECa ("CS" default; "FSlin" to
+    test an inversion that does not use the model that generated the data, i.e. no inverse crime).
+    """
+    if near_station_points and station_xy is None:
+        raise ValueError("near_station_points > 0 needs station_xy")
     truth = None if ws_truth is None else wst.as_truth(ws_truth)
     em_dir = os.path.join(outdir, "EMI_MFC2_synthetic")
     gt_dir = os.path.join(outdir, "ground_truth")
@@ -289,6 +330,14 @@ def generate_em_surveys(outdir: str, scale: float, max_points: int,
         n_points = int(np.clip(round(n_real * scale), 20, max_points))
         x, y = _sample_points(n_points, x0, x1, y0, y1, rng)
         elev = rng.uniform(z0, z1, size=n_points)
+        if near_station_points:
+            xn, yn, zn = _near_station_points(
+                station_xy, int(near_station_points), z0, z1,
+                np.random.default_rng(seed + 1000 + raw_idx))
+            x, y, elev = np.concatenate([x, xn]), np.concatenate([y, yn]), np.concatenate([elev, zn])
+            order = _serpentine_order(x, y, y0, y1)
+            x, y, elev = x[order], y[order], elev[order]
+            n_points = len(x)
 
         # Deterministic ground truth (no noise) -- saved for scoring, NOT
         # fed to the pipeline. This is the recoverable signal; the noisy
@@ -327,7 +376,7 @@ def generate_em_surveys(outdir: str, scale: float, max_points: int,
             depths_input = [depths_row[np.newaxis, :]]
             k.models = models_input
             k.depths = depths_input
-            res = k.forward(forwardModel="CS", coils=GEM2_COILS,
+            res = k.forward(forwardModel=truth_forward_model, coils=GEM2_COILS,
                              models=models_input, depths=depths_input)
             eca_mS_m[i, :] = res[0].values.flatten()
 
@@ -535,7 +584,8 @@ def build_dataset(outdir: str, coord_csv: str | None = None, scale: float = 0.01
                   max_points: int = 150, seed: int = 42, eca_noise: float = 0.03,
                   tdr_noise_std: float = 0.015, tdr_freq_days: int = 1,
                   tdr_missing_frac: float = 0.02, n_stations: int = 20,
-                  output_dir: str | None = None, ws_truth=None) -> dict:
+                  output_dir: str | None = None, ws_truth=None,
+                  near_station_points: int = 0, truth_forward_model: str = "CS") -> dict:
     """Generate the whole synthetic MFC2 dataset under ``outdir`` and return its paths.
 
     ``coord_csv=None`` writes the built-in layout (``n_stations`` units) to
@@ -546,9 +596,15 @@ def build_dataset(outdir: str, coord_csv: str | None = None, scale: float = 0.01
     if coord_csv is None:
         coord_csv = write_station_layout(os.path.join(outdir, "coordinates_sensors.csv"),
                                          n_stations=n_stations, seed=seed)
+    station_xy = None
+    if near_station_points:
+        _st = pd.read_csv(coord_csv, delimiter=";", comment="[")
+        station_xy = _st[["x", "y"]].to_numpy(dtype=float)
     em_records = generate_em_surveys(outdir, scale=scale, max_points=max_points,
                                      eca_noise_level=eca_noise, seed=seed,
-                                     ws_truth=ws_truth)
+                                     ws_truth=ws_truth, station_xy=station_xy,
+                                     near_station_points=near_station_points,
+                                     truth_forward_model=truth_forward_model)
     generate_tdr_stations(outdir, coord_csv, REAL_EM_EPOCHS[0][2], REAL_EM_EPOCHS[-1][2],
                           freq_days=tdr_freq_days, tdr_noise_std=tdr_noise_std,
                           missing_frac=tdr_missing_frac, seed=seed)
@@ -615,13 +671,21 @@ def main():
     ap.add_argument("--ws-truth", default=None, choices=list(wst.MODES),
                     help="Waxman-Smits truth: constant (default), per_horizon, gradient "
                          "(sigma_s varies across x), two_zones (sigma_s 0 | 200).")
+    ap.add_argument("--near-station-points", type=int, default=0,
+                    help="Extra EM points per TDR station within 1 m of it (0 = none). Use with a "
+                         "thinned survey (--scale / --max-points) so stations can be matched.")
+    ap.add_argument("--truth-forward-model", default="CS",
+                    help="emagpy forward model that makes the ECa (CS default; FSlin = no "
+                         "inverse crime when the inversion uses CS).")
     args = ap.parse_args()
 
     out = build_dataset(
         args.outdir, coord_csv=args.coord_csv, scale=args.scale, max_points=args.max_points,
         seed=args.seed, eca_noise=args.eca_noise, tdr_noise_std=args.tdr_noise_std,
         tdr_freq_days=args.tdr_freq_days, tdr_missing_frac=args.tdr_missing_frac,
-        n_stations=args.n_stations, ws_truth=args.ws_truth)
+        n_stations=args.n_stations, ws_truth=args.ws_truth,
+        near_station_points=args.near_station_points,
+        truth_forward_model=args.truth_forward_model)
     n_st = len(pd.read_csv(out["coord_file"], delimiter=";", comment="["))
     print(f"\n[DONE] {out['n_em_epochs']} EM epochs, {n_st} TDR stations "
           f"written under '{args.outdir}'.")
