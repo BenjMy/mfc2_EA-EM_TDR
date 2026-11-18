@@ -54,7 +54,7 @@ def synth(tmp_path_factory):
 def _run(synth, scenario, *extra, truth="cs"):
     _, dfile = synth["paths"][truth]
     env = dict(os.environ, EA_EM_DATASETS_FILE=dfile, MPLBACKEND="Agg")
-    cmd = [sys.executable, os.path.join(ROOT, "run_pipeline.py"), "--scenario", scenario,
+    cmd = [sys.executable, os.path.join(ROOT, "run_pipeline.py"), "--data-source", "real", "--scenario", scenario,
            "--config", synth["config"], "--dataset", DATASET, *extra]
     return subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=3600)
 
