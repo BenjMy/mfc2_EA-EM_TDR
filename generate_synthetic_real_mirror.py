@@ -318,6 +318,42 @@ def generate_em_surveys(outdir: str, scale: float, max_points: int,
 # TDR station generation
 # ---------------------------------------------------------------------------
 
+def make_standin_coords(outdir: str, n_stations: int = 20, seed: int = 42,
+                        margin_m: float = 5.0) -> str:
+    """Write a STAND-IN station layout (``Pos;x;y``, ';'-delimited) and return its path.
+
+    Used when the real ``SOILNET_MFC2_coordinates_sensors.csv`` is not available.
+    NOT the real layout: a jittered regular grid inside the footprint covered by every
+    dense EM epoch (the degraded 15/12/2020 epoch is left out of that intersection), so
+    each station has EM points around it in all epochs. Neighbour spacing is a few tens
+    of metres, like the real stations. Deterministic for a given ``seed``.
+    """
+    dense = [e for e in REAL_EM_EPOCHS if e[0] != 3]
+    x0 = max(e[4] for e in dense) + margin_m
+    x1 = min(e[5] for e in dense) - margin_m
+    y0 = max(e[6] for e in dense) + margin_m
+    y1 = min(e[7] for e in dense) - margin_m
+    nx = int(np.ceil(np.sqrt(n_stations * (x1 - x0) / (y1 - y0))))
+    ny = int(np.ceil(n_stations / nx))
+    dx, dy = (x1 - x0) / nx, (y1 - y0) / ny
+    rng = np.random.default_rng(seed + 4242)
+    pts = []
+    for j in range(ny):
+        for i in range(nx):
+            # jitter by at most +-25 % of a cell so neighbours never collapse
+            pts.append((x0 + (i + 0.5 + rng.uniform(-0.25, 0.25)) * dx,
+                        y0 + (j + 0.5 + rng.uniform(-0.25, 0.25)) * dy))
+    keep = np.sort(rng.permutation(len(pts))[:n_stations])
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, "standin_coordinates.csv")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("Pos;x;y\n")
+        for n, k in enumerate(keep, start=1):
+            f.write(f"Unit {n};{pts[k][0]:.2f};{pts[k][1]:.2f}\n")
+    print(f"[STANDIN] wrote {len(keep)} stand-in stations to {path} (NOT the real layout)")
+    return path
+
+
 def generate_tdr_stations(outdir: str, coord_csv: str, start_date: str,
                            end_date: str, freq_days: int, tdr_noise_std: float,
                            missing_frac: float, seed: int) -> pd.DataFrame:
@@ -445,8 +481,12 @@ def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str)
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--coord-csv", required=True,
-                     help="Path to SOILNET_MFC2_coordinates_sensors.csv (real, reused as-is).")
+    ap.add_argument("--coord-csv", default=None,
+                     help="Path to SOILNET_MFC2_coordinates_sensors.csv (real, reused as-is). "
+                          "Omit it and use --standin-stations when the file is not available.")
+    ap.add_argument("--standin-stations", type=int, default=None, metavar="N",
+                     help="Build N stand-in stations inside the survey footprint instead of "
+                          "reading --coord-csv (NOT the real layout; see make_standin_coords).")
     ap.add_argument("--outdir", default="./synthetic_real_mirror")
     ap.add_argument("--scale", type=float, default=0.01,
                      help="Fraction of the REAL per-epoch point count to simulate "
@@ -467,6 +507,12 @@ def main():
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
+    if args.coord_csv is None:
+        if args.standin_stations is None:
+            ap.error("give --coord-csv (real layout) or --standin-stations N")
+        args.coord_csv = make_standin_coords(args.outdir, args.standin_stations, args.seed)
+    elif args.standin_stations is not None:
+        ap.error("--coord-csv and --standin-stations are mutually exclusive")
 
     em_records = generate_em_surveys(
         args.outdir, scale=args.scale, max_points=args.max_points,
