@@ -86,6 +86,7 @@ import step3_average as step3
 import step4_select as step4_5
 from steps import step1_diagnostics as steps_step1
 from steps import step2_localized_sweep
+from steps import step2_localized_calibration as steps_step2_loc
 from steps import step3_4_average_recalibrate as steps_step34
 from steps import step5b_validation as steps_step5b
 from steps import step5c_footprint as steps_step5c
@@ -4510,98 +4511,15 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 ws_bounds=WS_BOUNDS_OVERRIDE, output_dir=OUTPUT_DIR,
             )
 
-        if WS_LOCALIZED_BANDWIDTH is not None:
-            reporter.log(
-                f"[STEP 2 LOCALIZED] ws_localized_bandwidth="
-                f"{WS_LOCALIZED_BANDWIDTH:g} "
-                f"({'recommended by LOO-CV sweep above' if _bandwidth_from_sweep else 'fixed scenario value'}) "
-                f"-- running kernel-localized calibration as a diagnostic sibling to Step 2 "
-                f"({'2-D Euclidean (x, y)' if _localized_y is not None else '1-D along-transect (x)'} distance)."
-            )
-            try:
-                fits_step2_localized = step2.run_petro_localized(
-                    models=models_clean,
-                    sample_positions=sample_positions,
-                    sample_times=sample_times,
-                    theta_obs=theta_obs,
-                    point_x_coords=x_transect,
-                    point_y_coords=_localized_y,
-                    bandwidth=WS_LOCALIZED_BANDWIDTH,
-                    depths0=DEPTHS0,
-                    output_dir=OUTPUT_DIR,
-                    probe_layer_indices=probe_layer_indices,
-                    fixed_params=WS_FIXED_PARAMS,
-                    lab_p0=LAB_P0,
-                    theta_obs_std=_theta_obs_std_step2,
-                    global_fit=fits_step2[0],
-                    sensor_ids=sample_sensor_ids,
-                    ws_bounds=WS_BOUNDS_OVERRIDE,
-                )
-                reporter.log(
-                    f"[STEP 2 LOCALIZED] Diagnostic complete -> "
-                    f"{OUTPUT_DIR}/petro_calibration_localized.png"
-                )
-
-                # Spatial diagnostics for this same localized fit: how many
-                # (effective, kernel-weighted) TDR probes back each EM point,
-                # and what the fit actually produced spatially, per horizon.
-                pcd.plot_calibration_density_kernel(
-                    survey_df=survey_df,
-                    position_results=CALIB_POSITION_RESULTS,
-                    bandwidth=WS_LOCALIZED_BANDWIDTH,
-                    output_dir=OUTPUT_DIR,
-                )
-                _calib_probe_x = np.array([r.probe_x for r in CALIB_POSITION_RESULTS])
-                # run_petro_localized returns a list of LocalizedPetroFit, one
-                # per ensemble member (symmetric with fits_step2) -- [0] is the
-                # rank-1 member, matching global_fit=fits_step2[0] passed in
-                # above. NOT a single LocalizedPetroFit with its own
-                # .horizon_fits directly.
-                #
-                # One combined XZ-style figure (horizon = depth axis) rather
-                # than one flat XY scatter per horizon -- directly comparable
-                # to water_content_xz_*.png. depths0=EFFECTIVE_DEPTHS0, not
-                # the static DEPTHS0, for the same reason EM_LAYER_WEIGHTS
-                # uses it above: it's what this fit's probe routing actually
-                # used.
-                pcd.plot_ws_params_xz(
-                    horizon_fits=fits_step2_localized[0].horizon_fits,
-                    depths0=EFFECTIVE_DEPTHS0,
-                    output_dir=OUTPUT_DIR,
-                    probe_x=_calib_probe_x,
-                    # .probe_depth, not a re-derivation via probe_layer_indices:
-                    # sample_positions/probe_layer_indices can be reordered or
-                    # subset relative to CALIB_POSITION_RESULTS (train/val
-                    # split, time-lapse expansion), so indexing one against
-                    # the other isn't safe. SamplePositionResult carries its
-                    # own installation depth directly.
-                    probe_depths=np.array([r.probe_depth for r in CALIB_POSITION_RESULTS]),
-                )
-                # XY (plan-view) counterpart to the XZ figure above -- same
-                # kernel-localized WS parameters, horizons collapsed into
-                # one averaged value per target instead of laid out on the
-                # depth axis. Directly comparable to
-                # plot_footprint_spatial_discrepancy's XY map, the same way
-                # plot_ws_params_xz is comparable to water_content_xz_*.png.
-                # Only meaningful with real (x, y) spread, hence 2-D mode
-                # gating below; in 1-D mode target_y is all zeros and this
-                # would just collapse to a line.
-                if mode == "2d":
-                    pcd.plot_ws_params_xy(
-                        horizon_fits=fits_step2_localized[0].horizon_fits,
-                        output_dir=OUTPUT_DIR,
-                        probe_x=_calib_probe_x,
-                        probe_y=np.array([r.probe_y for r in CALIB_POSITION_RESULTS]),
-                    )
-            except Exception as e:
-                # Diagnostic sibling only -- never let it fail a run that
-                # would otherwise succeed.
-                reporter.log(f"[STEP 2 LOCALIZED][WARN] Localized diagnostic failed: {e}")
-        else:
-            reporter.log(
-                "[STEP 2 LOCALIZED] ws_localized_bandwidth not set -- skipping "
-                "kernel-localized diagnostic (unchanged default behaviour)."
-            )
+        steps_step2_loc.run_step2_localized_diagnostic(
+            reporter, mode=mode, bandwidth=WS_LOCALIZED_BANDWIDTH, bandwidth_from_sweep=_bandwidth_from_sweep,
+            localized_y=_localized_y, models_clean=models_clean, sample_positions=sample_positions,
+            sample_times=sample_times, theta_obs=theta_obs, x_transect=x_transect, depths0=DEPTHS0,
+            effective_depths0=EFFECTIVE_DEPTHS0, output_dir=OUTPUT_DIR, probe_layer_indices=probe_layer_indices,
+            fixed_params=WS_FIXED_PARAMS, lab_p0=LAB_P0, theta_obs_std=_theta_obs_std_step2,
+            fits_step2=fits_step2, sample_sensor_ids=sample_sensor_ids, ws_bounds=WS_BOUNDS_OVERRIDE,
+            survey_df=survey_df, calib_position_results=CALIB_POSITION_RESULTS,
+        )
 
         # -----------------------------------------------------------------------
         # STEP 3 — RMSE-WEIGHTED AVERAGING

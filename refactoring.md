@@ -32,6 +32,8 @@ Phase 6, Step 5b (2026-11-13): moved to `steps/step5b_validation.py` (`run_step5
 
 Phase 6, Step 6 main block (2026-11-13): moved to `steps/step6_plots.py::run_step6_water_content` (opens "Step 6"; `main()` closes it after 6b-6e), 3 tests added. Before/after e2e `1d_surface_tdr` (previous commit vs now): 20/20 arrays bit-identical, same 107 PNG files. Step 6 is now fully out of `main()`.
 
+Phase 6, Step 2 LOCALIZED sweep + diagnostic (2026-11-18): the bandwidth sweep moved to `steps/step2_localized_sweep.py` (`run_step2_localized_sweep`, returns bandwidth / from_sweep / rows) and the kernel-localized calibration diagnostic to `steps/step2_localized_calibration.py` (`run_step2_localized_diagnostic`, returns the `run_petro_localized` fits or None); tests `tests/test_step2_localized_sweep.py`, `tests/test_step2_localized_calibration.py`. Verified in the cloud sandbox only: pyflakes shows no new warnings in `run_pipeline.py`, `pytest tests` 309 -> 314 passed (same single pre-existing error: `test_emagpy_map_scatter` needs the real `emagpy`). **Not yet run:** the before/after e2e `1d_surface_tdr` bit-identical check (needs `emagpy`); run it with `ws_localized_bandwidth` set and once with `ws_localized_bandwidth_sweep` set, since the default scenario skips both blocks.
+
 Phase 6, Steps 3 and 4 (2026-11-13): moved to `steps/step3_4_average_recalibrate.py` (`run_step3_average`, `run_step4_recalibrate`), `tests/test_step3_4.py`. Before/after e2e `1d_surface_tdr`: 20/20 arrays bit-identical, same 107 PNG files.
 
 Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20 saved arrays bit-identical to the pre-refactor reference. Phases 1-4 touched no scientific code.
