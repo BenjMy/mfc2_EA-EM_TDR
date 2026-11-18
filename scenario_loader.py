@@ -497,6 +497,30 @@ class ScenarioConfig:
     observation set). A CLI --train-val-split flag, if given, overrides
     this field."""
 
+    # ------------------------------------------------------------------
+    # Raw-ECa cleaning chain (real-data mode; were getattr-only in run_pipeline)
+    # ------------------------------------------------------------------
+    filter_repeated_tolerance: float = 1e-10
+    """Tolerance of emagpy's ``filterRepeated`` (drops repeated positions)."""
+
+    filter_range_vmin: float | None = 0.0
+    """Lower bound of the ECa range filter (null = no lower bound)."""
+
+    filter_range_vmax: float | None = None
+    """Upper bound of the ECa range filter (null = no upper bound)."""
+
+    filter_percentile_qmin: float | None = 5.0
+    """Lower percentile of the percentile filter. Must be set together with
+    ``filter_percentile_qmax``; both null switches the filter off."""
+
+    filter_percentile_qmax: float | None = 95.0
+    """Upper percentile of the percentile filter (see ``filter_percentile_qmin``)."""
+
+    rolling_mean_window: int | None = 5
+    """Window of emagpy's rolling mean (null = off). It also averages the x/y of
+    the window: on a thinned survey (points tens of metres apart) this moves
+    points away from the TDR stations, so switch it off there."""
+
     depths_are_fixed: bool             = field(init=False)
 
     def __post_init__(self):
@@ -1349,6 +1373,31 @@ def _validate(name: str, raw: dict) -> None:
                 f"got {alpha_range!r}."
             )
 
+    # Raw-ECa cleaning chain
+    for _k in ("filter_repeated_tolerance", "filter_range_vmin", "filter_range_vmax",
+               "filter_percentile_qmin", "filter_percentile_qmax"):
+        _v = raw.get(_k)
+        if _v is not None and (isinstance(_v, bool) or not isinstance(_v, (int, float))):
+            raise ValueError(f"Scenario '{name}': {_k} must be a number or null, got {_v!r}.")
+    _qmin = raw.get("filter_percentile_qmin", 5.0)
+    _qmax = raw.get("filter_percentile_qmax", 95.0)
+    if (_qmin is None) != (_qmax is None):
+        raise ValueError(
+            f"Scenario '{name}': filter_percentile_qmin and filter_percentile_qmax must "
+            f"both be set or both null, got {_qmin!r} and {_qmax!r}."
+        )
+    if _qmin is not None and not (0 <= _qmin < _qmax <= 100):
+        raise ValueError(
+            f"Scenario '{name}': need 0 <= qmin < qmax <= 100 for the percentile filter, "
+            f"got qmin={_qmin!r}, qmax={_qmax!r}."
+        )
+    _rw = raw.get("rolling_mean_window", 5)
+    if _rw is not None and (isinstance(_rw, bool) or not isinstance(_rw, int) or _rw < 1):
+        raise ValueError(
+            f"Scenario '{name}': rolling_mean_window must be a positive int or null, "
+            f"got {_rw!r}."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -1619,6 +1668,21 @@ def load_scenario(
         ),
         train_val_split   = str(raw.get("train_val_split", "off")),
         allow_uncovered_horizons = bool(raw.get("allow_uncovered_horizons", False)),
+        filter_repeated_tolerance = float(raw.get("filter_repeated_tolerance", 1e-10)),
+        filter_range_vmin = (float(raw["filter_range_vmin"])
+                             if raw.get("filter_range_vmin", 0.0) is not None else None)
+                            if "filter_range_vmin" in raw else 0.0,
+        filter_range_vmax = (float(raw["filter_range_vmax"])
+                             if raw.get("filter_range_vmax") is not None else None),
+        filter_percentile_qmin = (float(raw["filter_percentile_qmin"])
+                                  if raw.get("filter_percentile_qmin", 5.0) is not None else None)
+                                 if "filter_percentile_qmin" in raw else 5.0,
+        filter_percentile_qmax = (float(raw["filter_percentile_qmax"])
+                                  if raw.get("filter_percentile_qmax", 95.0) is not None else None)
+                                 if "filter_percentile_qmax" in raw else 95.0,
+        rolling_mean_window = (int(raw["rolling_mean_window"])
+                               if raw.get("rolling_mean_window", 5) is not None else None)
+                              if "rolling_mean_window" in raw else 5,
     )
 
 

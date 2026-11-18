@@ -1995,12 +1995,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # Raw-ECa preprocessing chain config (see preprocess_em_survey()) --
             # scenario-overridable, defined here so the same values can be
             # reused below when logging the per-file results to the report.
-            FILTER_REPEATED_TOLERANCE = getattr(cfg, "filter_repeated_tolerance", 1e-10)
-            FILTER_RANGE_VMIN = getattr(cfg, "filter_range_vmin", 0.0)
-            FILTER_RANGE_VMAX = getattr(cfg, "filter_range_vmax", None)
-            FILTER_PERCENTILE_QMIN = getattr(cfg, "filter_percentile_qmin", 5.0)
-            FILTER_PERCENTILE_QMAX = getattr(cfg, "filter_percentile_qmax", 95.0)
-            ROLLING_MEAN_WINDOW = getattr(cfg, "rolling_mean_window", 5)
+            FILTER_REPEATED_TOLERANCE = cfg.filter_repeated_tolerance
+            FILTER_RANGE_VMIN = cfg.filter_range_vmin
+            FILTER_RANGE_VMAX = cfg.filter_range_vmax
+            FILTER_PERCENTILE_QMIN = cfg.filter_percentile_qmin
+            FILTER_PERCENTILE_QMAX = cfg.filter_percentile_qmax
+            ROLLING_MEAN_WINDOW = cfg.rolling_mean_window
 
             EM_FNAMES, observations_list, probe_table, EM_DATES, RAW_EM_FNAMES, REAL_DATA_DIAG = _load_real_data(
                 em_dir, tdr_dir, coord_file,
