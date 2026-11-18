@@ -148,6 +148,28 @@ python run_all_hypotheses.py --only 2 3 --base real_L3_base        # H2 and H3 w
 
 `run_pipeline.py` (the Python pipeline that `run_one_scenario.sh` calls) keeps its name.
 
+## Hypotheses on a synthetic MFC2 dataset (known truth, simple model)
+
+`generate_synthetic_real_mirror.py` builds a synthetic twin of the MFC2 deployment (7 EM survey dates with the real point-count asymmetry, daily TDR at 15/30 cm, truth arrays in `ground_truth/`). The `hyp*` scripts run on it unchanged, because they only need a config file and a base scenario:
+
+```bash
+# 1. dataset: 20 stand-in stations, 2 layers (one interface between the 15 and 30 cm TDR depths)
+python generate_synthetic_real_mirror.py --standin-stations 20 --depths0 0.225 \
+    --max-points 120 --outdir mfc2_synthetic
+# 2. hypotheses (smoke test; drop --fast for the full ensemble)
+python run_all_hypotheses.py --config mfc2_synthetic/mfc2_real_synthetic_mirror.json \
+    --base mfc2_real_synthetic_mirror --fast
+python hyp3_localized_bandwidth.py --config mfc2_synthetic/mfc2_real_synthetic_mirror.json \
+    --base mfc2_real_synthetic_mirror --fast       # one hypothesis alone
+```
+
+Things to know:
+
+- `--standin-stations N` is **not the real station layout**: a jittered grid inside the footprint of all dense EM epochs. Pass `--coord-csv SOILNET_MFC2_coordinates_sensors.csv` instead to use the real one (the two options exclude each other).
+- `--depths0` sets the layer interfaces of the truth and the scenario. The default (`0.3 0.6 1.0`, 4 layers) has two layers the 15/30 cm TDR cannot see (the run warns about uncovered horizons); `--depths0 0.225` is the simple design.
+- The truth Waxman-Smits parameters are constant in space and time, so per-station or per-zone calibration cannot be tested yet (to-do J2).
+- Truth arrays are in `<outdir>/ground_truth/`; they are never read by the pipeline.
+
 ## Compare runs
 
 ```bash
