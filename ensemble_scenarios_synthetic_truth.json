@@ -1,0 +1,56 @@
+{
+ "_comment": [
+  "Pure-synthetic counterparts of the mfc2_syn_* scenarios (data_source='synthetic': the pipeline generates its own ground truth).",
+  "Unlike ensemble_scenarios_synthetic_mfc2.json (mirror dataset loaded through the real-data path, no truth), Step 6 here also writes the truth, RMSE and MAE maps (water_content_{xz,xy}_*_{truth,rmse,mae}.png).",
+  "Not read by tests/test_pipeline_mfc2_synthetic.py. Run with: ./run_one_scenario.sh -s mfc2_syn_free1_synthetic -c ensemble_scenarios_synthetic_truth.json --mode 2d [--quick]"
+ ],
+ "mfc2_syn_free1_synthetic": {
+  "description": "mfc2_syn_free1 (pooled WS, K=1 free parameter sigma_s) run through the pure-synthetic path, own ground truth.",
+  "output_dir": "mfc2_outputs/mfc2_syn_free1_synthetic",
+  "data_source": "synthetic",
+  "realization_index": 0,
+  "depths0": [
+   0.225
+  ],
+  "fixed_depths": true,
+  "ws_fixed_params": {
+   "a": true,
+   "m": true,
+   "sigma_w": true,
+   "sigma_s": false
+  },
+  "lab_p0": [
+   0.5,
+   3.0,
+   500.0,
+   100.0
+  ],
+  "param_grid": {
+   "method": [
+    "ROPE"
+   ],
+   "forwardModel": [
+    "CS"
+   ]
+  },
+  "alpha_range_log": [
+   0.001,
+   5.0,
+   5
+  ],
+  "cond_ranges": [
+   [
+    0.01,
+    300.0
+   ],
+   [
+    0.01,
+    300.0
+   ]
+  ],
+  "gamma": 0.0,
+  "window_m": 3.0,
+  "num_swc_positions": 4,
+  "cache_tag": "mfc2_syn_free1_synthetic"
+ }
+}
