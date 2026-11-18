@@ -86,6 +86,7 @@ import step3_average as step3
 import step4_select as step4_5
 from steps import step1_diagnostics as steps_step1
 from steps import step3_4_average_recalibrate as steps_step34
+from steps import step5_selection as steps_step5
 from steps import step5b_validation as steps_step5b
 from steps import step5c_footprint as steps_step5c
 from steps import step6_plots as steps_step6  # Phase 6: step functions extracted from main()
@@ -4696,18 +4697,12 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # -----------------------------------------------------------------------
         reporter.end_step("Step 4")
 
-        reporter.step("Step 5", "Convergence selection & reliability mapping")
-        reporter.log("\n" + "=" * 80)
-        reporter.log(" [PIPELINE] STEP 5: CONVERGENCE SELECTION & RELIABILITY MAPPING")
-        reporter.log("=" * 80)
-
-        selected_output = step4_5.run_select_assess(
-            models=models_clean, averaged_models=averaged_models, ranking=ranking,
-            sample_positions=sample_positions, sample_times=sample_times,
-            theta_obs=theta_obs, fits_step2=fits_step4,
-            depths0=DEPTHS0, output_dir=OUTPUT_DIR, generate_plots=True,
-            probe_layer_indices=probe_layer_indices,
-        )
+        selected_output = steps_step5.run_step5_select(
+            reporter, models_clean=models_clean, averaged_models=averaged_models,
+            ranking=ranking, sample_positions=sample_positions,
+            sample_times=sample_times, theta_obs=theta_obs, fits_step4=fits_step4,
+            depths0=DEPTHS0, output_dir=OUTPUT_DIR,
+            probe_layer_indices=probe_layer_indices)
 
         # -----------------------------------------------------------------------
         # STEP 5c — EM FOOTPRINT DISCREPANCY (McNeill depth weighting)
@@ -4781,105 +4776,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # ------------------------------------------------------------------
         # Report Step 5 selection and uncertainty details
         # ------------------------------------------------------------------
-        _cv = selected_output.cv_map
-        _tc = selected_output.theta_calc
-        reporter.log(
-            f"[STEP 5] Optimal stack depth K = {selected_output.K}  "
-            f"(out of {len(averaged_models)} candidates)"
-        )
-        reporter.log(f"[STEP 5] Minimum RMSE at K={selected_output.K}: {selected_output.rmse:.6f} m³/m³")
+        steps_step5.report_step5_selection(
+            reporter, selected_output=selected_output, n_candidates=len(averaged_models))
 
-        # CV map
-        if _cv.ndim == 3:
-            reporter.log(
-                f"[STEP 5] CV map shape : {_cv.shape}  →  "
-                f"(n_time={_cv.shape[0]}, n_measured_points={_cv.shape[1]}, n_layers={_cv.shape[2]})  "
-                f"— Coefficient of Variation = weighted_std / weighted_mean per cell; "
-                f">1.0 indicates >100 % relative uncertainty"
-            )
-        elif _cv.ndim == 2:
-            reporter.log(
-                f"[STEP 5] CV map shape : {_cv.shape}  →  "
-                f"(n_measured_points={_cv.shape[0]}, n_layers={_cv.shape[1]})  "
-                f"— Coefficient of Variation = weighted_std / weighted_mean per cell"
-            )
-        else:
-            reporter.log(f"[STEP 5] CV map shape : {_cv.shape}")
-
-        reporter.log(
-            f"[STEP 5] CV map stats — mean: {np.nanmean(_cv):.4f}  "
-            f"max: {np.nanmax(_cv):.4f}  "
-            f"fraction of cells with CV>0.5: "
-            f"{100*np.nanmean(_cv > 0.5):.1f} %  "
-            f"(NaN cells, e.g. unmatched real-data time-lapse reference-grid "
-            f"points, excluded from these statistics: "
-            f"{100*np.mean(np.isnan(_cv)):.1f} % of cells are NaN)"
-        )
-
-        # theta_calc
-        if _tc is not None:
-            if _tc.ndim == 3:
-                reporter.log(
-                    f"[STEP 5] theta_calc shape : {_tc.shape}  →  "
-                    f"(n_time={_tc.shape[0]}, n_measured_points={_tc.shape[1]}, n_layers={_tc.shape[2]})  "
-                    f"— predicted VWC [m³/m³] grid at optimal K, derived from EC→θ "
-                    f"via per-horizon Waxman-Smits inversion"
-                )
-            else:
-                reporter.log(f"[STEP 5] theta_calc shape : {_tc.shape}")
-            reporter.log(
-                f"[STEP 5] theta_calc stats — mean: {np.nanmean(_tc):.4f}  "
-                f"min: {np.nanmin(_tc):.4f}  "
-                f"max: {np.nanmax(_tc):.4f}  [m³/m³]"
-            )
-
-        # -----------------------------------------------------------------------
         # PERSIST STEP 4/5 RESULT (theta_calc, cv_map, K, rmse, coverage,
-        # is_calibrated) TO OUTPUT_MODEL_DIR
-        #   Previously this array was only ever plotted, then discarded --
-        #   compare_scenarios.py / plot_truth_comparison.py need it on disk
-        #   as 'theta_calc.npy' next to the synthetic_*.npy truth arrays to
-        #   do calc-vs-truth comparisons. Saving it here makes every run
-        #   self-sufficient for that comparison, synthetic or real, with no
-        #   extra step.
-        # -----------------------------------------------------------------------
-        _step5_capture = {
-            "K": np.array(selected_output.K),
-            "rmse": np.array(selected_output.rmse),
-            "cv_map": np.asarray(selected_output.cv_map),
-        }
-        if _tc is not None:
-            _step5_capture["theta_calc"] = np.asarray(_tc)
-        # Calibration inputs/outputs for pass 2 of the TDR-pinned experiment
-        # (pin_from_tdr.py / run_pinned_tdr.py): train TDR obs + calibrated WS.
-        try:
-            _step5_capture["ws_params"] = np.asarray(selected_output.best_fit.params)
-            _step5_capture["tdr_train_theta"] = np.asarray(theta_obs, dtype=float)
-            _step5_capture["tdr_train_positions"] = np.asarray(sample_positions, dtype=int)
-            _step5_capture["tdr_train_times"] = np.asarray(sample_times, dtype=int)
-            if probe_layer_indices is not None:
-                _step5_capture["tdr_train_layers"] = np.asarray(probe_layer_indices, dtype=int)
-        except Exception as _e:
-            reporter.log(f"[STEP 5][WARN] could not capture WS params / TDR obs: {_e}")
-        if getattr(selected_output, "coverage", None) is not None:
-            _step5_capture["coverage"] = np.asarray(selected_output.coverage)
-        if getattr(selected_output, "best_fit", None) is not None:
-            _step5_capture["is_calibrated"] = np.array(
-                [h.is_calibrated for h in selected_output.best_fit.horizon_fits]
-            )
-        # Optimal RMSE-weighted bulk-EC model (n_time, n_pts, n_layers) -- needed
-        # by plot_validation_1to1.py for the per-horizon EC truth-vs-optimal 1:1.
-        try:
-            _step5_capture["ec_optimal"] = np.asarray(averaged_models[selected_output.K - 1])
-        except Exception as _e:
-            reporter.log(f"[STEP 5][WARN] could not capture ec_optimal: {_e}")
-        for _key, _arr in _step5_capture.items():
-            _path = os.path.join(OUTPUT_MODEL_DIR, f"{_key}.npy")
-            np.save(_path, _arr)
-        reporter.log(
-            f"[STEP 5] Saved Step 4/5 result to '{OUTPUT_MODEL_DIR}': "
-            f"{', '.join(f'{k}.npy' for k in _step5_capture)}"
-        )
+        # is_calibrated, ec_optimal, ...) TO OUTPUT_MODEL_DIR
+        steps_step5.persist_step5_result(
+            reporter, selected_output=selected_output, averaged_models=averaged_models,
+            theta_obs=theta_obs, sample_positions=sample_positions,
+            sample_times=sample_times, probe_layer_indices=probe_layer_indices,
+            output_model_dir=OUTPUT_MODEL_DIR)
 
         # -----------------------------------------------------------------------
         # POST-STEP-5 QUALITY GATE  (report item 4, quality gates)
@@ -4890,41 +4796,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   below) so a degraded-but-completed run is visibly distinguishable
         #   from a clean one instead of both reporting "✅ SUCCESS".
         # -----------------------------------------------------------------------
-        quality_gate_result = EMmethod.evaluate_quality_gates(
-            cv_map=selected_output.cv_map,
-            best_fit=selected_output.best_fit,
-            cv_mean_warn_threshold=(
-                getattr(cfg, "quality_gate_cv_mean_warn", 0.3) if cfg is not None else 0.3
-            ),
-            cv_high_threshold=(
-                getattr(cfg, "quality_gate_cv_high_threshold", 1.0) if cfg is not None else 1.0
-            ),
-            cv_high_fraction_warn_threshold=(
-                getattr(cfg, "quality_gate_cv_high_fraction_warn", 0.3) if cfg is not None else 0.3
-            ),
-            require_all_horizons_calibrated=(
-                getattr(cfg, "quality_gate_require_all_horizons_calibrated", True)
-                if cfg is not None else True
-            ),
-        )
-        reporter.log(quality_gate_result.message)
-        reporter.metric("Quality gate level", quality_gate_result.level)
-        reporter.metric("Quality gate — mean CV", f"{quality_gate_result.cv_mean:.4f}")
-        reporter.metric(
-            "Quality gate — CV>threshold fraction",
-            f"{quality_gate_result.cv_high_fraction*100:.1f}%",
-        )
-        reporter.metric(
-            "Quality gate — calibrated horizons",
-            f"{quality_gate_result.n_calibrated_horizons}/{quality_gate_result.n_total_horizons}",
-        )
-        if quality_gate_result.level == "WARN":
-            reporter.log(
-                "[PIPELINE][WARN] Final solution failed one or more quality gates -- "
-                "see 'Quality gate reasons' in the report summary. The run still "
-                "completed and all outputs were written; treat the solution with "
-                "extra caution before relying on it."
-            )
+        quality_gate_result = steps_step5.run_step5_quality_gate(
+            reporter, selected_output=selected_output, cfg=cfg)
 
         reporter.end_step("Step 5")
 
