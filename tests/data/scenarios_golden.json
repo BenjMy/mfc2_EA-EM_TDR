@@ -6283,5 +6283,1546 @@
    "ws_xy_variation": false,
    "xy_z_blend": 0.5
   }
+ },
+ "ensemble_scenarios_synthetic_mfc2.json": {
+  "mfc2_syn_base": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_base",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Synthetic MFC2 twin, base: single interface at 0.225 m (2 layers, matches 15/30 cm TDR), CS forward model, pooled Waxman-Smits with 2 free parameters (sigma_w, sigma_s; a and m fixed), no train/validation split. EM cleaning: rolling mean and percentile filter OFF (they move/drop the few points near the TDR stations of a thinned survey).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_base",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_base",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_free1": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_free1",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Pooled WS, K=1 free parameter (sigma_s).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_free1",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_free1",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": true
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_free3": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_free3",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Pooled WS, K=3 free parameters (m, sigma_w, sigma_s).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_free3",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_free3",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_free4": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_free4",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Pooled WS, K=4 free parameters (all). Start a=0.6 (a=0.5 is its lower bound, members would pile up there).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.6,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_free4",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_free4",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": false,
+    "m": false,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_fslin": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_fslin",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Inversion with FSlin (use with a dataset built with truth_forward_model='FSlin' to avoid the inverse crime).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_fslin",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_fslin",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "FSlin"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_kern_above": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_kern_above",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Localized (kernel) WS calibration, bandwidth 100 m (above the ~40 m station spacing).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_kern_above",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_kern_above",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": 100.0,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_kern_at": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_kern_at",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Localized (kernel) WS calibration, bandwidth 40 m (at the ~40 m station spacing).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_kern_at",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_kern_at",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": 40.0,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_kern_below": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_kern_below",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Localized (kernel) WS calibration, bandwidth 15 m (below the ~40 m station spacing).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_kern_below",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_kern_below",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": 15.0,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_sub_grid": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_sub_grid",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "EM subsample: one point per 20 m cell.",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": {
+    "cell_m": 20.0,
+    "keep_probe_nearest": true,
+    "mode": "grid"
+   },
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_sub_grid",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_sub_grid",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_sub_probes": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_sub_probes",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "EM subsample: keep points within 5 m of a TDR probe.",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": {
+    "keep_probe_nearest": true,
+    "mode": "probes",
+    "radius_m": 5.0
+   },
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_sub_probes",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_sub_probes",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_tv_probe": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_tv_probe",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Train/validation split by_probe (whole stations held out).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_tv_probe",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_tv_probe",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "by_probe",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_tv_random": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_tv_random",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Train/validation split random (comparison only).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_tv_random",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_tv_random",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "random",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_tv_time": {
+   "allow_uncovered_horizons": false,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_tv_time",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Train/validation split by_time_block (whole time steps held out; needs >= 2 epochs).",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_tv_time",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_tv_time",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": true,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "by_time_block",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  },
+  "mfc2_syn_two_interfaces": {
+   "allow_uncovered_horizons": true,
+   "alpha_range_log": [
+    0.001,
+    5.0,
+    5
+   ],
+   "cache_tag": "mfc2_syn_two_interfaces",
+   "cond_ranges": [
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ],
+    [
+     0.01,
+     300.0
+    ]
+   ],
+   "coord_file": null,
+   "data_source": "real",
+   "depths0": [
+    0.1,
+    0.225
+   ],
+   "depths_are_fixed": true,
+   "description": "Two interfaces (0.10 m and 0.225 m, 3 layers); the top layer has no TDR probe.",
+   "drop_coils": null,
+   "eca_noise_level": 0.0,
+   "em_data_dir": null,
+   "em_subsample": null,
+   "em_unit": "ppm",
+   "filter_percentile_qmax": null,
+   "filter_percentile_qmin": null,
+   "filter_range_vmax": null,
+   "filter_range_vmin": 0.0,
+   "filter_repeated_tolerance": 1e-10,
+   "fixed_depths": true,
+   "forward_model": "CS",
+   "full_range_gradient": false,
+   "gamma": 0.0,
+   "grid_num_x": 10,
+   "grid_num_y": 5,
+   "homogeneous": false,
+   "invert_z_gradient": false,
+   "lab_p0": [
+    0.5,
+    3.0,
+    500.0,
+    100.0
+   ],
+   "matching_error_fraction": null,
+   "matching_warn_fraction": 0.5,
+   "name": "mfc2_syn_two_interfaces",
+   "num_swc_positions": 4,
+   "output_dir": "mfc2_outputs/mfc2_syn_two_interfaces",
+   "param_grid": {
+    "alpha": [
+     0.001,
+     0.008408964152537146,
+     0.07071067811865475,
+     0.5946035575013605,
+     5.000000000000001
+    ],
+    "forwardModel": [
+     "CS"
+    ],
+    "method": [
+     "ROPE"
+    ]
+   },
+   "pin_ec_file": null,
+   "pin_layers": null,
+   "pin_source": "truth",
+   "quality_gate_cv_high_fraction_warn": 0.3,
+   "quality_gate_cv_high_threshold": 1.0,
+   "quality_gate_cv_mean_warn": 0.3,
+   "quality_gate_require_all_horizons_calibrated": false,
+   "random_xy_correlation_m": null,
+   "random_xy_field": false,
+   "random_xy_n_blobs": 8,
+   "random_xy_seed": null,
+   "realization_index": 0,
+   "rolling_mean_window": null,
+   "soil_temperature_c": null,
+   "spatial_match_tolerance_m": 3.0,
+   "swc_depths": null,
+   "tdr_data_dir": null,
+   "tdr_noise_std": 0.01,
+   "time_tolerance_days": 3.0,
+   "train_val_split": "off",
+   "window_m": 3.0,
+   "ws_bounds": null,
+   "ws_fixed_params": {
+    "a": true,
+    "m": true,
+    "sigma_s": false,
+    "sigma_w": false
+   },
+   "ws_layer_params": null,
+   "ws_localized_bandwidth": null,
+   "ws_localized_bandwidth_sweep": null,
+   "ws_xy_correlation_m": null,
+   "ws_xy_n_blobs": 6,
+   "ws_xy_params": null,
+   "ws_xy_pattern": "linear",
+   "ws_xy_ranges": null,
+   "ws_xy_seed": null,
+   "ws_xy_variation": false,
+   "xy_z_blend": 0.5
+  }
  }
 }

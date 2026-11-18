@@ -1,0 +1,205 @@
+{
+ "_comment": [
+  "Scenario matrix for the synthetic MFC2-like dataset (generate_synthetic_real_mirror.py, dataset 'mfc2_synthetic'); run by tests/test_pipeline_mfc2_synthetic.py (marker slow) with --dataset mfc2_synthetic; one axis changes per scenario relative to mfc2_syn_base.",
+  "Data paths come from --dataset; output_dir is overridden by the test (tmp dir).",
+  "rolling_mean_window=null: emagpy's rolling mean also averages the x/y of the window, which on a thinned survey (points tens of metres apart) moves points away from the TDR stations."
+ ],
+ "mfc2_syn_base": {
+  "description": "Synthetic MFC2 twin, base: single interface at 0.225 m (2 layers, matches 15/30 cm TDR), CS forward model, pooled Waxman-Smits with 2 free parameters (sigma_w, sigma_s; a and m fixed), no train/validation split. EM cleaning: rolling mean and percentile filter OFF (they move/drop the few points near the TDR stations of a thinned survey).",
+  "output_dir": "mfc2_outputs/mfc2_syn_base",
+  "data_source": "real",
+  "em_unit": "ppm",
+  "time_tolerance_days": 3.0,
+  "spatial_match_tolerance_m": 3.0,
+  "realization_index": 0,
+  "depths0": [
+   0.225
+  ],
+  "fixed_depths": true,
+  "ws_fixed_params": {
+   "a": true,
+   "m": true,
+   "sigma_w": false,
+   "sigma_s": false
+  },
+  "lab_p0": [
+   0.5,
+   3.0,
+   500.0,
+   100.0
+  ],
+  "param_grid": {
+   "method": [
+    "ROPE"
+   ],
+   "forwardModel": [
+    "CS"
+   ]
+  },
+  "alpha_range_log": [
+   0.001,
+   5.0,
+   5
+  ],
+  "cond_ranges": [
+   [
+    0.01,
+    300.0
+   ],
+   [
+    0.01,
+    300.0
+   ]
+  ],
+  "gamma": 0.0,
+  "window_m": 3.0,
+  "cache_tag": "mfc2_syn_base",
+  "rolling_mean_window": null,
+  "filter_percentile_qmin": null,
+  "filter_percentile_qmax": null
+ },
+ "mfc2_syn_free1": {
+  "extends": "mfc2_syn_base",
+  "description": "Pooled WS, K=1 free parameter (sigma_s).",
+  "output_dir": "mfc2_outputs/mfc2_syn_free1",
+  "cache_tag": "mfc2_syn_free1",
+  "ws_fixed_params": {
+   "a": true,
+   "m": true,
+   "sigma_w": true,
+   "sigma_s": false
+  }
+ },
+ "mfc2_syn_free3": {
+  "extends": "mfc2_syn_base",
+  "description": "Pooled WS, K=3 free parameters (m, sigma_w, sigma_s).",
+  "output_dir": "mfc2_outputs/mfc2_syn_free3",
+  "cache_tag": "mfc2_syn_free3",
+  "ws_fixed_params": {
+   "a": true,
+   "m": false,
+   "sigma_w": false,
+   "sigma_s": false
+  }
+ },
+ "mfc2_syn_free4": {
+  "extends": "mfc2_syn_base",
+  "description": "Pooled WS, K=4 free parameters (all). Start a=0.6 (a=0.5 is its lower bound, members would pile up there).",
+  "output_dir": "mfc2_outputs/mfc2_syn_free4",
+  "cache_tag": "mfc2_syn_free4",
+  "ws_fixed_params": {
+   "a": false,
+   "m": false,
+   "sigma_w": false,
+   "sigma_s": false
+  },
+  "lab_p0": [
+   0.6,
+   3.0,
+   500.0,
+   100.0
+  ]
+ },
+ "mfc2_syn_kern_below": {
+  "extends": "mfc2_syn_base",
+  "description": "Localized (kernel) WS calibration, bandwidth 15 m (below the ~40 m station spacing).",
+  "output_dir": "mfc2_outputs/mfc2_syn_kern_below",
+  "cache_tag": "mfc2_syn_kern_below",
+  "ws_localized_bandwidth": 15.0
+ },
+ "mfc2_syn_kern_at": {
+  "extends": "mfc2_syn_base",
+  "description": "Localized (kernel) WS calibration, bandwidth 40 m (at the ~40 m station spacing).",
+  "output_dir": "mfc2_outputs/mfc2_syn_kern_at",
+  "cache_tag": "mfc2_syn_kern_at",
+  "ws_localized_bandwidth": 40.0
+ },
+ "mfc2_syn_kern_above": {
+  "extends": "mfc2_syn_base",
+  "description": "Localized (kernel) WS calibration, bandwidth 100 m (above the ~40 m station spacing).",
+  "output_dir": "mfc2_outputs/mfc2_syn_kern_above",
+  "cache_tag": "mfc2_syn_kern_above",
+  "ws_localized_bandwidth": 100.0
+ },
+ "mfc2_syn_tv_probe": {
+  "extends": "mfc2_syn_base",
+  "description": "Train/validation split by_probe (whole stations held out).",
+  "output_dir": "mfc2_outputs/mfc2_syn_tv_probe",
+  "cache_tag": "mfc2_syn_tv_probe",
+  "train_val_split": "by_probe"
+ },
+ "mfc2_syn_tv_time": {
+  "extends": "mfc2_syn_base",
+  "description": "Train/validation split by_time_block (whole time steps held out; needs >= 2 epochs).",
+  "output_dir": "mfc2_outputs/mfc2_syn_tv_time",
+  "cache_tag": "mfc2_syn_tv_time",
+  "train_val_split": "by_time_block"
+ },
+ "mfc2_syn_tv_random": {
+  "extends": "mfc2_syn_base",
+  "description": "Train/validation split random (comparison only).",
+  "output_dir": "mfc2_outputs/mfc2_syn_tv_random",
+  "cache_tag": "mfc2_syn_tv_random",
+  "train_val_split": "random"
+ },
+ "mfc2_syn_sub_probes": {
+  "extends": "mfc2_syn_base",
+  "description": "EM subsample: keep points within 5 m of a TDR probe.",
+  "output_dir": "mfc2_outputs/mfc2_syn_sub_probes",
+  "cache_tag": "mfc2_syn_sub_probes",
+  "em_subsample": {
+   "mode": "probes",
+   "radius_m": 5.0
+  }
+ },
+ "mfc2_syn_sub_grid": {
+  "extends": "mfc2_syn_base",
+  "description": "EM subsample: one point per 20 m cell.",
+  "output_dir": "mfc2_outputs/mfc2_syn_sub_grid",
+  "cache_tag": "mfc2_syn_sub_grid",
+  "em_subsample": {
+   "mode": "grid",
+   "cell_m": 20.0
+  }
+ },
+ "mfc2_syn_fslin": {
+  "extends": "mfc2_syn_base",
+  "description": "Inversion with FSlin (use with a dataset built with truth_forward_model='FSlin' to avoid the inverse crime).",
+  "output_dir": "mfc2_outputs/mfc2_syn_fslin",
+  "cache_tag": "mfc2_syn_fslin",
+  "param_grid": {
+   "method": [
+    "ROPE"
+   ],
+   "forwardModel": [
+    "FSlin"
+   ]
+  }
+ },
+ "mfc2_syn_two_interfaces": {
+  "extends": "mfc2_syn_base",
+  "description": "Two interfaces (0.10 m and 0.225 m, 3 layers); the top layer has no TDR probe.",
+  "output_dir": "mfc2_outputs/mfc2_syn_two_interfaces",
+  "cache_tag": "mfc2_syn_two_interfaces",
+  "depths0": [
+   0.1,
+   0.225
+  ],
+  "cond_ranges": [
+   [
+    0.01,
+    300.0
+   ],
+   [
+    0.01,
+    300.0
+   ],
+   [
+    0.01,
+    300.0
+   ]
+  ],
+  "allow_uncovered_horizons": true,
+  "quality_gate_require_all_horizons_calibrated": false
+ }
+}

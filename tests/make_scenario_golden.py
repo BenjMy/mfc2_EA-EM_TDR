@@ -19,7 +19,8 @@ sys.path.insert(0, ROOT)
 
 from scenario_loader import list_scenarios, load_scenario  # noqa: E402
 
-FILES = ("ensemble_scenarios.json", "ensemble_scenarios_real.json")
+FILES = ("ensemble_scenarios.json", "ensemble_scenarios_real.json",
+         "ensemble_scenarios_synthetic_mfc2.json")
 OUT = os.path.join(ROOT, "tests", "data", "scenarios_golden.json")
 
 
