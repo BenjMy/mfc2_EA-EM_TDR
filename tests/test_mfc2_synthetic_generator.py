@@ -38,3 +38,42 @@ def test_build_dataset_writes_everything_the_real_loader_needs(tmp_path):
     assert os.path.isdir(out["ground_truth_dir"]) and os.listdir(out["ground_truth_dir"])
     first = pd.read_csv(os.path.join(out["em_dir"], em[0]), sep=";")
     assert {"X", "Y", "GPSalt", "Q_425Hz", "Q_92775Hz"} <= set(first.columns) and len(first) == 20
+
+
+def test_scenario_json_output_dir_is_configurable(tmp_path):
+    import json
+    out = gen.build_dataset(str(tmp_path / "d"), scale=0.001, max_points=20, n_stations=3,
+                            tdr_freq_days=60, output_dir=str(tmp_path / "runs"))
+    sc = json.load(open(out["scenario_json"]))[gen.SCENARIO_NAME]
+    assert sc["output_dir"] == str(tmp_path / "runs")
+    default = json.load(open(gen.write_scenario_json(
+        str(tmp_path), out["em_dir"], out["tdr_dir"], out["coord_file"])))[gen.SCENARIO_NAME]
+    assert default["output_dir"].endswith("/" + gen.SCENARIO_NAME)
+
+
+def test_session_fixture_registers_dataset_in_process_and_for_subprocess(mfc2_synthetic):
+    import json
+    import subprocess
+    import sys
+
+    import EA_EM_config as cfg
+    ds = cfg.get_dataset("mfc2_synthetic")
+    assert ds.coord_file == mfc2_synthetic["coord_file"]
+    assert os.path.isdir(ds.em_dir) and os.path.isdir(ds.tdr_dir)
+    assert mfc2_synthetic["run_dir"].startswith(mfc2_synthetic["root"])
+    assert json.load(open(mfc2_synthetic["datasets_file"]))["mfc2_synthetic"]["em_dir"] == ds.em_dir
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    code = ("import EA_EM_config as c; d=c.get_dataset('mfc2_synthetic'); print(d.coord_file)")
+    res = subprocess.run([sys.executable, "-c", code], cwd=root, env=mfc2_synthetic["env"],
+                         capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.strip() == ds.coord_file
+
+
+def test_session_fixture_scenario_loads_with_the_real_loader(mfc2_synthetic):
+    import scenario_loader
+    path = mfc2_synthetic["scenario_json"]
+    assert scenario_loader.list_scenarios(path) == [gen.SCENARIO_NAME]
+    cfg = scenario_loader.load_scenario(gen.SCENARIO_NAME, config_path=path)
+    assert cfg.data_source == "real" and cfg.output_dir == mfc2_synthetic["run_dir"]
+    assert list(cfg.depths0) == list(gen.DEPTHS0)

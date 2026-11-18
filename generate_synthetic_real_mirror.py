@@ -5,7 +5,8 @@ generate_synthetic_real_mirror.py
 ==================================
 Builds a synthetic "twin" of the real MFC2 field deployment: same 7 EM
 survey dates, same per-epoch point-count/footprint asymmetry (including
-the degraded 15/12/2020 epoch), same 24 TDR station coordinates, same
+the degraded 15/12/2020 epoch), same TDR station coordinates (the real file, or a
+built-in 20-station layout), same
 15 cm / 30 cm TDR depths -- but with a KNOWN ground-truth soil-moisture
 field, so pipeline output can be scored against truth the way real field
 data never allows.
@@ -399,16 +400,28 @@ def generate_tdr_stations(outdir: str, coord_csv: str, start_date: str,
 # Scenario JSON
 # ---------------------------------------------------------------------------
 
-def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str) -> str:
+SCENARIO_NAME = "mfc2_real_synthetic_mirror"
+DATASET_NAME = "mfc2_synthetic"
+
+
+def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str,
+                        output_dir: str | None = None) -> str:
+    """Write the scenario JSON next to the data.
+
+    ``output_dir`` is where the pipeline will write its run (default
+    ``OUTPUT_ROOT/<scenario>``); tests pass a ``tmp_path`` so nothing lands in the repo.
+    """
+    if output_dir is None:
+        output_dir = OUTPUT_ROOT + "/" + SCENARIO_NAME
     scenario = {
         "mfc2_real_synthetic_mirror": {
             "description": (
                 "Synthetic twin of the real MFC2 deployment: real EM survey "
                 "dates/point-count asymmetry (incl. the degraded 15/12/2020 "
-                "epoch) and real 24-station TDR coordinates at 15/30 cm, "
+                "epoch) and TDR stations (real coordinates or the built-in 20-station layout) at 15/30 cm, "
                 "with known ground truth for scoring."
             ),
-            "output_dir": OUTPUT_ROOT + "/mfc2_real_synthetic_mirror",
+            "output_dir": output_dir,
             "data_source": "real",
             "em_data_dir": em_dir,
             "em_unit": "ppm",
@@ -472,7 +485,8 @@ def write_station_layout(path: str, n_stations: int = 20, seed: int = 42) -> str
 def build_dataset(outdir: str, coord_csv: str | None = None, scale: float = 0.01,
                   max_points: int = 150, seed: int = 42, eca_noise: float = 0.03,
                   tdr_noise_std: float = 0.015, tdr_freq_days: int = 1,
-                  tdr_missing_frac: float = 0.02, n_stations: int = 20) -> dict:
+                  tdr_missing_frac: float = 0.02, n_stations: int = 20,
+                  output_dir: str | None = None) -> dict:
     """Generate the whole synthetic MFC2 dataset under ``outdir`` and return its paths.
 
     ``coord_csv=None`` writes the built-in layout (``n_stations`` units) to
@@ -490,10 +504,33 @@ def build_dataset(outdir: str, coord_csv: str | None = None, scale: float = 0.01
                           missing_frac=tdr_missing_frac, seed=seed)
     em_dir = os.path.join(outdir, "EMI_MFC2_synthetic")
     tdr_dir = os.path.join(outdir, "daily_MFC_synthetic")
-    scenario_json = write_scenario_json(outdir, em_dir, tdr_dir, os.path.abspath(coord_csv))
+    scenario_json = write_scenario_json(outdir, em_dir, tdr_dir, os.path.abspath(coord_csv),
+                                        output_dir=output_dir)
     return {"em_dir": em_dir, "tdr_dir": tdr_dir, "coord_file": os.path.abspath(coord_csv),
             "ground_truth_dir": os.path.join(outdir, "ground_truth"),
             "scenario_json": scenario_json, "n_em_epochs": len(em_records)}
+
+
+def register_built_dataset(paths: dict, name: str = DATASET_NAME,
+                           datasets_file: str | None = None):
+    """Register a ``build_dataset`` result as a named dataset (``--dataset <name>``).
+
+    In-process through ``EA_EM_config.register_dataset``. A subprocess (``python run_pipeline.py
+    ...``) only sees datasets listed in the JSON file ``EA_EM_DATASETS_FILE``: pass
+    ``datasets_file`` to also write that file (the caller sets the environment variable).
+    """
+    import json
+
+    import EA_EM_config as cfgpaths
+    ds = cfgpaths.register_dataset(
+        name, paths["em_dir"] + "/", paths["tdr_dir"] + "/", paths["coord_file"],
+        description="Synthetic MFC2-like twin with known truth (generate_synthetic_real_mirror)")
+    if datasets_file:
+        with open(datasets_file, "w", encoding="utf-8") as fh:
+            json.dump({name: {"em_dir": ds.em_dir, "tdr_dir": ds.tdr_dir,
+                              "coord_file": ds.coord_file, "description": ds.description}},
+                      fh, indent=2)
+    return ds
 
 
 # ---------------------------------------------------------------------------
