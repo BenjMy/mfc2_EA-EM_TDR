@@ -42,3 +42,22 @@ def test_stations_do_not_collapse(tmp_path):
     d = np.sqrt(((xy[:, None] - xy[None]) ** 2).sum(-1))
     np.fill_diagonal(d, np.inf)
     assert d.min() > 8.0  # metres
+
+
+def test_configure_layers_changes_truth_and_scenario(tmp_path, monkeypatch):
+    monkeypatch.setattr(g, "DEPTHS0", list(g.DEPTHS0))
+    monkeypatch.setattr(g, "N_LAYERS", g.N_LAYERS)
+    g.configure_layers([0.225])
+    assert g.DEPTHS0 == [0.225] and g.N_LAYERS == 2
+    import json
+    path = g.write_scenario_json(str(tmp_path), "em", "tdr", "coords.csv")
+    sc = json.load(open(path))["mfc2_real_synthetic_mirror"]
+    assert sc["depths0"] == [0.225] and len(sc["cond_ranges"]) == 2
+
+
+@pytest.mark.parametrize("bad", [[], [0.3, 0.2], [0.0], [-0.1, 0.5]])
+def test_configure_layers_rejects_bad_depths(bad, monkeypatch):
+    monkeypatch.setattr(g, "DEPTHS0", list(g.DEPTHS0))
+    monkeypatch.setattr(g, "N_LAYERS", g.N_LAYERS)
+    with pytest.raises(ValueError):
+        g.configure_layers(bad)

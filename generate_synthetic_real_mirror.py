@@ -318,6 +318,22 @@ def generate_em_surveys(outdir: str, scale: float, max_points: int,
 # TDR station generation
 # ---------------------------------------------------------------------------
 
+def configure_layers(depths0) -> None:
+    """Set the layered truth/inversion geometry (module globals ``DEPTHS0``, ``N_LAYERS``).
+
+    The default (3 interfaces, 4 layers) has two layers the 15/30 cm TDR cannot see.
+    ``[0.225]`` (2 layers, one interface between the two TDR depths) is the simpler
+    design of ``real_single_base`` in ``ensemble_scenarios_real.json``. Call before
+    generating anything; every function reads the globals at call time.
+    """
+    global DEPTHS0, N_LAYERS
+    d = [float(v) for v in depths0]
+    if not d or any(b <= a for a, b in zip(d, d[1:])) or d[0] <= 0:
+        raise ValueError(f"depths0 must be positive and strictly increasing, got {depths0!r}")
+    DEPTHS0 = d
+    N_LAYERS = len(d) + 1
+
+
 def make_standin_coords(outdir: str, n_stations: int = 20, seed: int = 42,
                         margin_m: float = 5.0) -> str:
     """Write a STAND-IN station layout (``Pos;x;y``, ';'-delimited) and return its path.
@@ -503,8 +519,14 @@ def main():
     ap.add_argument("--tdr-missing-frac", type=float, default=0.02,
                      help="Fraction of synthetic TDR readings randomly set to NaN, "
                           "mirroring real logger gaps.")
+    ap.add_argument("--depths0", nargs="+", type=float, default=None, metavar="D",
+                     help="Layer interfaces [m] of the truth and the scenario "
+                          f"(default {DEPTHS0}; use '--depths0 0.225' for the simple 2-layer "
+                          "design that matches the 15/30 cm TDR depths).")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    if args.depths0 is not None:
+        configure_layers(args.depths0)
 
     os.makedirs(args.outdir, exist_ok=True)
     if args.coord_csv is None:
