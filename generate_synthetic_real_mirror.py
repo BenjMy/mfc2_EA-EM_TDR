@@ -440,13 +440,74 @@ def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str)
 
 
 # ---------------------------------------------------------------------------
+# Built-in station layout + callable entry point (used by the pytest fixture)
+# ---------------------------------------------------------------------------
+
+#: Core of the field covered by the TDR stations (extent of the real layout: about
+#: 175 x 193 m, inside the EM survey bounding box).
+STATION_BOX = (515520.0, 515695.0, 4468235.0, 4468428.0)
+
+
+def write_station_layout(path: str, n_stations: int = 20, seed: int = 42) -> str:
+    """Write a deterministic TDR station coordinate file (``Pos;x;y``, same format as the real one).
+
+    A jittered grid over ``STATION_BOX`` (``n_stations`` cells, nearest-neighbour spacing about
+    30-50 m). It is NOT the real layout (the real file is private data); set ``coord_csv`` in
+    ``build_dataset`` to use the real one. Units are numbered 1..n like the real "Unit N".
+    """
+    x0, x1, y0, y1 = STATION_BOX
+    n_cols = int(np.ceil(np.sqrt(n_stations * (x1 - x0) / (y1 - y0))))
+    n_rows = int(np.ceil(n_stations / n_cols))
+    rng = np.random.default_rng(seed + 31)
+    dx, dy = (x1 - x0) / n_cols, (y1 - y0) / n_rows
+    rows = []
+    for k in range(n_stations):
+        r, c = divmod(k, n_cols)
+        jx, jy = rng.uniform(-0.2, 0.2, 2) * np.array([dx, dy])
+        rows.append((f"Unit {k + 1}", x0 + (c + 0.5) * dx + jx, y0 + (r + 0.5) * dy + jy))
+    pd.DataFrame(rows, columns=["Pos", "x", "y"]).to_csv(path, sep=";", index=False, float_format="%.2f")
+    return path
+
+
+def build_dataset(outdir: str, coord_csv: str | None = None, scale: float = 0.01,
+                  max_points: int = 150, seed: int = 42, eca_noise: float = 0.03,
+                  tdr_noise_std: float = 0.015, tdr_freq_days: int = 1,
+                  tdr_missing_frac: float = 0.02, n_stations: int = 20) -> dict:
+    """Generate the whole synthetic MFC2 dataset under ``outdir`` and return its paths.
+
+    ``coord_csv=None`` writes the built-in layout (``n_stations`` units) to
+    ``<outdir>/coordinates_sensors.csv``. Returns ``{"em_dir", "tdr_dir", "coord_file",
+    "ground_truth_dir", "scenario_json", "n_em_epochs"}``.
+    """
+    os.makedirs(outdir, exist_ok=True)
+    if coord_csv is None:
+        coord_csv = write_station_layout(os.path.join(outdir, "coordinates_sensors.csv"),
+                                         n_stations=n_stations, seed=seed)
+    em_records = generate_em_surveys(outdir, scale=scale, max_points=max_points,
+                                     eca_noise_level=eca_noise, seed=seed)
+    generate_tdr_stations(outdir, coord_csv, REAL_EM_EPOCHS[0][2], REAL_EM_EPOCHS[-1][2],
+                          freq_days=tdr_freq_days, tdr_noise_std=tdr_noise_std,
+                          missing_frac=tdr_missing_frac, seed=seed)
+    em_dir = os.path.join(outdir, "EMI_MFC2_synthetic")
+    tdr_dir = os.path.join(outdir, "daily_MFC_synthetic")
+    scenario_json = write_scenario_json(outdir, em_dir, tdr_dir, os.path.abspath(coord_csv))
+    return {"em_dir": em_dir, "tdr_dir": tdr_dir, "coord_file": os.path.abspath(coord_csv),
+            "ground_truth_dir": os.path.join(outdir, "ground_truth"),
+            "scenario_json": scenario_json, "n_em_epochs": len(em_records)}
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--coord-csv", required=True,
-                     help="Path to SOILNET_MFC2_coordinates_sensors.csv (real, reused as-is).")
+    ap.add_argument("--coord-csv", default=None,
+                     help="Path to SOILNET_MFC2_coordinates_sensors.csv (real, reused as-is). "
+                          "Omit to use the built-in deterministic station layout "
+                          "(--n-stations units).")
+    ap.add_argument("--n-stations", type=int, default=20,
+                     help="Stations of the built-in layout (ignored with --coord-csv).")
     ap.add_argument("--outdir", default="./synthetic_real_mirror")
     ap.add_argument("--scale", type=float, default=0.01,
                      help="Fraction of the REAL per-epoch point count to simulate "
@@ -466,26 +527,13 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
-    os.makedirs(args.outdir, exist_ok=True)
-
-    em_records = generate_em_surveys(
-        args.outdir, scale=args.scale, max_points=args.max_points,
-        eca_noise_level=args.eca_noise, seed=args.seed,
-    )
-    start_date = REAL_EM_EPOCHS[0][2]
-    end_date = REAL_EM_EPOCHS[-1][2]
-    generate_tdr_stations(
-        args.outdir, args.coord_csv, start_date, end_date,
-        freq_days=args.tdr_freq_days, tdr_noise_std=args.tdr_noise_std,
-        missing_frac=args.tdr_missing_frac, seed=args.seed,
-    )
-
-    em_dir = os.path.join(args.outdir, "EMI_MFC2_synthetic")
-    tdr_dir = os.path.join(args.outdir, "daily_MFC_synthetic")
-    write_scenario_json(args.outdir, em_dir, tdr_dir, os.path.abspath(args.coord_csv))
-
-    print(f"\n[DONE] {len(em_records)} EM epochs, "
-          f"{len(pd.read_csv(args.coord_csv, delimiter=';', comment='['))} TDR stations "
+    out = build_dataset(
+        args.outdir, coord_csv=args.coord_csv, scale=args.scale, max_points=args.max_points,
+        seed=args.seed, eca_noise=args.eca_noise, tdr_noise_std=args.tdr_noise_std,
+        tdr_freq_days=args.tdr_freq_days, tdr_missing_frac=args.tdr_missing_frac,
+        n_stations=args.n_stations)
+    n_st = len(pd.read_csv(out["coord_file"], delimiter=";", comment="["))
+    print(f"\n[DONE] {out['n_em_epochs']} EM epochs, {n_st} TDR stations "
           f"written under '{args.outdir}'.")
 
 

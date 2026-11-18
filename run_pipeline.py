@@ -5314,6 +5314,13 @@ if __name__ == "__main__":
              "no sweep) otherwise.",
     )
     parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Resolve the scenario, data paths and options, print what the run WOULD do (grid "
+             "size, quick reduction, epochs, estimated Step-1 tasks, split, stage) and exit "
+             "without running anything or writing any output. Exit code 2 if an option "
+             "combination is inconsistent. Combine with --quick to see the reduced grid.",
+    )
+    parser.add_argument(
         "--quick", action="store_true",
         help="Smoke-test preset: keep ONE alpha (the middle of the scenario's "
              "alpha list) and ONE forward model (the first) instead of the full "
@@ -5491,6 +5498,19 @@ if __name__ == "__main__":
     for _w in check_ws_start_values(cfg):
         print(f" [WARN] WS start values: {_w}")
     print("=" * 80 + "\n")
+
+    if args.dry_run:
+        import pipeline_plan
+        _rows, _errs = pipeline_plan.build_plan(
+            cfg, mode=effective_mode, data_source=effective_ds, em_dir=effective_em_dir,
+            quick=args.quick, quick_epochs=args.quick_epochs, stage=args.stage,
+            calibration=args.calibration, train_val_split=args.train_val_split,
+            beta=args.beta, gamma=args.gamma,
+            ws_localized_bandwidth=args.ws_localized_bandwidth,
+            ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
+            em_footprint_diagnostic=args.em_footprint_diagnostic)
+        print(pipeline_plan.format_plan(_rows, _errs))
+        sys.exit(2 if _errs else 0)
 
     try:
         main(cfg, mode=effective_mode, data_source=effective_ds,
