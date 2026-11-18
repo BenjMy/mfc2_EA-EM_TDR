@@ -77,3 +77,61 @@ def test_session_fixture_scenario_loads_with_the_real_loader(mfc2_synthetic):
     cfg = scenario_loader.load_scenario(gen.SCENARIO_NAME, config_path=path)
     assert cfg.data_source == "real" and cfg.output_dir == mfc2_synthetic["run_dir"]
     assert list(cfg.depths0) == list(gen.DEPTHS0)
+
+
+def _em_q(out):
+    d = out["em_dir"]
+    return {f: pd.read_csv(os.path.join(d, f), sep=";") for f in sorted(os.listdir(d))}
+
+
+def _small(tmp_path, name, **kw):
+    return gen.build_dataset(str(tmp_path / name), scale=0.001, max_points=20, n_stations=3,
+                             tdr_freq_days=90, **kw)
+
+
+def test_constant_ws_truth_reproduces_the_legacy_generator_exactly(tmp_path):
+    legacy = _em_q(_small(tmp_path, "legacy"))
+    const = _em_q(_small(tmp_path, "const", ws_truth="constant"))
+    assert legacy.keys() == const.keys()
+    for f in legacy:
+        pd.testing.assert_frame_equal(legacy[f], const[f])
+
+
+def test_two_zones_truth_changes_em_only_where_sigma_s_differs(tmp_path):
+    base = _em_q(_small(tmp_path, "b", ws_truth="constant"))
+    zones = _em_q(_small(tmp_path, "z", ws_truth={"mode": "two_zones", "sigma_s_lo": 100.0,
+                                                  "sigma_s_hi": 300.0}))
+    x0, x1 = gen._X0, gen._X1
+    f = sorted(base)[0]
+    west = (base[f]["X"] - x0) / (x1 - x0) < 0.5
+    q_b, q_z = base[f]["Q_92775Hz"], zones[f]["Q_92775Hz"]
+    assert np.allclose(q_b[west], q_z[west])                 # sigma_s_lo == base value: unchanged
+    assert (q_z[~west].abs() > q_b[~west].abs()).all()       # more surface conduction: stronger signal
+
+
+def test_ws_truth_is_saved_as_ground_truth(tmp_path):
+    out = _small(tmp_path, "g", ws_truth="gradient")
+    gt = out["ground_truth_dir"]
+    arr = np.load(os.path.join(gt, "em_epoch1_2020-08-04_ws.npy"))
+    xy = np.load(os.path.join(gt, "em_epoch1_2020-08-04_xy.npy"))
+    assert arr.shape == (len(xy), gen.N_LAYERS, 4)
+    order = np.argsort(xy[:, 0])
+    s = arr[order, 0, 3]
+    assert np.all(np.diff(s) >= -1e-9) and s[-1] > s[0]      # sigma_s grows with x
+    import json
+    assert json.load(open(os.path.join(gt, "ws_truth.json")))["mode"] == "gradient"
+
+
+def test_ec_bulk_truth_follows_the_saved_truth_and_defaults_to_legacy(tmp_path):
+    out = _small(tmp_path, "e", ws_truth={"mode": "two_zones", "sigma_s_lo": 0.0, "sigma_s_hi": 200.0})
+    truth = gen.load_ws_truth(out["ground_truth_dir"])
+    assert truth.mode == "two_zones"
+    x = np.array([gen._X0 + 1.0, gen._X1 - 1.0])
+    y = np.array([gen._Y0, gen._Y0])
+    theta = np.full((1, 2, gen.N_LAYERS), 0.3)
+    ec = gen.ec_bulk_truth(theta, x, y, truth)
+    assert np.allclose(ec[0, 0], 0.3 ** 3 / 0.5 * (500.0 + 0.0))
+    assert np.allclose(ec[0, 1], 0.3 ** 3 / 0.5 * (500.0 + 200.0))
+    assert np.allclose(gen.ec_bulk_truth(theta, x, y), gen.forward_waxman_smits(theta))
+    legacy = _small(tmp_path, "l")
+    assert gen.load_ws_truth(legacy["ground_truth_dir"]) is None

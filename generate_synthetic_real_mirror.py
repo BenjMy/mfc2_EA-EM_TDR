@@ -55,6 +55,7 @@ import os
 import numpy as np
 import pandas as pd
 
+import synthetic_ws_truth as wst
 from emagpy import Problem
 from emagpy.invertHelper import eca2Q
 
@@ -198,6 +199,38 @@ def theta_truth(x, y, layer_idx: int, iso_date: str, rng: np.random.Generator,
     return np.clip(theta, THETA_MIN, THETA_MAX)
 
 
+def forward_waxman_smits_truth(theta: np.ndarray, x, y, layer_idx: int,
+                               ws_truth: "wst.WSTruth") -> np.ndarray:
+    """Like ``forward_waxman_smits`` but with parameters that depend on (x, y, horizon)."""
+    p = wst.ws_params(ws_truth, x, y, layer_idx, (_X0, _X1, _Y0, _Y1), N_LAYERS)
+    return wst.bulk_ec(theta, p)
+
+
+def ec_bulk_truth(theta: np.ndarray, x, y, ws_truth=None) -> np.ndarray:
+    """True bulk EC for theta shaped (..., n_points, n_layers) at points (x, y).
+
+    ``ws_truth`` None -> constant WS_* (same as ``forward_waxman_smits``).
+    """
+    theta = np.asarray(theta, dtype=float)
+    if ws_truth is None:
+        return forward_waxman_smits(theta)
+    truth = wst.as_truth(ws_truth)
+    out = np.empty_like(theta)
+    for l in range(theta.shape[-1]):
+        out[..., l] = forward_waxman_smits_truth(theta[..., l], x, y, l, truth)
+    return out
+
+
+def load_ws_truth(ground_truth_dir: str):
+    """``WSTruth`` saved by ``generate_em_surveys`` in ``ground_truth/ws_truth.json`` (or None)."""
+    import json
+    path = os.path.join(ground_truth_dir, "ws_truth.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path) as fh:
+        return wst.as_truth(json.load(fh))
+
+
 def forward_waxman_smits(theta: np.ndarray) -> np.ndarray:
     """sigma_bulk = (theta**m / a) * (sigma_w + sigma_s)  -- the
     multiplicative "simplified Waxman-Smits" form used throughout this
@@ -241,7 +274,10 @@ def _sample_points(n: int, x0, x1, y0, y1, rng: np.random.Generator):
 
 
 def generate_em_surveys(outdir: str, scale: float, max_points: int,
-                         eca_noise_level: float, seed: int) -> list[dict]:
+                         eca_noise_level: float, seed: int, ws_truth=None) -> list[dict]:
+    """``ws_truth`` (None | mode | dict | WSTruth): Waxman-Smits truth; None = the original
+    constant WS_* parameters (output identical to earlier versions)."""
+    truth = None if ws_truth is None else wst.as_truth(ws_truth)
     em_dir = os.path.join(outdir, "EMI_MFC2_synthetic")
     gt_dir = os.path.join(outdir, "ground_truth")
     os.makedirs(em_dir, exist_ok=True)
@@ -272,7 +308,16 @@ def generate_em_surveys(outdir: str, scale: float, max_points: int,
         theta_layers = np.stack(
             [theta_truth(x, y, l, iso_date, rng) for l in range(N_LAYERS)], axis=1
         )  # (n_points, n_layers)
-        ec_layers = forward_waxman_smits(theta_layers)  # mS/m
+        legacy = truth is None or (truth.mode == "constant" and (
+            truth.a, truth.m, truth.sigma_w, truth.sigma_s) == (WS_A, WS_M, WS_SIGMA_W, WS_SIGMA_S))
+        if legacy:
+            ec_layers = forward_waxman_smits(theta_layers)  # mS/m
+        else:
+            ec_layers = np.stack([forward_waxman_smits_truth(theta_layers[:, l], x, y, l, truth)
+                                  for l in range(N_LAYERS)], axis=1)
+        if truth is not None:
+            np.save(os.path.join(gt_dir, f"{gt_stem}_ws.npy"),
+                    wst.params_array(truth, x, y, (_X0, _X1, _Y0, _Y1), N_LAYERS))
 
         eca_mS_m = np.zeros((n_points, len(GEM2_COILS)), dtype=float)
         depths_row = np.array(DEPTHS0, dtype=float)
@@ -312,6 +357,10 @@ def generate_em_surveys(outdir: str, scale: float, max_points: int,
             "n_points": n_points, "bbox": (x0, x1, y0, y1),
         })
 
+    if truth is not None:
+        import json
+        with open(os.path.join(gt_dir, "ws_truth.json"), "w") as fh:
+            json.dump(truth.to_dict(), fh, indent=2)
     return records
 
 
@@ -486,7 +535,7 @@ def build_dataset(outdir: str, coord_csv: str | None = None, scale: float = 0.01
                   max_points: int = 150, seed: int = 42, eca_noise: float = 0.03,
                   tdr_noise_std: float = 0.015, tdr_freq_days: int = 1,
                   tdr_missing_frac: float = 0.02, n_stations: int = 20,
-                  output_dir: str | None = None) -> dict:
+                  output_dir: str | None = None, ws_truth=None) -> dict:
     """Generate the whole synthetic MFC2 dataset under ``outdir`` and return its paths.
 
     ``coord_csv=None`` writes the built-in layout (``n_stations`` units) to
@@ -498,7 +547,8 @@ def build_dataset(outdir: str, coord_csv: str | None = None, scale: float = 0.01
         coord_csv = write_station_layout(os.path.join(outdir, "coordinates_sensors.csv"),
                                          n_stations=n_stations, seed=seed)
     em_records = generate_em_surveys(outdir, scale=scale, max_points=max_points,
-                                     eca_noise_level=eca_noise, seed=seed)
+                                     eca_noise_level=eca_noise, seed=seed,
+                                     ws_truth=ws_truth)
     generate_tdr_stations(outdir, coord_csv, REAL_EM_EPOCHS[0][2], REAL_EM_EPOCHS[-1][2],
                           freq_days=tdr_freq_days, tdr_noise_std=tdr_noise_std,
                           missing_frac=tdr_missing_frac, seed=seed)
@@ -562,13 +612,16 @@ def main():
                      help="Fraction of synthetic TDR readings randomly set to NaN, "
                           "mirroring real logger gaps.")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--ws-truth", default=None, choices=list(wst.MODES),
+                    help="Waxman-Smits truth: constant (default), per_horizon, gradient "
+                         "(sigma_s varies across x), two_zones (sigma_s 0 | 200).")
     args = ap.parse_args()
 
     out = build_dataset(
         args.outdir, coord_csv=args.coord_csv, scale=args.scale, max_points=args.max_points,
         seed=args.seed, eca_noise=args.eca_noise, tdr_noise_std=args.tdr_noise_std,
         tdr_freq_days=args.tdr_freq_days, tdr_missing_frac=args.tdr_missing_frac,
-        n_stations=args.n_stations)
+        n_stations=args.n_stations, ws_truth=args.ws_truth)
     n_st = len(pd.read_csv(out["coord_file"], delimiter=";", comment="["))
     print(f"\n[DONE] {out['n_em_epochs']} EM epochs, {n_st} TDR stations "
           f"written under '{args.outdir}'.")

@@ -308,7 +308,11 @@ def main() -> None:
             rmse_arr = captured["rmse"]
             rmse_val = float(np.nanmean(rmse_arr)) if np.ndim(rmse_arr) else float(rmse_arr)
             ec_optimal = captured["averaged_models"][K - 1]
-            ec_bulk_true = gen.forward_waxman_smits(theta_true)  # fractional theta, NOT theta_true_pct
+            # WS truth: constant unless the dataset was generated with --ws-truth (then
+            # ground_truth/ws_truth.json sits next to the EM directory).
+            _ws_truth = gen.load_ws_truth(os.path.join(
+                os.path.dirname(os.path.abspath(args.em_dir.rstrip("/\\"))), "ground_truth"))
+            ec_bulk_true = gen.ec_bulk_truth(theta_true, ref_xy[0], ref_xy[1], _ws_truth)  # fractional theta, NOT theta_true_pct
             layer_centers = geometry_utils.layer_centers(cfg.depths0)
 
             ec_fig_path = psol.plot_solution_ec_bulk(
