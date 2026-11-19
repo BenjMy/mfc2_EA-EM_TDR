@@ -197,7 +197,44 @@ def theta_truth(x, y, layer_idx: int, iso_date: str, rng: np.random.Generator,
     return np.clip(theta, THETA_MIN, THETA_MAX)
 
 
-def forward_waxman_smits(theta: np.ndarray) -> np.ndarray:
+# How the Waxman-Smits TRUTH varies. "constant" (default) = one value everywhere.
+# Only sigma_s varies (a, m, sigma_w stay at their constants): it is the parameter the
+# real calibration frees (K = 1) and that to-do items B-E want to resolve in space.
+WS_TRUTH_MODES = ("constant", "per_horizon", "gradient", "zones")
+WS_TRUTH_MODE = "constant"
+
+
+def configure_ws_truth(mode: str) -> None:
+    """Choose how the sigma_s truth varies: constant | per_horizon | gradient | zones.
+
+    * per_horizon : sigma_s = WS_SIGMA_S * (1 + 0.5 * layer_index)   (100, 150, 200, ...)
+    * gradient    : sigma_s = WS_SIGMA_S * (0.5 + xn), xn in [0, 1] west -> east (50 -> 150)
+    * zones       : two zones split at xn = 0.5 (50 west, 150 east), sharp boundary
+    """
+    global WS_TRUTH_MODE
+    if mode not in WS_TRUTH_MODES:
+        raise ValueError(f"ws truth mode must be one of {WS_TRUTH_MODES}, got {mode!r}")
+    WS_TRUTH_MODE = mode
+
+
+def ws_sigma_s_truth(x, y, layer_idx) -> np.ndarray:
+    """Truth sigma_s [mS/m] at (x, y) for ``layer_idx`` (all broadcast together)."""
+    x = np.asarray(x, dtype=float)
+    layer = np.asarray(layer_idx, dtype=float)
+    shape = np.broadcast(x, np.asarray(y, dtype=float), layer).shape
+    xn = np.clip((x - _X0) / (_X1 - _X0), 0.0, 1.0)
+    if WS_TRUTH_MODE == "per_horizon":
+        out = WS_SIGMA_S * (1.0 + 0.5 * layer)
+    elif WS_TRUTH_MODE == "gradient":
+        out = WS_SIGMA_S * (0.5 + xn)
+    elif WS_TRUTH_MODE == "zones":
+        out = WS_SIGMA_S * np.where(xn < 0.5, 0.5, 1.5)
+    else:
+        out = WS_SIGMA_S
+    return np.broadcast_to(np.asarray(out, dtype=float), shape).copy()
+
+
+def forward_waxman_smits(theta: np.ndarray, x=None, y=None) -> np.ndarray:
     """sigma_bulk = (theta**m / a) * (sigma_w + sigma_s)  -- the
     multiplicative "simplified Waxman-Smits" form used throughout this
     codebase (formation factor F = a/theta**m, sigma_bulk = (sigma_w +
@@ -226,7 +263,12 @@ def forward_waxman_smits(theta: np.ndarray) -> np.ndarray:
     literal Waxman & Smits (1968) S_w**n / S_w**(n-1) split, which
     em_methodology.py's own model does not implement either."""
     theta_c = np.clip(theta, 0.01, 1.0)
-    return (theta_c ** WS_M / WS_A) * (WS_SIGMA_W + WS_SIGMA_S)
+    if x is None or WS_TRUTH_MODE == "constant":
+        return (theta_c ** WS_M / WS_A) * (WS_SIGMA_W + WS_SIGMA_S)
+    # theta: (n_points, n_layers); x, y: (n_points,). sigma_s varies with x / layer.
+    sigma_s = ws_sigma_s_truth(np.asarray(x)[:, None], np.asarray(y)[:, None],
+                               np.arange(theta_c.shape[-1])[None, :])
+    return (theta_c ** WS_M / WS_A) * (WS_SIGMA_W + sigma_s)
 
 
 # ---------------------------------------------------------------------------
@@ -266,12 +308,14 @@ def generate_em_surveys(outdir: str, scale: float, max_points: int,
         np.save(os.path.join(gt_dir, f"{gt_stem}_theta.npy"), theta_layers_det)
         np.save(os.path.join(gt_dir, f"{gt_stem}_xy.npy"), np.stack([x, y], axis=1))
         np.save(os.path.join(gt_dir, f"{gt_stem}_depths.npy"), np.array(DEPTHS0))
+        np.save(os.path.join(gt_dir, f"{gt_stem}_ws_sigma_s.npy"),
+                ws_sigma_s_truth(x[:, None], y[:, None], np.arange(N_LAYERS)[None, :]))
 
         # theta per layer -> EC per layer -> forward EM per point.
         theta_layers = np.stack(
             [theta_truth(x, y, l, iso_date, rng) for l in range(N_LAYERS)], axis=1
         )  # (n_points, n_layers)
-        ec_layers = forward_waxman_smits(theta_layers)  # mS/m
+        ec_layers = forward_waxman_smits(theta_layers, x, y)  # mS/m
 
         eca_mS_m = np.zeros((n_points, len(GEM2_COILS)), dtype=float)
         depths_row = np.array(DEPTHS0, dtype=float)
@@ -426,6 +470,8 @@ def generate_tdr_stations(outdir: str, coord_csv: str, start_date: str,
         ])
         np.save(os.path.join(gt_dir, f"tdr_unit{unit_num:02d}_theta15.npy"), theta15_det)
         np.save(os.path.join(gt_dir, f"tdr_unit{unit_num:02d}_theta30.npy"), theta30_det)
+        np.save(os.path.join(gt_dir, f"tdr_unit{unit_num:02d}_ws_sigma_s.npy"),
+                ws_sigma_s_truth(x, y, np.arange(N_LAYERS)))
 
         df = pd.DataFrame({
             "Year": dates.year, "Month": dates.month, "Day": dates.day,
@@ -458,7 +504,8 @@ def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str)
                 "Synthetic twin of the real MFC2 deployment: real EM survey "
                 "dates/point-count asymmetry (incl. the degraded 15/12/2020 "
                 "epoch) and real 24-station TDR coordinates at 15/30 cm, "
-                "with known ground truth for scoring."
+                "with known ground truth for scoring. "
+                f"Waxman-Smits sigma_s truth: {WS_TRUTH_MODE}."
             ),
             "output_dir": OUTPUT_ROOT + "/mfc2_real_synthetic_mirror",
             "data_source": "real",
@@ -523,8 +570,12 @@ def main():
                      help="Layer interfaces [m] of the truth and the scenario "
                           f"(default {DEPTHS0}; use '--depths0 0.225' for the simple 2-layer "
                           "design that matches the 15/30 cm TDR depths).")
+    ap.add_argument("--ws-truth", choices=WS_TRUTH_MODES, default="constant",
+                     help="How the sigma_s truth varies: constant (default), per_horizon, "
+                          "gradient (west->east) or zones (two zones). See configure_ws_truth.")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    configure_ws_truth(args.ws_truth)
     if args.depths0 is not None:
         configure_layers(args.depths0)
 

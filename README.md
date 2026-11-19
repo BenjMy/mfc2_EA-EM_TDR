@@ -167,7 +167,7 @@ Things to know:
 
 - `--standin-stations N` is **not the real station layout**: a jittered grid inside the footprint of all dense EM epochs. Pass `--coord-csv SOILNET_MFC2_coordinates_sensors.csv` instead to use the real one (the two options exclude each other).
 - `--depths0` sets the layer interfaces of the truth and the scenario. The default (`0.3 0.6 1.0`, 4 layers) has two layers the 15/30 cm TDR cannot see (the run warns about uncovered horizons); `--depths0 0.225` is the simple design.
-- The truth Waxman-Smits parameters are constant in space and time, so per-station or per-zone calibration cannot be tested yet (to-do J2).
+- `--ws-truth` sets how the truth sigma_s varies (`a`, `m`, `sigma_w` stay constant; nothing varies in time): `constant` (default), `per_horizon` (100, 150, 200, ...), `gradient` (50 to 150 from west to east), `zones` (50 west / 150 east, sharp boundary at mid-footprint). The truth values are saved as `ground_truth/*_ws_sigma_s.npy` (EM points x layers, TDR stations x layers). The calibration's `sigma_s` bounds are [0, 200].
 - Truth arrays are in `<outdir>/ground_truth/`; they are never read by the pipeline.
 
 ## Compare runs
