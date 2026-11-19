@@ -1,0 +1,16 @@
+flowchart TD
+    %% Part 3/3: validation and outputs, from the SMC maps
+    SMC[["SMC maps theta(t, x, y, layer)<br/>(from part 2)"]]
+
+    SMC --> V5b["Step 5b: held-out validation RMSE<br/>(global + localized / station mapping)"]
+    SMC --> V5c["Step 5c (opt-in): EM footprint check<br/>--em-footprint-diagnostic"]
+    SMC --> V6["Step 6: plots, SWC uncertainty"]
+    SMC -.-> PE["F: probe error map + probe_errors.csv<br/>in-sample and held-out<br/>(functions ready, not wired)"]
+
+    PE --> PE1["signed error theta_calc - theta_TDR<br/>per station, epoch, horizon"]
+    PE --> PE2["RMSE and bias<br/>per station and per epoch"]
+
+    classDef todo fill:#eeeeee,stroke:#888,stroke-dasharray: 4 3,color:#333;
+    classDef out fill:#d9f2e3,stroke:#2e8b57,color:#133;
+    class SMC out;
+    class PE,PE1,PE2 todo;

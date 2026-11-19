@@ -1,0 +1,34 @@
+flowchart TD
+    %% Part 2/3: calibration unit behind the maps (EC -> theta), from the optimal stack K
+    K[["Optimal stack K<br/>(from part 1)"]] --> O_MAP{"--ws-spatial<br/>(supersedes --ws-map-calibration)"}
+
+    O_MAP -- "global [pooled]" --> M2["One WS set per horizon<br/>(pooled over all stations)"]
+    O_MAP -- "localized [kernel] (default)" --> M1["Gaspari-Cohn localized WS<br/>per EM point; global fit if no probe within 2c"]
+    O_MAP -- "voronoi | idw" --> B1
+
+    BW["Bandwidth c:<br/>--ws-localized-bandwidth | sweep (LOO-CV) |<br/>calibration run | scenario value"] -.-> M1
+    SWA["A: sweep from probe spacing<br/>c = 0.5-5 x median nearest-neighbour distance<br/>flag if all c below the spacing"] -.-> BW
+
+    subgraph ST["Per-station WS (ws_spatial.py)"]
+        B1["B: per-station sigma_s fit, per horizon<br/>a, m, sigma_w held at pooled value (prior centre)<br/>--ws-spatial-shrinkage; fewer than 3 obs: pooled"]
+        B1 --> B2["ws_by_station.csv<br/>station, x, y, horizon, sigma_s, n_obs, RMSE, at-bound"]
+        B1 --> C1{"C: spread station values<br/>over the EM points"}
+        C1 -- "voronoi: nearest station" --> D1
+        C1 -- "idw: 1/d^p, --ws-spatial-power" --> D1
+        D1["D: per-point parameters (4, layers, points)<br/>global value where no station is fitted"]
+    end
+
+    LOSO["Leave-one-station-out CV of theta<br/>global | voronoi | idw | localized<br/>simplest within 1 SE of the best<br/>(in ws_spatial.py, not yet called)"] -.-> O_MAP
+
+    D1 --> E1["E: ws_spatial_sigma_s_map.png<br/>field + stations + global line"]
+    M1 --> SMC
+    M2 --> SMC
+    D1 --> SMC
+    SMC[["SMC maps theta(t, x, y, layer)<br/>theta_calc.npy (+ theta_calc_global.npy)<br/>-> continues in part 3"]]
+
+    classDef opt fill:#fff4d6,stroke:#c79100,color:#333;
+    classDef todo fill:#eeeeee,stroke:#888,stroke-dasharray: 4 3,color:#333;
+    classDef out fill:#d9f2e3,stroke:#2e8b57,color:#133;
+    class O_MAP opt;
+    class SMC,B2,E1,K out;
+    class SWA,LOSO todo;
