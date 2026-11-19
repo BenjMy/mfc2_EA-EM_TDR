@@ -96,9 +96,23 @@ Context (read from the report / `stage_calibration.json`): 20 TDR stations (Unit
 - [ ] **Decision needed from Ben:** which spreading method (C) to implement first, and in-sample, held-out or both for the error map (F). Suggested default: kernel (already exists) with the sweep from A, compared against Voronoi and IDW on the leave-one-station-out CV; held-out error map (plus in-sample as a second row).
 
 
-- [ ] I’m happy to rename kernel to localized and pooled to global in --ws-spatial, the code, the tests and the flowchart, so they match the old --ws-map-calibration names. Do you want me to do that? yes please
+- [ ] **RD0** I’m happy to rename kernel to localized and pooled to global in --ws-spatial, the code, the tests and the flowchart, so they match the old --ws-map-calibration names. Do you want me to do that? yes please
 
-- [ ] And should Voronoi and IDW stay as selectable options, or be demoted to a comparison-only diagnostic? to a comparison only at the moment
+- [ ] **RD0.1** And should Voronoi and IDW stay as selectable options, or be demoted to a comparison-only diagnostic? to a comparison only at the moment
+
+
+Findings you may not expect:
+
+- [ ] **RD1** Localized maps only happen where a bandwidth exists. The map default is localized, but without a bandwidth the code quietly downgrades to global and only logs it. Real scenarios (16 of 19) have a bandwidth sweep [0.5, 1, 3, 5, 8, 12, 20], so they get localized maps. The three without one (real_single_ws_free_all, real_single_test_probes_L3, real_L3_base) get global maps. No synthetic scenario in ensemble_scenarios.json has a bandwidth, so those are global too.
+- [ ] **RD2** K and the reported RMSE are always the global ones. --k-selection also defaults to global. Localized changes only the maps, and the global map is kept as theta_calc_global.npy.
+
+Are the results of ws_global_vs_localized correct for interpretation or the RMSE is wrong? 
+for ws_bench_nfree and ws_bench_fixed the starting SMC model (truth) are the same isnt it?
+for figure in ws_bench_nfree and ws_bench_fixed I want you to add in the fig L, P, K, and bw stand for (in a legend or text)!
+
+- [ ] **RD3** The launcher help is out of date. run_one_scenario.sh --help says localization is “DEFAULT: OFF” and that only 2d has it on, which no longer matches the JSONs or the code. I flagged this in the doc but didn’t edit the script.
+
+
 
 
 
