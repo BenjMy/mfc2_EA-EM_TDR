@@ -41,6 +41,7 @@ python bench_ws_global_vs_localized.py score                  # re-score existin
 | `--out-root PATH` | `mfc2_outputs/ws_bench` | Where the JSON, runs, CSV and figure go. |
 | `--corr-m FLOAT ...` | `4.0` | Correlation length(s) [m] of the `xy_random` truth; several values = one run each (e.g. `--corr-m 4 10 20`). |
 | `--bandwidth FLOAT ...` | off | FIXED localized bandwidth(s) [m], one run each (e.g. `--bandwidth 5 10`), instead of the leave-one-probe-out choice. A large c can then not hide behind the global fit, and a small c is not half fallback. |
+| `--n-free {1,2,3,4} ...` | off | Number of FREE Waxman-Smits parameters in the calibration, one run each (e.g. `--n-free 1 2 3 4`). The first K of `sigma_s, m, sigma_w, a` are free, the others stay fixed at `lab_p0` (same order and `a` handling as `sweeps.py`: K = 4 starts `a` at 1.0 with bounds `[0.2, 5]`). Default: the freedom of the parent scenario. Only the calibration changes; the synthetic truth is the same for every K. |
 | `--seeds INT ...` | `21` | `ws_xy_seed` replicates of the `xy_linear` / `xy_random` truth (e.g. `--seeds 21 22 23 24 25`); `score` reports mean and sd. `homogeneous` / `per_horizon` run once. |
 | `--bins FLOAT ...` | `0 2 5 10 20` (+ inf) | Bin edges [m] for the error by distance to the nearest probe. |
 | `--k-selection {global,localized-loo}` | `global` | Passed to `run_pipeline.py`. |
@@ -59,9 +60,14 @@ python bench_ws_global_vs_localized.py all --design oat --quick \
 
 Pass the same options to `generate`, `run` and `score` (or use `all`), because the scenario
 names and `design.json` depend on them. Scenario names keep the original form
-(`wsb_<truth>_L<l>_P<p>`) for the defaults; non-default values add `_C<corr>`, `_bw<c>`, `_s<seed>`.
+(`wsb_<truth>_L<l>_P<p>`) for the defaults; non-default values add `_C<corr>`, `_bw<c>`, `_K<n_free>`, `_s<seed>`.
 `--corr-m` only multiplies the `xy_random` levels. The number of runs is the product of the levels
 times seeds times bandwidths, and each one is a full ensemble inversion: check `run --dry-run` first.
+
+Number of free parameters (the `n_free` column in the CSVs, not to be confused with `K` = the selected
+ensemble member count): `python bench_ws_global_vs_localized.py all --design oat --quick --only wsb_xy_random_L4_P4 --n-free 1 2 3 4 --out-root mfc2_outputs/ws_bench_nfree`.
+Caveat: free parameters start at the `lab_p0` values, which on these scenarios equal (or are close to)
+the truth, so K > true freedom is not tested from a bad start.
 
 ## Design
 
@@ -87,7 +93,7 @@ fall back to the global fit where the nearest probe is beyond 2c.
 - `ws_error_by_distance.csv` / `.png`: RMSE and bias of both maps per bin of distance to the
   nearest probe (with the number of points and the fallback fraction per bin); the figure has one
   panel per configuration, mean +- sd over seeds.
-- `ws_global_vs_localized_agg.csv`: per configuration (truth, layers, probes, corr, fixed c), mean and sd
+- `ws_global_vs_localized_agg.csv`: per configuration (truth, layers, probes, corr, fixed c, n_free), mean and sd
   over seeds of RMSE and gain.
 - `ws_global_vs_localized.png`: left, RMSE global vs localized (below the diagonal = localized
   better); right, gain per run for all points and for points far from probes.

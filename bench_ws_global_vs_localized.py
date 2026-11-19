@@ -65,6 +65,8 @@ FACTORS = {
 }
 BASELINE = {"ws_truth": "xy_random", "n_layers": 4, "n_probes": 4}
 CORR_M = 4.0                               # xy_random patch size [m] (default level)
+FREE_ORDER = ("sigma_s", "m", "sigma_w", "a")   # K free WS parameters = the first K (as sweeps.py)
+A_START_WHEN_FREE, A_BOUNDS_WHEN_FREE = 1.0, [0.2, 5.0]   # K = 4 frees 'a' (as sweeps.py)
 SEED = 21                                  # default ws_xy_seed (truth realization of the WS field)
 DIST_BINS = [0.0, 2.0, 5.0, 10.0, 20.0, np.inf]   # distance-to-nearest-probe bins [m]
 BANDWIDTH_SWEEP = [2.0, 5.0, 10.0, 20.0, 40.0]   # leave-one-probe-out picks c per run
@@ -86,12 +88,18 @@ def _horizon_p0(n_layers: int) -> list[list[float]]:
 
 
 def scenario_dict(ws_truth: str, n_layers: int, n_probes: int, *, corr_m: float = CORR_M,
-                  seed: int = SEED, sweep=BANDWIDTH_SWEEP, bandwidth: float | None = None) -> dict:
+                  seed: int = SEED, sweep=BANDWIDTH_SWEEP, bandwidth: float | None = None,
+                  n_free: int | None = None) -> dict:
     """Overrides on top of the parent scenario (``extends``).
 
     ``bandwidth`` not None: FIXED localized bandwidth [m] (``ws_localized_bandwidth``, no
     cross-validated sweep), so a large c cannot hide behind the global fit and a small c is
     not half fallback. None: the leave-one-probe-out sweep ``sweep`` picks c per run.
+
+    ``n_free`` not None: K free Waxman-Smits parameters in the calibration, the first K of
+    ``FREE_ORDER`` (sigma_s, m, sigma_w, a); the others stay fixed at ``lab_p0``. None: the
+    freedom of the parent scenario (2d / 2d_horizon_ws: sigma_w, sigma_s; 2d_xy_waxman: m, sigma_s).
+    This changes the CALIBRATION only; the synthetic truth is the same for every K.
     """
     s = {
         "extends": PARENT[ws_truth],
@@ -113,6 +121,14 @@ def scenario_dict(ws_truth: str, n_layers: int, n_probes: int, *, corr_m: float 
         s["ws_xy_seed"] = seed
         if ws_truth == "xy_random":
             s["ws_xy_correlation_m"] = corr_m
+    if n_free is not None:
+        free = FREE_ORDER[:n_free]
+        s["ws_fixed_params"] = {p: (p not in free) for p in PARAMS}
+        if "a" in free:                                # start 'a' off its lower bound, widen its range
+            p0 = s.get("lab_p0", [0.5, 3.0, 500.0, 100.0])   # homogeneous: the parent "2d" value
+            s["lab_p0"] = ([[A_START_WHEN_FREE, *r[1:]] for r in p0] if isinstance(p0[0], list)
+                           else [A_START_WHEN_FREE, *p0[1:]])
+            s["ws_bounds"] = {"a": list(A_BOUNDS_WHEN_FREE)}
     return s
 
 
@@ -120,11 +136,12 @@ def _fmt(v: float) -> str:
     return f"{v:g}".replace(".", "p")
 
 
-def design(kind: str, *, seeds=(SEED,), corr_ms=(CORR_M,), bandwidths=(None,)) -> list[dict]:
+def design(kind: str, *, seeds=(SEED,), corr_ms=(CORR_M,), bandwidths=(None,),
+           n_frees=(None,)) -> list[dict]:
     """Factor levels x replicates (seeds) x correlation lengths (xy_random only) x bandwidths.
 
     Names stay ``wsb_<truth>_L<l>_P<p>`` for the defaults (existing runs are still found);
-    a suffix ``_C<corr>`` / ``_bw<c>`` / ``_s<seed>`` is added only for non-default values.
+    a suffix ``_C<corr>`` / ``_bw<c>`` / ``_K<n_free>`` / ``_s<seed>`` is added only for non-default values.
     """
     if kind == "full":
         combos = itertools.product(*FACTORS.values())
@@ -143,13 +160,15 @@ def design(kind: str, *, seeds=(SEED,), corr_ms=(CORR_M,), bandwidths=(None,)) -
         corrs = corr_ms if lv["ws_truth"] == "xy_random" else (CORR_M,)   # c only matters there
         # homogeneous / per_horizon truths have no random field: one replicate is enough
         seed_list = seeds if lv["ws_truth"] in ("xy_linear", "xy_random") else seeds[:1]
-        for corr, bw, seed in itertools.product(corrs, bandwidths, seed_list):
-            n = dict(lv, corr_m=float(corr), bandwidth=bw, seed=int(seed))
+        for corr, bw, nf, seed in itertools.product(corrs, bandwidths, n_frees, seed_list):
+            n = dict(lv, corr_m=float(corr), bandwidth=bw, n_free=nf, seed=int(seed))
             name = f"wsb_{n['ws_truth']}_L{n['n_layers']}_P{n['n_probes']}"
             if n["ws_truth"] == "xy_random" and corr != CORR_M:
                 name += f"_C{_fmt(corr)}"
             if bw is not None:
                 name += f"_bw{_fmt(bw)}"
+            if nf is not None:
+                name += f"_K{nf}"
             if seed != SEED:
                 name += f"_s{seed}"
             n["name"] = name
@@ -161,10 +180,11 @@ def design(kind: str, *, seeds=(SEED,), corr_ms=(CORR_M,), bandwidths=(None,)) -
 def cmd_generate(args) -> str:
     base = json.load(open(BASE_CONFIG))
     scenarios = {k: v for k, v in base.items() if not k.startswith("_")}
-    levels = design(args.design, seeds=args.seeds, corr_ms=args.corr_m, bandwidths=args.bandwidth)
+    levels = design(args.design, seeds=args.seeds, corr_ms=args.corr_m, bandwidths=args.bandwidth,
+                    n_frees=args.n_free)
     for lv in levels:
         sc = scenario_dict(lv["ws_truth"], lv["n_layers"], lv["n_probes"], corr_m=lv["corr_m"],
-                           seed=lv["seed"], bandwidth=lv["bandwidth"])
+                           seed=lv["seed"], bandwidth=lv["bandwidth"], n_free=lv["n_free"])
         sc["output_dir"] = os.path.join(args.out_root, lv["name"])
         scenarios[lv["name"]] = sc
     path = os.path.join(args.out_root, "ws_bench_scenarios.json")
@@ -296,7 +316,7 @@ def score_run(run_dir: str, realization: int = 0, bins=DIST_BINS) -> tuple[dict,
     return row, bin_rows
 
 
-CONFIG_KEYS = ["ws_truth", "n_layers", "n_probes", "corr_m", "bandwidth_fixed"]
+CONFIG_KEYS = ["ws_truth", "n_layers", "n_probes", "corr_m", "bandwidth_fixed", "n_free"]
 
 
 def _bin_label(lo: float, hi: float) -> str:
@@ -317,7 +337,7 @@ def cmd_score(args) -> None:
             r, brows = res
             # designs written before the replicate options have no corr_m / seed / bandwidth keys
             meta = {"corr_m": lv.get("corr_m", CORR_M), "seed": lv.get("seed", SEED),
-                    "bandwidth_fixed": lv.get("bandwidth")}
+                    "bandwidth_fixed": lv.get("bandwidth"), "n_free": lv.get("n_free")}
             rows.append({**{k: lv[k] for k in FACTORS}, **meta, "scenario": name, **r})
             bin_all += [{"scenario": name, **{k: lv[k] for k in FACTORS}, **meta, **b} for b in brows]
     if not rows:
@@ -334,7 +354,6 @@ def cmd_score(args) -> None:
           f"mean gain {df['gain'].mean():+.4f} m3/m3 (>0 = localized better). CSV -> {csv}")
 
     # replicates (ws_xy_seed): mean and standard deviation per configuration
-    df["_cfg"] = df[CONFIG_KEYS].astype(str).agg(" | ".join, axis=1)
     agg = (df.groupby(CONFIG_KEYS, dropna=False)
              .agg(n_rep=("gain", "size"), rmse_global=("rmse_global", "mean"),
                   rmse_local=("rmse_local", "mean"), gain=("gain", "mean"),
@@ -363,11 +382,13 @@ def _plot_distance(dfb, path: str) -> None:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    keys = ["ws_truth", "n_layers", "n_probes", "corr_m", "bandwidth_fixed"]
+    keys = ["ws_truth", "n_layers", "n_probes", "corr_m", "bandwidth_fixed", "n_free"]
     dfb = dfb.copy()
     dfb["cfg"] = [f"{r.ws_truth} L{r.n_layers} P{r.n_probes} corr={r.corr_m:g} m, "
                   + ("c=sweep" if r.bandwidth_fixed is None or r.bandwidth_fixed != r.bandwidth_fixed
-                     else f"c={r.bandwidth_fixed:g} m") for r in dfb.itertuples()]
+                     else f"c={r.bandwidth_fixed:g} m")
+                  + ("" if r.n_free is None or r.n_free != r.n_free else f", K_free={int(r.n_free)}")
+                  for r in dfb.itertuples()]
     cfgs = list(dict.fromkeys(dfb["cfg"]))
     ncol = min(3, len(cfgs))
     nrow = int(np.ceil(len(cfgs) / ncol))
@@ -434,6 +455,10 @@ def main() -> None:
     p.add_argument("--bandwidth", type=float, nargs="+", default=None,
                    help="FIXED localized bandwidth(s) [m], one run each, instead of the "
                         "leave-one-probe-out choice, e.g. --bandwidth 5 10")
+    p.add_argument("--n-free", type=int, nargs="+", choices=[1, 2, 3, 4], default=None,
+                   help="number of FREE WS parameters in the calibration, one run each (first K of "
+                        f"{list(FREE_ORDER)}; the rest fixed at lab_p0), e.g. --n-free 1 2 3 4. "
+                        "Default: the parent scenario's freedom.")
     p.add_argument("--seeds", type=int, nargs="+", default=[SEED],
                    help="ws_xy_seed replicates of the xy_* truth (error bars), e.g. --seeds 21 22 23 24 25")
     p.add_argument("--bins", type=float, nargs="+", default=None,
@@ -447,6 +472,7 @@ def main() -> None:
     p.add_argument("--realization", type=int, default=0)
     a = p.parse_args()
     a.bandwidth = a.bandwidth or [None]
+    a.n_free = a.n_free or [None]
     edges = sorted(set(a.bins)) if a.bins else list(DIST_BINS[:-1])
     a.bins = [float(e) for e in edges] + [np.inf]
     if any(c <= 0 for c in a.corr_m) or any(b is not None and b <= 0 for b in a.bandwidth):
