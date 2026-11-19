@@ -1,0 +1,58 @@
+{
+  "mfc2_real_synthetic_mirror": {
+    "description": "Synthetic twin of the real MFC2 deployment: real EM survey dates/point-count asymmetry (incl. the degraded 15/12/2020 epoch) and real 24-station TDR coordinates at 15/30 cm, with known ground truth for scoring. Waxman-Smits sigma_s truth: constant.",
+    "output_dir": "mfc2_outputs/mfc2_real_synthetic_mirror",
+    "data_source": "real",
+    "em_data_dir": "mfc2_synthetic/EMI_MFC2_synthetic",
+    "em_unit": "ppm",
+    "tdr_data_dir": "mfc2_synthetic/daily_MFC_synthetic",
+    "coord_file": "/home/ben/Nextcloud/BenCSIC/Codes/Tech4agro_org/mfc2_EA-EM_TDR/mfc2_synthetic/standin_coordinates.csv",
+    "time_tolerance_days": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "MCMC"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      9
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "window_m": 3.0,
+    "spatial_match_tolerance_m": 3.0,
+    "tdr_noise_std": 0.015,
+    "eca_noise_level": 0.03,
+    "cache_tag": "mfc2_real_synthetic_mirror"
+  }
+}
