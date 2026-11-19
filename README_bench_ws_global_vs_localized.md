@@ -51,23 +51,52 @@ python bench_ws_global_vs_localized.py score                  # re-score existin
 | `--dry-run` | off | Print the run commands only. |
 | `--realization INT` | `0` | Truth ensemble member used for scoring. |
 
-## Testing "wins away from probes"
+## Recommended runs
+
+Two separate batches, one question each. Do NOT merge them into one call: the number of runs is the
+product of the levels, so one combined call would be 3 corr x 2 bandwidths x 4 `--n-free` x 3 seeds = 72
+inversions instead of 18 + 12 = 30. Use one `--out-root` per batch so `score` does not mix them.
+
+**Batch 1: does localized win away from the probes? (fixed bandwidth, correlation length, replicates)**
+18 runs: 3 correlation lengths x 2 bandwidths x 3 seeds, on the baseline `xy_random`, 4 layers, 4 probes.
 
 ```bash
 python bench_ws_global_vs_localized.py all --design oat --quick \
-    --bandwidth 5 10 --corr-m 4 10 20 --seeds 21 22 23 24 25 --out-root mfc2_outputs/ws_bench_fixed
+    --only wsb_xy_random_L4_P4 \
+    --bandwidth 5 10 --corr-m 4 10 20 --seeds 21 22 23 \
+    --out-root mfc2_outputs/ws_bench_fixed
 ```
 
-Pass the same options to `generate`, `run` and `score` (or use `all`), because the scenario
-names and `design.json` depend on them. Scenario names keep the original form
-(`wsb_<truth>_L<l>_P<p>`) for the defaults; non-default values add `_C<corr>`, `_bw<c>`, `_K<n_free>`, `_s<seed>`.
-`--corr-m` only multiplies the `xy_random` levels. The number of runs is the product of the levels
-times seeds times bandwidths, and each one is a full ensemble inversion: check `run --dry-run` first.
+Timing first: `--only wsb_xy_random_L4_P4_bw5` matches only the correlation length 4 m, c = 5 m runs
+(3 seeds). The `_C10` / `_C20` names put the suffix before `_bw`, so they are not matched by it.
 
-Number of free parameters (the `n_free` column in the CSVs, not to be confused with `K` = the selected
-ensemble member count): `python bench_ws_global_vs_localized.py all --design oat --quick --only wsb_xy_random_L4_P4 --n-free 1 2 3 4 --out-root mfc2_outputs/ws_bench_nfree`.
-Caveat: free parameters start at the `lab_p0` values, which on these scenarios equal (or are close to)
-the truth, so K > true freedom is not tested from a bad start.
+**Batch 2: how many WS parameters should be free? (`--n-free`)**
+12 runs: K = 1..4 x 3 seeds, bandwidth fixed so that only K changes (use 5 or 10 m, whichever batch 1
+favours; without `--bandwidth` the cross-validation may pick a different c for each K).
+
+```bash
+python bench_ws_global_vs_localized.py all --design oat --quick \
+    --only wsb_xy_random_L4_P4 --n-free 1 2 3 4 --bandwidth 5 \
+    --seeds 21 22 23 \
+    --out-root mfc2_outputs/ws_bench_nfree
+```
+
+Notes for both:
+
+- Pass the same options to `generate`, `run` and `score` (or use `all`), because the scenario names and
+  `design.json` depend on them. Names keep the original form (`wsb_<truth>_L<l>_P<p>`) for the defaults;
+  non-default values add `_C<corr>`, `_bw<c>`, `_K<n_free>`, `_s<seed>`.
+- `--corr-m` only multiplies the `xy_random` levels. Each run is a full ensemble inversion: check with
+  `run --dry-run` first.
+- `--quick` keeps ONE alpha (the middle one) and ONE forward model (the first in the list) in Step 1, about
+  6x fewer inversions, and nothing else changes. The ensemble is then degenerate, so quick results are a
+  smoke test, not a result: rerun without `--quick` to interpret numbers. Use a different `--out-root` for
+  quick and full runs, otherwise the bench sees "already has a run" and skips the full run.
+- `all` always ends with `score` over the whole generated design (`--only` does not filter it), so many
+  "no run found" lines at the end are normal.
+- `n_free` in the CSVs is the number of free WS parameters; do not confuse it with `K`, the selected
+  ensemble member count. The free parameters start at the `lab_p0` values, which on these scenarios equal
+  or are close to the truth, so K > true freedom is not tested from a bad start.
 
 ## Design
 
