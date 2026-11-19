@@ -36,6 +36,8 @@ Phase 6, Steps 3 and 4 (2026-11-13): moved to `steps/step3_4_average_recalibrate
 
 Phase 6, Step 5 (2026-11-18): moved to `steps/step5_selection.py` (`run_step5_select`, `report_step5_selection`, `persist_step5_result`, `run_step5_quality_gate`; code verbatim), `tests/test_step5_selection.py` (stubs). The `--stage` hand-over and Step 5c stay in `main()` between the first and second block; `main()` still closes "Step 5". Before/after e2e `1d_surface_tdr` (`19b8fc1` vs now, cloud, Python 3.13, emagpy 1.4.6): 30/30 arrays of `output_model/` bit-identical, same file set, `final_rmse` 0.032468 both, no traceback. `pytest tests`: 293 passed (the golden scenario file is not versioned: `python tests/make_scenario_golden.py` first). Remaining in `main()`: Steps 0, 0b, 1a, 1, 2.
 
+Phase 6, Step 0b (2026-11-19): moved to `steps/step0b_coverage.py` (`run_step0b_coverage`; code verbatim, `main()` keeps the `reporter.step`/`end_step` bracket), `tests/test_step0b_coverage.py` (stubs). Checks: e2e `1d_surface_tdr` before (`19b8fc1`) vs now: 30/30 arrays of `output_model/` bit-identical; real-data path via `hyp3_localized_bandwidth.py --fast` on the synthetic MFC2 dataset: `final_rmse` 0.088928 before and after; `pytest tests`: 309 passed. Remaining in `main()`: Steps 0, 1a, 1, 2.
+
 Regression check after phases 0-4: `1d_surface_tdr` re-run after Phase 4, all 20 saved arrays bit-identical to the pre-refactor reference. Phases 1-4 touched no scientific code.
 
 Not refactoring (behaviour changes, separate commits): 1d_* EC bound 60 -> 300 mS/m; `ws_layer_params` + `hetero` scenarios + `extends`. See `to-do.md`.

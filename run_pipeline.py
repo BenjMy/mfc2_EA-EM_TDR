@@ -84,6 +84,7 @@ import data_synthetic as step0
 import step2_petro as step2
 import step3_average as step3
 import step4_select as step4_5
+from steps import step0b_coverage as steps_step0b
 from steps import step1_diagnostics as steps_step1
 from steps import step3_4_average_recalibrate as steps_step34
 from steps import step5_selection as steps_step5
@@ -2385,30 +2386,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         #   full inversion has already run.
         # -----------------------------------------------------------------------
         reporter.step("Step 0b", "Early TDR/SWC horizon coverage check")
-        if data_source == "real":
-            _early_probe_depths = sorted({obs["depth"] for obs in observations_list})
-        else:
-            _early_swc_depths_cfg = (
-                getattr(cfg, "swc_depths", None) if cfg is not None else None
-            )
-            _early_probe_depths = (
-                _early_swc_depths_cfg if _early_swc_depths_cfg is not None
-                else synthetic_geometry["layer_centers"]
-            )
-        _coverage_check = EMmethod.check_early_horizon_coverage(
-            probe_depths=_early_probe_depths, depths0=DEPTHS0,
-        )
-        reporter.log(_coverage_check.message)
-        reporter.metric("Early coverage — level", _coverage_check.level)
-        reporter.metric("Early coverage — uncovered horizons", len(_coverage_check.uncovered_horizons))
-        if _coverage_check.level == "WARN":
-            reporter.log(
-                "[PIPELINE][WARN] Proceeding despite incomplete horizon coverage -- "
-                "the affected horizon(s) will fall back to prior/uncalibrated "
-                "Waxman-Smits parameters in Steps 2/4. Consider fixing depths0 or "
-                "the SWC/TDR sensor depths before committing to a full ensemble run "
-                "(re-run with --list / scenario_loader.py <name> to check quickly)."
-            )
+        steps_step0b.run_step0b_coverage(
+            reporter, data_source=data_source, observations_list=observations_list,
+            cfg=cfg, synthetic_geometry=synthetic_geometry, depths0=DEPTHS0)
         reporter.end_step("Step 0b")
 
         # -----------------------------------------------------------------------
