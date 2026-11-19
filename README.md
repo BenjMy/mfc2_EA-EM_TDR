@@ -244,6 +244,8 @@ python plot_validation_1to1.py --ids <surface_run_id> <full_run_id> \
 | Cross-run RMSE/CV, θ error, depth profile, transect, scatter vs truth | `comparison_output/<name>/fig_*.png` |
 | ECa 1:1 vs noise-free truth; EC and θ 1:1 per horizon | `comparison_output/validation/fig_eca_1to1.png`, `fig_ec_1to1_by_horizon.png`, `fig_theta_1to1_by_horizon.png` |
 
+XY water-content rasters (2-D runs, when a bandwidth or window is known): `water_content_xy_<scenario>_imshow.png` is **linearly interpolated** (no blank pixels); `_imshow_binned.png` is the **binned mean** (one pixel = mean of the raw points inside it, empty pixels blank, pixel size = the bandwidth); the ground-truth versions carry `_truth` in the name. Pixels resting on few raw points (<= 3, `coverage_count_threshold`) are **faded** (`coverage_style="alpha"`, the default; `coverage_alpha_min` sets the faintest opacity); `coverage_style="hatch"` restores the hatched overlay and `"none"` draws no marker. On the interpolated raster the support is counted inside a window of one pixel size (the bandwidth), because its pixels are finer than the data.
+
 Saved arrays for synthetic runs (`<run>/output_model/`): `theta_calc.npy`, `K.npy`, `rmse.npy`, `cv_map.npy`, `is_calibrated.npy`, plus the `synthetic_*` truth arrays. `ec_optimal.npy` is written only by runs made after `mfc2_all_changes.patch` was applied (older runs don't have it).
 
 See `refactoring.md` for the code map and cleanup plan.

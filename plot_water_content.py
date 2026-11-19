@@ -149,6 +149,36 @@ def _hatch_low_coverage_xy(
         artist.set_alpha(alpha)
 
 
+_COVERAGE_STYLES = ("alpha", "hatch", "none")
+
+
+def _coverage_alpha(counts: np.ndarray, threshold: int, alpha_min: float = 0.35) -> np.ndarray:
+    """
+    Per-pixel opacity for an XY raster from the number of raw points in each
+    pixel: ``alpha_min`` for a pixel with no point, rising linearly to 1.0 at
+    ``threshold + 1`` points (a pixel is "sparse" when it holds <= threshold
+    points, same convention as the hatch). Replaces the hatch as the default
+    way of flagging weakly supported pixels.
+    """
+    alpha_min = float(np.clip(alpha_min, 0.0, 1.0))
+    full = float(threshold) + 1.0
+    frac = np.clip(np.asarray(counts, dtype=float) / full, 0.0, 1.0)
+    return alpha_min + (1.0 - alpha_min) * frac
+
+
+def _coverage_legend_patch(style: str, threshold: int, hatch: str, hatch_color: str,
+                           alpha_min: float, cmap: str):
+    """Legend entry matching ``coverage_style`` (None for "none")."""
+    label_pts = f"\u2264{threshold} pts"
+    if style == "alpha":
+        return mpatches.Patch(facecolor=plt.get_cmap(cmap)(0.7), alpha=alpha_min,
+                              label=f"{label_pts} (faded)")
+    if style == "hatch":
+        return mpatches.Patch(facecolor="none", edgecolor=hatch_color, hatch=hatch,
+                              label=f"{label_pts} (sparse)")
+    return None
+
+
 def _extract_theta_calc(selected_output) -> np.ndarray:
     """
     Robustly pull the calculated volumetric water content array (m^3/m^3)
@@ -453,9 +483,18 @@ def _plot_xy_panel(
     coverage_hatch: str = "///",
     coverage_hatch_color: str = "grey",
     coverage_hatch_alpha: float = 0.6,
+    coverage_style: str = "alpha",
+    coverage_alpha_min: float = 0.35,
 ) -> plt.cm.ScalarMappable:
     """
     Draw one XY plan-view panel on *ax*. Returns the ScalarMappable.
+
+    coverage_style : {"alpha", "hatch", "none"}, optional
+        How ``render_mode="imshow"`` flags pixels resting on few raw points
+        (only when ``show_coverage_hatch`` is True). ``"alpha"`` (default)
+        fades them: opacity goes from ``coverage_alpha_min`` (no point) to 1
+        at ``coverage_count_threshold + 1`` points. ``"hatch"`` is the
+        previous hatched overlay; ``"none"`` draws no marker.
 
     render_mode : {"scatter", "imshow"}
         "scatter" draws one square marker per measurement point -- exact
@@ -506,6 +545,8 @@ def _plot_xy_panel(
         rasters -- for the latter, counts are binned separately purely for
         the hatch, since the smoothed raster itself has no such array.
     """
+    if coverage_style not in _COVERAGE_STYLES:
+        raise ValueError(f"coverage_style must be one of {_COVERAGE_STYLES}, got {coverage_style!r}.")
     norm     = plt.Normalize(vmin=theta_vmin, vmax=theta_vmax)
     cmap_obj = plt.get_cmap(cmap).copy()
 
@@ -537,7 +578,18 @@ def _plot_xy_panel(
             plot_values, extent=extent, origin="lower",
             cmap=cmap_obj, norm=norm, aspect="auto", interpolation="nearest",
         )
-        if show_coverage_hatch:
+        if show_coverage_hatch and coverage_style == "alpha":
+            support = counts
+            if interp_method not in _AGG_STATS and pixel_size_m:
+                # Interpolated raster: pixels are finer than the data, so raw
+                # per-pixel counts would only draw the survey lattice. Measure
+                # support as the number of raw points inside a pixel_size_m window.
+                from scipy.ndimage import uniform_filter
+                wy = max(1, int(round(pixel_size_m / ((extent[3] - extent[2]) / counts.shape[0]))))
+                wx = max(1, int(round(pixel_size_m / ((extent[1] - extent[0]) / counts.shape[1]))))
+                support = uniform_filter(counts.astype(float), size=(wy, wx), mode="constant") * (wy * wx)
+            sc.set_alpha(_coverage_alpha(support, coverage_count_threshold, coverage_alpha_min))
+        elif show_coverage_hatch and coverage_style == "hatch":
             sparse = (counts > 0) & (counts <= coverage_count_threshold)
             _hatch_low_coverage_xy(
                 ax, sparse, extent,
@@ -779,6 +831,8 @@ def plot_water_content_xy(
     coverage_hatch: str = "///",
     coverage_hatch_color: str = "grey",
     coverage_hatch_alpha: float = 0.6,
+    coverage_style: str = "alpha",
+    coverage_alpha_min: float = 0.35,
 ) -> plt.Figure:
     """
     Plot a plan-view XY map of θ at a chosen layer or averaged over all
@@ -824,9 +878,12 @@ def plot_water_content_xy(
         Control which probe markers are drawn and how. ``probe_indices``
         (None = all) selects a subset of ``probe_utm_x``/``probe_utm_y``.
     show_coverage_hatch, coverage_count_threshold : optional, imshow only
-        Hatch pixels that hold a value but rest on very few raw points --
+        Flag pixels that hold a value but rest on very few raw points --
         see ``_plot_xy_panel`` for details. Only applies when
         ``render_mode="imshow"``; no-op for ``"scatter"``.
+    coverage_style, coverage_alpha_min : optional, imshow only
+        ``"alpha"`` (default) fades sparse pixels instead of hatching them;
+        ``"hatch"`` restores the hatched overlay; ``"none"`` draws no marker.
     """
     if pixel_size_m is None:
         if bandwidth_m is not None:
@@ -866,17 +923,17 @@ def plot_water_content_xy(
         coverage_count_threshold=coverage_count_threshold,
         coverage_hatch=coverage_hatch, coverage_hatch_color=coverage_hatch_color,
         coverage_hatch_alpha=coverage_hatch_alpha,
+        coverage_style=coverage_style, coverage_alpha_min=coverage_alpha_min,
     )
     # NOTE: pixel_size_m above is already fully resolved (pixel_size_m >
     # bandwidth_m > 2*window_m), so _plot_xy_panel only needs that one value.
 
     legend_elements = []
     if render_mode == "imshow" and show_coverage_hatch:
-        legend_elements.append(
-            mpatches.Patch(facecolor="none", edgecolor=coverage_hatch_color,
-                           hatch=coverage_hatch,
-                           label=f"\u2264{coverage_count_threshold} pts/pixel (sparse)")
-        )
+        _patch = _coverage_legend_patch(coverage_style, coverage_count_threshold, coverage_hatch,
+                                        coverage_hatch_color, coverage_alpha_min, cmap)
+        if _patch is not None:
+            legend_elements.append(_patch)
     if probe_utm_x is not None and show_probes:
         legend_elements.append(
             plt.Line2D([0], [0], marker=probe_marker, color="w",
@@ -931,6 +988,8 @@ def plot_water_content_xy_timelapse(
     coverage_hatch: str = "///",
     coverage_hatch_color: str = "grey",
     coverage_hatch_alpha: float = 0.6,
+    coverage_style: str = "alpha",
+    coverage_alpha_min: float = 0.35,
 ) -> plt.Figure:
     """
     Grid of XY plan-view panels, one per survey time step (2-D mode).
@@ -1005,6 +1064,7 @@ def plot_water_content_xy_timelapse(
             coverage_count_threshold=coverage_count_threshold,
             coverage_hatch=coverage_hatch, coverage_hatch_color=coverage_hatch_color,
             coverage_hatch_alpha=coverage_hatch_alpha,
+            coverage_style=coverage_style, coverage_alpha_min=coverage_alpha_min,
         )
         sc_ref = sc
 
@@ -1019,11 +1079,10 @@ def plot_water_content_xy_timelapse(
 
     legend_elements = []
     if render_mode == "imshow" and show_coverage_hatch:
-        legend_elements.append(
-            mpatches.Patch(facecolor="none", edgecolor=coverage_hatch_color,
-                           hatch=coverage_hatch,
-                           label=f"\u2264{coverage_count_threshold} pts/pixel (sparse)")
-        )
+        _patch = _coverage_legend_patch(coverage_style, coverage_count_threshold, coverage_hatch,
+                                        coverage_hatch_color, coverage_alpha_min, cmap)
+        if _patch is not None:
+            legend_elements.append(_patch)
     if probe_utm_x is not None and show_probes:
         legend_elements.append(
             plt.Line2D([0], [0], marker=probe_marker, color="w",
@@ -1578,8 +1637,24 @@ def plot_from_pipeline(
                     output_dir=output_dir, scenario_name=scenario_name,
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
-                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                    render_mode="imshow", interp_method="linear",
+                    bandwidth_m=bandwidth_m, window_m=window_m,
                     filename_suffix="_imshow",
+                )
+                # Binned (no interpolation) counterpart: one pixel = mean of
+                # the raw points inside it; empty pixels stay blank. Pixel
+                # size follows bandwidth_m (no 20-pixel floor).
+                plot_water_content_xy_timelapse(
+                    theta_calc=theta_calc,
+                    utm_x=utm_x, utm_y=utm_y,
+                    survey_labels=survey_labels,
+                    theta_vmin=0.0, theta_vmax=vmax,
+                    output_dir=output_dir, scenario_name=scenario_name,
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", interp_method="mean",
+                    bandwidth_m=bandwidth_m, window_m=window_m, min_grid_res=4,
+                    filename_suffix="_imshow_binned",
                 )
             else:
                 tc = theta_calc[0] if theta_calc.ndim == 3 else theta_calc
@@ -1593,7 +1668,21 @@ def plot_from_pipeline(
                     ),
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
-                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                    render_mode="imshow", interp_method="linear",
+                    bandwidth_m=bandwidth_m, window_m=window_m,
+                )
+                plot_water_content_xy(
+                    theta_calc=tc,
+                    utm_x=utm_x, utm_y=utm_y,
+                    theta_vmin=0.0, theta_vmax=vmax,
+                    title=f"Soil Water Content (XY, binned mean) — {scenario_name}",
+                    output_path=os.path.join(
+                        output_dir, f"water_content_xy_{scenario_name}_imshow_binned.png"
+                    ),
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", interp_method="mean",
+                    bandwidth_m=bandwidth_m, window_m=window_m, min_grid_res=4,
                 )
 
 
@@ -1772,8 +1861,21 @@ def plot_truth_from_pipeline(
                     output_dir=output_dir, scenario_name=truth_scenario_name,
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
-                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                    render_mode="imshow", interp_method="linear",
+                    bandwidth_m=bandwidth_m, window_m=window_m,
                     filename_suffix="_imshow",
+                )
+                plot_water_content_xy_timelapse(
+                    theta_calc=theta_true_pct,
+                    utm_x=utm_x, utm_y=utm_y,
+                    survey_labels=survey_labels,
+                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    output_dir=output_dir, scenario_name=truth_scenario_name,
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", interp_method="mean",
+                    bandwidth_m=bandwidth_m, window_m=window_m, min_grid_res=4,
+                    filename_suffix="_imshow_binned",
                 )
             else:
                 tc = theta_true_pct[0] if theta_true_pct.ndim == 3 else theta_true_pct
@@ -1787,7 +1889,21 @@ def plot_truth_from_pipeline(
                     ),
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
-                    render_mode="imshow", bandwidth_m=bandwidth_m, window_m=window_m,
+                    render_mode="imshow", interp_method="linear",
+                    bandwidth_m=bandwidth_m, window_m=window_m,
+                )
+                plot_water_content_xy(
+                    theta_calc=tc,
+                    utm_x=utm_x, utm_y=utm_y,
+                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    title=f"Soil Water Content (XY, binned mean) — Ground Truth — {scenario_name}",
+                    output_path=os.path.join(
+                        output_dir, f"water_content_xy_{truth_scenario_name}_imshow_binned.png"
+                    ),
+                    probe_utm_x=_probe_utm_x,
+                    probe_utm_y=_probe_utm_y,
+                    render_mode="imshow", interp_method="mean",
+                    bandwidth_m=bandwidth_m, window_m=window_m, min_grid_res=4,
                 )
 
 
