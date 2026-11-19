@@ -39,13 +39,29 @@ python bench_ws_global_vs_localized.py score                  # re-score existin
 |------|---------|---------|
 | `--design {oat,full}` | `oat` | `oat`: one factor at a time around the baseline (8 runs). `full`: cartesian product (36 runs). |
 | `--out-root PATH` | `mfc2_outputs/ws_bench` | Where the JSON, runs, CSV and figure go. |
-| `--corr-m FLOAT` | `4.0` | Correlation length [m] of the `xy_random` truth. |
+| `--corr-m FLOAT ...` | `4.0` | Correlation length(s) [m] of the `xy_random` truth; several values = one run each (e.g. `--corr-m 4 10 20`). |
+| `--bandwidth FLOAT ...` | off | FIXED localized bandwidth(s) [m], one run each (e.g. `--bandwidth 5 10`), instead of the leave-one-probe-out choice. A large c can then not hide behind the global fit, and a small c is not half fallback. |
+| `--seeds INT ...` | `21` | `ws_xy_seed` replicates of the `xy_linear` / `xy_random` truth (e.g. `--seeds 21 22 23 24 25`); `score` reports mean and sd. `homogeneous` / `per_horizon` run once. |
+| `--bins FLOAT ...` | `0 2 5 10 20` (+ inf) | Bin edges [m] for the error by distance to the nearest probe. |
 | `--k-selection {global,localized-loo}` | `global` | Passed to `run_pipeline.py`. |
 | `--only STR ...` | all | Run only scenarios whose name contains one of these strings. |
 | `--quick` | off | Passed to `run_pipeline.py`. |
 | `--rerun` | off | Re-run scenarios that already have a run. |
 | `--dry-run` | off | Print the run commands only. |
 | `--realization INT` | `0` | Truth ensemble member used for scoring. |
+
+## Testing "wins away from probes"
+
+```bash
+python bench_ws_global_vs_localized.py all --design oat --quick \
+    --bandwidth 5 10 --corr-m 4 10 20 --seeds 21 22 23 24 25 --out-root mfc2_outputs/ws_bench_fixed
+```
+
+Pass the same options to `generate`, `run` and `score` (or use `all`), because the scenario
+names and `design.json` depend on them. Scenario names keep the original form
+(`wsb_<truth>_L<l>_P<p>`) for the defaults; non-default values add `_C<corr>`, `_bw<c>`, `_s<seed>`.
+`--corr-m` only multiplies the `xy_random` levels. The number of runs is the product of the levels
+times seeds times bandwidths, and each one is a full ensemble inversion: check `run --dry-run` first.
 
 ## Design
 
@@ -68,6 +84,11 @@ fall back to the global fit where the nearest probe is beyond 2c.
 ## Outputs (in `--out-root`)
 
 - `ws_global_vs_localized.csv`: one row per run (columns below).
+- `ws_error_by_distance.csv` / `.png`: RMSE and bias of both maps per bin of distance to the
+  nearest probe (with the number of points and the fallback fraction per bin); the figure has one
+  panel per configuration, mean +- sd over seeds.
+- `ws_global_vs_localized_agg.csv`: per configuration (truth, layers, probes, corr, fixed c), mean and sd
+  over seeds of RMSE and gain.
 - `ws_global_vs_localized.png`: left, RMSE global vs localized (below the diagonal = localized
   better); right, gain per run for all points and for points far from probes.
 - `design.json`, `ws_bench_scenarios.json`, and one `<scenario>/<seq>_<scenario>/` folder per run.
@@ -88,4 +109,8 @@ CSV columns:
   re-done depends on the Step 1 cache, which I have not verified. Use a separate `--out-root` for it.
 - Truth is the noise-free generated field; scores are over all EM points, not only the probes.
 - The runner always uses `--mode 2d` (the scenarios it extends are 2-D).
-- Score at `--realization 0` unless you generate several truth realizations.
+- Score at `--realization 0` unless you generate several truth realizations. `--seeds` changes the
+  WS-field realization (`ws_xy_seed`), not `--realization`.
+- Distance bins use the probes in `tdr_train_positions.npy` and are absolute (m), not relative to c.
+- The scoring and the new options were tested on fake `output_model` folders and with `generate`;
+  no pipeline run was done in the environment where they were written.
