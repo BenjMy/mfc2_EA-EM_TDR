@@ -1,8 +1,10 @@
 """Pipeline Step 5: convergence selection & reliability mapping. Phase 6 of refactoring.md.
 
-Four blocks moved verbatim out of ``run_pipeline.main()``:
+Blocks moved out of ``run_pipeline.main()``:
 
 * ``run_step5_select``          -- opens "Step 5" and runs ``step4_select.run_select_assess``
+* ``run_step5_localized_mapping`` -- (new, default) converts the optimal EC model to theta with
+  kernel-localized Waxman-Smits parameters instead of one global set per horizon
 * ``report_step5_selection``    -- log K, RMSE, CV-map and theta_calc statistics
 * ``persist_step5_result``      -- save theta_calc / cv_map / K / rmse / ... to ``output_model/``
 * ``run_step5_quality_gate``    -- post-Step-5 quality gate (never aborts the run)
@@ -18,6 +20,7 @@ import os
 import numpy as np
 
 import em_methodology as EMmethod
+import localized_mapping as lmap
 import step4_select as step4_5
 
 
@@ -41,6 +44,66 @@ def run_step5_select(reporter, *, models_clean, averaged_models, ranking, sample
         depths0=depths0, output_dir=output_dir, generate_plots=True,
         probe_layer_indices=probe_layer_indices,
     )
+
+
+def run_step5_localized_mapping(reporter, *, selected_output, averaged_models, requested_mode,
+                                bandwidth, bandwidth_source, point_x, point_y, sample_positions,
+                                sample_times, theta_obs, probe_layer_indices, lab_p0,
+                                fixed_params, theta_obs_std, ws_bounds):
+    """Switch ``selected_output.theta_calc`` to the localized-WS map (see localized_mapping.py).
+
+    K and its RMSE come from the global Step 4/5 selection and are not touched. Only the
+    EC -> theta conversion of the maps changes: each EM point uses the parameters fitted
+    for it by the Gaspari-Cohn kernel, and points outside the kernel support fall back to
+    the global per-horizon fit. The global map is kept in ``selected_output.theta_calc_global``.
+    ``requested_mode`` None = default (localized); it is downgraded to global, with the
+    reason logged, when no bandwidth is available or the localized fit fails.
+
+    Returns the ``LocalizedMapping`` or None (global maps).
+    """
+    mode, why = lmap.resolve_map_calibration(requested_mode, bandwidth)
+    selected_output.ws_map_mode = "global"
+    if mode == "global":
+        reporter.log("[STEP 5] maps: global per-horizon Waxman-Smits fit"
+                     + (f" (localized requested but unavailable: {why})" if why else ""))
+        reporter.metric("Step 5 — WS calibration behind the maps", "global")
+        return None
+
+    avg = averaged_models[selected_output.K - 1]
+    reporter.log(f"[STEP 5] maps: kernel-localized Waxman-Smits, bandwidth c={bandwidth:g} "
+                 f"({bandwidth_source}); global per-horizon fit outside the kernel support "
+                 f"({'2-D Euclidean (x, y)' if point_y is not None else '1-D along-transect (x)'} distance).")
+    try:
+        mapping = lmap.build_localized_mapping(
+            avg, selected_output.best_fit, bandwidth=bandwidth, point_x=point_x, point_y=point_y,
+            sample_positions=sample_positions, sample_times=sample_times, theta_obs=theta_obs,
+            probe_layer_indices=probe_layer_indices, lab_p0=lab_p0, fixed_params=fixed_params,
+            theta_obs_std=theta_obs_std, ws_bounds=ws_bounds)
+    except Exception as exc:   # noqa: BLE001 -- keep the run, but say loudly that maps are global
+        reporter.log(f"[STEP 5][WARN] localized mapping failed ({type(exc).__name__}: {exc}); "
+                     f"the maps use the global per-horizon fit instead.")
+        reporter.metric("Step 5 — WS calibration behind the maps", "global (localized failed)")
+        return None
+
+    theta = mapping.theta[np.newaxis, ...] if mapping.theta.ndim == 2 else mapping.theta
+    selected_output.theta_calc_global = selected_output.theta_calc
+    selected_output.theta_calc = theta
+    selected_output.localized_mapping = mapping
+    selected_output.ws_map_mode = "localized"
+
+    frac = mapping.fallback_fraction()
+    reporter.log("[STEP 5] maps: share of EM points on the GLOBAL fit (no probe within 2c) per horizon: "
+                 + ", ".join(f"Hz {i}: {100 * f:.0f}%" for i, f in enumerate(frac)))
+    if any(f > 0.5 for f in frac):
+        reporter.log("[STEP 5][WARN] more than half of the points of a horizon are outside the kernel "
+                     "support: the localized map is mostly the global one there. Increase the "
+                     "bandwidth (support is 2c) or add probes.")
+    diff = np.nanmean(np.abs(theta - selected_output.theta_calc_global))
+    reporter.metric("Step 5 — WS calibration behind the maps", f"localized (c={bandwidth:g})")
+    reporter.metric("Step 5 — localized vs global map, mean |dθ|", f"{diff:.5f} m³/m³")
+    reporter.metric("Step 5 — points on global fallback (per horizon)",
+                    ", ".join(f"{100 * f:.0f}%" for f in frac))
+    return mapping
 
 
 def report_step5_selection(reporter, *, selected_output, n_candidates):
@@ -132,6 +195,13 @@ def persist_step5_result(reporter, *, selected_output, averaged_models, theta_ob
         reporter.log(f"[STEP 5][WARN] could not capture WS params / TDR obs: {_e}")
     if getattr(selected_output, "coverage", None) is not None:
         _step5_capture["coverage"] = np.asarray(selected_output.coverage)
+    if getattr(selected_output, "ws_map_mode", "global") == "localized":
+        # theta_calc.npy is the LOCALIZED map; keep the global one and the per-point parameters.
+        _lm = selected_output.localized_mapping
+        _step5_capture["theta_calc_global"] = np.asarray(selected_output.theta_calc_global)
+        _step5_capture["ws_localized_params"] = np.asarray(_lm.params)       # (4, n_layers, n_points): a, m, sigma_w, sigma_s
+        _step5_capture["ws_localized_fallback"] = np.asarray(_lm.fallback)   # (n_layers, n_points) True = global fit used
+        _step5_capture["ws_localized_bandwidth"] = np.array(_lm.bandwidth)
     if getattr(selected_output, "best_fit", None) is not None:
         _step5_capture["is_calibrated"] = np.array(
             [h.is_calibrated for h in selected_output.best_fit.horizon_fits]

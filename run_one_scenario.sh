@@ -104,6 +104,7 @@ BETA=()
 GAMMA=()
 WS_LOCALIZED_BANDWIDTH=""
 WS_LOCALIZED_BANDWIDTH_SWEEP=()
+WS_MAP_CALIBRATION=""
 EM_FOOTPRINT_DIAGNOSTIC=false
 QUICK=false
 QUICK_EPOCHS=""
@@ -289,6 +290,21 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           --ws-localized-bandwidth / scenario value.
                           Overrides 'ws_localized_bandwidth_sweep' in
                           the scenario config.
+      --ws-map-calibration {localized,global}
+                          Waxman-Smits calibration behind the water-content
+                          MAPS. 'localized' (DEFAULT): every EM point is
+                          converted EC -> theta with the parameters of the
+                          kernel-localized fit at that point (bandwidth from
+                          --ws-localized-bandwidth / the sweep / the calibrate
+                          run / the scenario); points with no probe within
+                          2c use the global per-horizon fit. If no bandwidth
+                          is available the maps are global (logged).
+                          'global': one parameter set per horizon, the
+                          pooled fit of Steps 2-5 -- use it when the field is
+                          homogeneous. K and the Step 5 RMSE are global in
+                          both modes. Extra outputs in output_model/ when
+                          localized: theta_calc_global.npy,
+                          ws_localized_params.npy, ws_localized_fallback.npy.
       --em-footprint-diagnostic
                           Compute a McNeill-type depth-weighted "effective
                           EM theta" per probe and report its discrepancy
@@ -346,9 +362,12 @@ Localization diagnostic (Step 2 kernel-localized WS calibration):
       calibration: instead of one flat Waxman-Smits parameter set per
       soil horizon, it fits a separate set at every EM point, weighting
       nearby TDR probes more heavily (Gaspari-Cohn kernel, radius 'c').
-      It never replaces Step 2 and never changes Steps 3-5 -- it only
-      adds 'petro_calibration_localized.png' (and, in 2-D mode, a
-      sigma_s(x, y) map) to the output directory.
+      It never replaces Step 2 and never changes the ranking / K / RMSE of
+      Steps 3-5. It adds 'petro_calibration_localized.png' (and, in 2-D
+      mode, a sigma_s(x, y) map) to the output directory, and -- unless
+      --ws-map-calibration global is given -- the same bandwidth is used
+      to convert EC to theta in the maps (global fit outside 2c of any
+      probe).
 
       DEFAULT: OFF. Set it either in the scenario JSON (bandwidth stays
       tied to that scenario's own probe geometry, reproducible across
@@ -628,6 +647,11 @@ while [[ $# -gt 0 ]]; do
             done
             [[ ${#WS_LOCALIZED_BANDWIDTH_SWEEP[@]} -ge 1 ]] || die "--ws-localized-bandwidth-sweep requires at least one value"
             ;;
+        --ws-map-calibration)
+            WS_MAP_CALIBRATION="${2:?'--ws-map-calibration requires localized or global'}"
+            [[ "${WS_MAP_CALIBRATION}" == "localized" || "${WS_MAP_CALIBRATION}" == "global" ]] \
+                || die "--ws-map-calibration must be 'localized' or 'global', got '${WS_MAP_CALIBRATION}'"
+            shift 2 ;;
         --train-val-split)
             TRAIN_VAL_SPLIT="${2:?'--train-val-split requires a method'}"
             case "${TRAIN_VAL_SPLIT}" in
@@ -984,6 +1008,9 @@ fi
 if [[ ${#WS_LOCALIZED_BANDWIDTH_SWEEP[@]} -gt 0 ]]; then
     INVERSION_OVERRIDE_ARGS+=(--ws-localized-bandwidth-sweep "${WS_LOCALIZED_BANDWIDTH_SWEEP[@]}")
 fi
+if [[ -n "${WS_MAP_CALIBRATION}" ]]; then
+    INVERSION_OVERRIDE_ARGS+=(--ws-map-calibration "${WS_MAP_CALIBRATION}")
+fi
 
 TRAIN_VAL_ARGS=()
 if [[ -n "${TRAIN_VAL_SPLIT}" ]]; then
@@ -1089,6 +1116,7 @@ cat >> "${HEADER_TMP}" << MDEOF
 | gamma | \`${GAMMA[*]:-scenario default}\` |
 | ws-localized-bandwidth | \`${WS_LOCALIZED_BANDWIDTH:-scenario default (or disabled)}\` |
 | ws-localized-bandwidth-sweep | \`${WS_LOCALIZED_BANDWIDTH_SWEEP[*]:-scenario default (or disabled)}\` |
+| ws-map-calibration | \`${WS_MAP_CALIBRATION:-localized (default)}\` |
 | train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |
 | em-footprint-diagnostic | \`${EM_FOOTPRINT_DIAGNOSTIC}\` |
 | quick | \`${QUICK}${QUICK_EPOCHS:+ (epochs=${QUICK_EPOCHS})}\` |

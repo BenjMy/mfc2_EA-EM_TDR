@@ -61,6 +61,7 @@ import EA_EM_config as cfgpaths  # central input-data paths (datasets)
 import em_methodology as EMmethod
 import em_subsample
 import geometry_utils
+import localized_mapping as lmap
 import quick_preset
 import stage_split
 import train_val_split as tvs
@@ -1504,6 +1505,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          train_val_split_method: str | None = None,
          ws_localized_bandwidth: float | None = None,
          ws_localized_bandwidth_sweep: list[float] | None = None,
+         ws_map_calibration: str | None = None,
          em_footprint_diagnostic: bool = False,
          quick: bool = False,
          quick_epochs: int | None = None,
@@ -1668,6 +1670,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         the scenario config's ``ws_localized_bandwidth_sweep`` field, or
         skips the sweep if that isn't set either. Overrides the scenario
         value when passed (CLI > scenario, same precedence as beta/gamma).
+    ws_map_calibration : {"localized", "global"} or None, optional
+        Waxman-Smits calibration used to convert the optimal EC model to the
+        water-content maps. ``None`` (default) = ``"localized"``: the
+        kernel-localized fit (bandwidth as resolved above) gives every EM point
+        its own (a, m, sigma_w, sigma_s), with the global per-horizon fit where no
+        probe lies within 2*bandwidth. ``"global"`` = one set per horizon. With no
+        bandwidth available the maps are global (logged). See ``localized_mapping.py``.
     em_footprint_diagnostic : bool, optional
         Compute a McNeill-type depth-weighted "effective EM theta" per
         probe (see ``em_sensitivity.py``) and report its discrepancy
@@ -4685,6 +4694,28 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             probe_layer_indices=probe_layer_indices)
 
         # -----------------------------------------------------------------------
+        # STEP 5 (maps) -- kernel-localized Waxman-Smits for the EC -> theta maps
+        #   Default. K / RMSE stay those of the global Step 4/5 selection; only
+        #   selected_output.theta_calc changes (global fit outside the kernel
+        #   support). Opt out with --ws-map-calibration global. See localized_mapping.py.
+        # -----------------------------------------------------------------------
+        if ws_localized_bandwidth is not None and not _bandwidth_from_sweep:
+            _map_bw_source = "--ws-localized-bandwidth"
+        elif _bandwidth_from_sweep:
+            _map_bw_source = "LOO-CV sweep"
+        elif STAGE == "map" and CALIBRATION.get("localized_bandwidth") is not None:
+            _map_bw_source = "from the calibration run"
+        else:
+            _map_bw_source = "scenario ws_localized_bandwidth"
+        steps_step5.run_step5_localized_mapping(
+            reporter, selected_output=selected_output, averaged_models=averaged_models,
+            requested_mode=ws_map_calibration, bandwidth=WS_LOCALIZED_BANDWIDTH,
+            bandwidth_source=_map_bw_source, point_x=x_transect, point_y=_localized_y,
+            sample_positions=sample_positions, sample_times=sample_times, theta_obs=theta_obs,
+            probe_layer_indices=probe_layer_indices, lab_p0=LAB_P0, fixed_params=WS_FIXED_PARAMS,
+            theta_obs_std=_theta_obs_std_step2, ws_bounds=WS_BOUNDS_OVERRIDE)
+
+        # -----------------------------------------------------------------------
         # STEP 5c — EM FOOTPRINT DISCREPANCY (McNeill depth weighting)
         #   Diagnostic only, opt-in via --em-footprint-diagnostic. Does not
         #   change Step 2/4 calibration or Step 3/5 K-selection -- reuses
@@ -4799,6 +4830,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 fixed_depths=FIXED_DEPTHS,
                 probe_depths_reflect_fitted_interfaces=PROBE_ROUTING_USES_FITTED_DEPTHS,
                 theta_obs_std=_theta_obs_std_step2)
+            steps_step5b.run_step5b_localized_validation(
+                reporter, selected_output=selected_output, averaged_models=averaged_models,
+                sample_positions_val=sample_positions_val, sample_times_val=sample_times_val,
+                theta_obs_val=theta_obs_val, probe_layer_val=probe_layer_val)
 
         # -----------------------------------------------------------------------
         # STEP 6 — WATER CONTENT VISUALISATIONS  (XZ always; XY in 2-D mode)
@@ -5305,6 +5340,18 @@ if __name__ == "__main__":
              "no sweep) otherwise.",
     )
     parser.add_argument(
+        "--ws-map-calibration", choices=list(lmap.MAP_CALIBRATION_CHOICES), default=None,
+        help="Waxman-Smits calibration behind the water-content MAPS (EC -> theta). "
+             "'localized' (default): after Step 5 picks K, every EM point is converted with "
+             "the parameters of the Gaspari-Cohn kernel-localized fit at that point "
+             "(bandwidth: --ws-localized-bandwidth / sweep / calibration run / scenario); "
+             "points with no probe within 2c use the global per-horizon fit. Needs a "
+             "bandwidth, otherwise the maps are global and the log says so. 'global': one "
+             "parameter set per horizon (the pooled fit of Steps 2-5), the previous "
+             "behaviour -- appropriate when the field is homogeneous. K and the RMSE "
+             "reported by Step 5 are the global ones in both modes.",
+    )
+    parser.add_argument(
         "--quick", action="store_true",
         help="Smoke-test preset: keep ONE alpha (the middle of the scenario's "
              "alpha list) and ONE forward model (the first) instead of the full "
@@ -5507,6 +5554,7 @@ if __name__ == "__main__":
              train_val_split_method=args.train_val_split,
              ws_localized_bandwidth=args.ws_localized_bandwidth,
              ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
+             ws_map_calibration=args.ws_map_calibration,
              em_footprint_diagnostic=args.em_footprint_diagnostic,
              quick=args.quick, quick_epochs=args.quick_epochs,
              stage=args.stage, calibration=args.calibration)

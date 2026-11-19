@@ -23,6 +23,11 @@ class SelectionOutput:
         self.best_fit = best_fit # Calibrated petrophysical parameters used
         self.theta_calc = theta_calc  # Predicted VWC grid at optimal stack depth (n_time, n_points, n_layers)
         self.coverage = coverage      # Normalised coverage map in [-1, 1] (n_time, n_points, n_layers)
+        # Set by steps.step5_selection.run_step5_localized_mapping (localized_mapping.py):
+        # ``theta_calc`` is then the LOCALIZED-WS map and the global-WS one is kept here.
+        self.ws_map_mode = "global"   # "global" | "localized": calibration behind ``theta_calc``
+        self.theta_calc_global = None # global per-horizon WS map, only when ws_map_mode == "localized"
+        self.localized_mapping = None # localized_mapping.LocalizedMapping, same condition
 
 def run_select_assess(
     models: np.ndarray,

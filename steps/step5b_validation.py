@@ -9,6 +9,7 @@ import os
 
 import numpy as np
 
+import localized_mapping as lmap
 import plot_train_val_diagnostics as ptv
 import step2_petro as step2
 
@@ -114,3 +115,31 @@ def run_step5b_validation(reporter, *, split, selected_output, fits_step4, train
 
     reporter.end_step("Step 5b")
     return train_rmse, val_rmse, val_rmse_by_k
+
+
+def run_step5b_localized_validation(reporter, *, selected_output, averaged_models,
+                                    sample_positions_val, sample_times_val, theta_obs_val,
+                                    probe_layer_val):
+    """Held-out RMSE of the LOCALIZED calibration behind the maps (None when the maps are global).
+
+    The localized fit only saw the train probes (``theta_obs`` of Steps 2-5); here its
+    per-point parameters are evaluated at the validation probes, so the number is comparable
+    with the global ``Validation RMSE`` logged by ``run_step5b_validation``.
+    """
+    mapping = getattr(selected_output, "localized_mapping", None)
+    if mapping is None:
+        return None
+    pred = lmap.theta_at_points(mapping, averaged_models[selected_output.K - 1],
+                                sample_positions_val, sample_times_val, probe_layer_val)
+    sq = (np.asarray(theta_obs_val, dtype=float) - pred) ** 2
+    if np.all(np.isnan(sq)):
+        reporter.log("[STEP 5b][WARN] localized validation: no validation probe has a valid EC value.")
+        return None
+    rmse = float(np.sqrt(np.nanmean(sq)))
+    n_fb = int(sum(bool(mapping.fallback[min(max(int(l), 0), mapping.fallback.shape[0] - 1), int(p)])
+                   for l, p in zip(probe_layer_val if probe_layer_val is not None
+                                   else [0] * len(sample_positions_val), sample_positions_val)))
+    reporter.log(f"[STEP 5b] Val RMSE, localized WS (c={mapping.bandwidth:g}): {rmse:.5f} m³/m³ "
+                 f"({n_fb} of {len(sample_positions_val)} validation probes on the global fallback)")
+    reporter.metric("Validation RMSE (localized)", f"{rmse:.5f} m³/m³")
+    return rmse

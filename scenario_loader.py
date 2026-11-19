@@ -367,8 +367,11 @@ class ScenarioConfig:
     alternatives.md §2), same units as the transect x-coordinates (metres
     for UTM/real-data grids). When set, run_pipeline.py additionally runs
     step2.run_petro_localized as a DIAGNOSTIC sibling to the normal Step 2
-    calibration -- it does not replace fits_step2 and does not change
-    Steps 3-5, which still consume the scalar-per-horizon fit. Produces
+    calibration -- it does not replace fits_step2 and does not change the
+    ranking / K / RMSE of Steps 3-5, which still consume the scalar-per-
+    horizon fit. By default (run_pipeline --ws-map-calibration localized) it
+    also drives the EC -> theta conversion of the maps, with the global fit
+    outside 2*c of any probe (localized_mapping.py). Produces
     petro_calibration_localized.png (sigma_s(x) per horizon) in output_dir.
     Kernel support is exactly zero beyond 2*c, so c should be at least
     roughly half the spacing between adjacent TDR probes, or every target
