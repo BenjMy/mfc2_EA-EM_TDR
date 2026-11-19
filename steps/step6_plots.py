@@ -258,7 +258,8 @@ def run_step6_water_content(reporter, *, mode, data_source, selected_output, x_t
                             probe_x_coords_utm, probe_y_coords_utm, probe_labels, utm_x, utm_y,
                             output_dir, output_model_dir, scenario_name, timelapse,
                             xy_render_mode, window_m, theta_true_realization,
-                            realization_index, cond_ranges, coils_list, forward_model):
+                            realization_index, cond_ranges, coils_list, forward_model,
+                            theta_limits="zero_p98"):
     """STEP 6: water-content XZ (always) / XY (2-D) maps; synthetic runs add the truth maps,
     calculated-vs-truth MAE/RMSE maps (metrics logged to the report) and the initial-model-vs-truth
     EC_bulk / ECa diagnostics. Opens "Step 6"; the caller closes it after Steps 6b-6e.
@@ -269,6 +270,18 @@ def run_step6_water_content(reporter, *, mode, data_source, selected_output, x_t
     reporter.log(f"            XZ cross-section : always")
     reporter.log(f"            XY plan view      : {'YES (2-D mode)' if mode == '2d' else 'NO (1-D mode)'}")
     reporter.log("=" * 80)
+
+    # Colour limits of the theta maps. "percentile" pools the inverted and the truth
+    # field (synthetic runs) so both figures share one scale; "zero_p98" keeps the
+    # historical per-figure 0..p98 limits.
+    _lim_kwargs = {}
+    if theta_limits == "percentile":
+        _arrays = [pwc._extract_theta_calc(selected_output)]
+        if data_source == "synthetic" and theta_true_realization is not None:
+            _arrays.append(np.asarray(theta_true_realization, dtype=float) * 100.0)
+        _vmin, _vmax = pwc._theta_color_limits(_arrays, "percentile")
+        _lim_kwargs = dict(theta_vmin=_vmin, theta_vmax=_vmax)
+        reporter.log(f"[STEP 6] theta colour limits (percentile): {_vmin:g} .. {_vmax:g} %VWC")
 
     pwc.plot_from_pipeline(
         selected_output=selected_output,
@@ -298,6 +311,7 @@ def run_step6_water_content(reporter, *, mode, data_source, selected_output, x_t
         # Auto-sizes the extra water_content_xy_{scenario}_imshow.png
         # raster's pixel size to 2 * window_m -- see plot_from_pipeline.
         window_m=window_m,
+        **_lim_kwargs,
     )
 
     # Ground-truth counterpart of the plot above (water_content_xz_<scenario>_truth.png
@@ -327,6 +341,7 @@ def run_step6_water_content(reporter, *, mode, data_source, selected_output, x_t
                 probe_ids=probe_labels,
                 xy_render_mode=xy_render_mode,
                 window_m=window_m,
+                **_lim_kwargs,
             )
             reporter.log(
                 f"[STEP 6] Ground-truth XZ (and XY, if 2-D) water-content "

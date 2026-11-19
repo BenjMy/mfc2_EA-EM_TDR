@@ -150,6 +150,34 @@ def _hatch_low_coverage_xy(
 
 
 _COVERAGE_STYLES = ("alpha", "hatch", "none")
+_THETA_LIMIT_MODES = ("zero_p98", "percentile")
+
+
+def _theta_color_limits(arrays, mode: str = "zero_p98",
+                        percentiles: tuple[float, float] = (2.0, 98.0)) -> tuple[float, float]:
+    """
+    Colour limits (vmin, vmax) in %VWC pooled over ``arrays`` (None entries skipped).
+
+    ``"zero_p98"`` (default, the historical behaviour): 0 to the 98th percentile
+    rounded up to a multiple of 5 (at least 5). ``"percentile"``: the
+    ``percentiles`` (default 2 and 98) rounded outwards to whole %VWC, so the
+    colour range follows the data instead of starting at 0.
+    """
+    if mode not in _THETA_LIMIT_MODES:
+        raise ValueError(f"theta_limits must be one of {_THETA_LIMIT_MODES}, got {mode!r}.")
+    parts = [np.asarray(a, dtype=float).ravel() for a in arrays if a is not None]
+    vals = np.concatenate(parts) if parts else np.array([])
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return 0.0, 45.0
+    if mode == "zero_p98":
+        v = float(np.percentile(vals, 98))
+        return 0.0, max(5.0, float(np.ceil(v / 5) * 5))
+    lo, hi = np.percentile(vals, percentiles)
+    vmin, vmax = float(np.floor(lo)), float(np.ceil(hi))
+    if vmax - vmin < 1.0:
+        vmax = vmin + 1.0
+    return vmin, vmax
 
 
 def _coverage_alpha(counts: np.ndarray, threshold: int, alpha_min: float = 0.35) -> np.ndarray:
@@ -1437,9 +1465,21 @@ def plot_from_pipeline(
     window_m: float | None = None,
     xy_imshow_extra: bool = True,
     probe_ids: Sequence[str] | None = None,
+    theta_limits: str = "zero_p98",
+    theta_vmin: float | None = None,
+    theta_vmax: float | None = None,
 ) -> None:
     """
     Render all water-content figures from pipeline output.
+
+    theta_limits : {"zero_p98", "percentile"}
+        Colour limits of the θ maps when ``theta_vmin``/``theta_vmax`` are not
+        given: ``"zero_p98"`` (default) = 0 to the 98th percentile (rounded up to
+        5); ``"percentile"`` = 2nd to 98th percentile rounded outwards to whole
+        %VWC. See ``_theta_color_limits``.
+    theta_vmin, theta_vmax : float or None
+        Explicit limits (e.g. shared with the truth figures); override
+        ``theta_limits``. If only ``theta_vmax`` is given, ``theta_vmin`` is 0.
 
     xy_render_mode : {"scatter", "imshow"}
         Rendering for the XY plan-view plots (2-D mode only). "scatter"
@@ -1518,8 +1558,13 @@ def plot_from_pipeline(
         else None
     )
 
-    vmax = float(np.nanpercentile(theta_calc, 98))
-    vmax = max(5.0, np.ceil(vmax / 5) * 5)
+    if theta_vmax is None:
+        vmin, vmax = _theta_color_limits([theta_calc], theta_limits)
+        if theta_vmin is not None:
+            vmin = float(theta_vmin)
+    else:
+        vmax = float(theta_vmax)
+        vmin = 0.0 if theta_vmin is None else float(theta_vmin)
 
     has_utm = (utm_x is not None and utm_y is not None)
 
@@ -1555,7 +1600,7 @@ def plot_from_pipeline(
             coverage=coverage,
             probe_x=probe_x_coords, probe_depths=probe_depths,
             survey_labels=survey_labels,
-            theta_vmin=0.0, theta_vmax=vmax,
+            theta_vmin=vmin, theta_vmax=vmax,
             output_dir=output_dir, scenario_name=scenario_name,
         )
         plot_water_content_paired(
@@ -1564,7 +1609,7 @@ def plot_from_pipeline(
             coverage=coverage,
             probe_x=probe_x_coords, probe_depths=probe_depths,
             survey_labels=survey_labels,
-            theta_vmin=0.0, theta_vmax=vmax,
+            theta_vmin=vmin, theta_vmax=vmax,
             output_dir=output_dir, scenario_name=scenario_name,
         )
     else:
@@ -1578,7 +1623,7 @@ def plot_from_pipeline(
             x_coords=x_transect, depths0=depths0,
             coverage=cov,
             probe_x=probe_x_coords, probe_depths=probe_depths,
-            theta_vmin=0.0, theta_vmax=vmax,
+            theta_vmin=vmin, theta_vmax=vmax,
             title=f"Soil Water Content (XZ) — {scenario_name}",
             output_path=os.path.join(output_dir, f"water_content_xz_{scenario_name}.png"),
         )
@@ -1587,7 +1632,7 @@ def plot_from_pipeline(
             x_coords=x_transect, depths0=depths0,
             coverage=cov,
             probe_x=probe_x_coords, probe_depths=probe_depths,
-            theta_vmin=0.0, theta_vmax=vmax,
+            theta_vmin=vmin, theta_vmax=vmax,
             output_dir=output_dir, scenario_name=scenario_name,
         )
 
@@ -1600,7 +1645,7 @@ def plot_from_pipeline(
                 theta_calc=theta_calc,
                 utm_x=utm_x, utm_y=utm_y,
                 survey_labels=survey_labels,
-                theta_vmin=0.0, theta_vmax=vmax,
+                theta_vmin=vmin, theta_vmax=vmax,
                 output_dir=output_dir, scenario_name=scenario_name,
                 probe_utm_x=_probe_utm_x,   # None in 1-D mode, real coords in 2-D
                 probe_utm_y=_probe_utm_y,
@@ -1611,7 +1656,7 @@ def plot_from_pipeline(
             plot_water_content_xy(
                 theta_calc=tc,
                 utm_x=utm_x, utm_y=utm_y,
-                theta_vmin=0.0, theta_vmax=vmax,
+                theta_vmin=vmin, theta_vmax=vmax,
                 title=f"Soil Water Content (XY) — {scenario_name}",
                 output_path=os.path.join(
                     output_dir, f"water_content_xy_{scenario_name}.png"
@@ -1633,7 +1678,7 @@ def plot_from_pipeline(
                     theta_calc=theta_calc,
                     utm_x=utm_x, utm_y=utm_y,
                     survey_labels=survey_labels,
-                    theta_vmin=0.0, theta_vmax=vmax,
+                    theta_vmin=vmin, theta_vmax=vmax,
                     output_dir=output_dir, scenario_name=scenario_name,
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
@@ -1648,7 +1693,7 @@ def plot_from_pipeline(
                     theta_calc=theta_calc,
                     utm_x=utm_x, utm_y=utm_y,
                     survey_labels=survey_labels,
-                    theta_vmin=0.0, theta_vmax=vmax,
+                    theta_vmin=vmin, theta_vmax=vmax,
                     output_dir=output_dir, scenario_name=scenario_name,
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
@@ -1661,7 +1706,7 @@ def plot_from_pipeline(
                 plot_water_content_xy(
                     theta_calc=tc,
                     utm_x=utm_x, utm_y=utm_y,
-                    theta_vmin=0.0, theta_vmax=vmax,
+                    theta_vmin=vmin, theta_vmax=vmax,
                     title=f"Soil Water Content (XY, interpolated) — {scenario_name}",
                     output_path=os.path.join(
                         output_dir, f"water_content_xy_{scenario_name}_imshow.png"
@@ -1674,7 +1719,7 @@ def plot_from_pipeline(
                 plot_water_content_xy(
                     theta_calc=tc,
                     utm_x=utm_x, utm_y=utm_y,
-                    theta_vmin=0.0, theta_vmax=vmax,
+                    theta_vmin=vmin, theta_vmax=vmax,
                     title=f"Soil Water Content (XY, binned mean) — {scenario_name}",
                     output_path=os.path.join(
                         output_dir, f"water_content_xy_{scenario_name}_imshow_binned.png"
@@ -1701,6 +1746,8 @@ def plot_truth_from_pipeline(
     timelapse: bool = False,
     survey_labels: Sequence[str] | None = None,
     theta_vmax: float | None = None,
+    theta_vmin: float | None = None,
+    theta_limits: str = "zero_p98",
     # 2-D mode extras (optional — same as plot_from_pipeline)
     utm_x: np.ndarray | None = None,
     utm_y: np.ndarray | None = None,
@@ -1769,8 +1816,11 @@ def plot_truth_from_pipeline(
     theta_true_pct = theta_true * 100.0  # m^3/m^3 -> % vol., matches plot_from_pipeline
 
     if theta_vmax is None:
-        theta_vmax = float(np.nanpercentile(theta_true_pct, 98))
-        theta_vmax = max(5.0, np.ceil(theta_vmax / 5) * 5)
+        _vmin, theta_vmax = _theta_color_limits([theta_true_pct], theta_limits)
+        if theta_vmin is None:
+            theta_vmin = _vmin
+    elif theta_vmin is None:
+        theta_vmin = 0.0
 
     has_utm = (utm_x is not None and utm_y is not None)
 
@@ -1804,7 +1854,7 @@ def plot_truth_from_pipeline(
             coverage=None,
             probe_x=probe_x_coords, probe_depths=probe_depths,
             survey_labels=survey_labels,
-            theta_vmin=0.0, theta_vmax=theta_vmax,
+            theta_vmin=theta_vmin, theta_vmax=theta_vmax,
             output_dir=output_dir, scenario_name=truth_scenario_name,
         )
     else:
@@ -1814,7 +1864,7 @@ def plot_truth_from_pipeline(
             x_coords=x_transect, depths0=depths0,
             coverage=None,
             probe_x=probe_x_coords, probe_depths=probe_depths,
-            theta_vmin=0.0, theta_vmax=theta_vmax,
+            theta_vmin=theta_vmin, theta_vmax=theta_vmax,
             title=f"Soil Water Content (XZ) — Ground Truth — {scenario_name}",
             output_path=os.path.join(output_dir, f"water_content_xz_{truth_scenario_name}.png"),
         )
@@ -1828,7 +1878,7 @@ def plot_truth_from_pipeline(
                 theta_calc=theta_true_pct,
                 utm_x=utm_x, utm_y=utm_y,
                 survey_labels=survey_labels,
-                theta_vmin=0.0, theta_vmax=theta_vmax,
+                theta_vmin=theta_vmin, theta_vmax=theta_vmax,
                 output_dir=output_dir, scenario_name=truth_scenario_name,
                 probe_utm_x=_probe_utm_x,
                 probe_utm_y=_probe_utm_y,
@@ -1839,7 +1889,7 @@ def plot_truth_from_pipeline(
             plot_water_content_xy(
                 theta_calc=tc,
                 utm_x=utm_x, utm_y=utm_y,
-                theta_vmin=0.0, theta_vmax=theta_vmax,
+                theta_vmin=theta_vmin, theta_vmax=theta_vmax,
                 title=f"Soil Water Content (XY) — Ground Truth — {scenario_name}",
                 output_path=os.path.join(
                     output_dir, f"water_content_xy_{truth_scenario_name}.png"
@@ -1857,7 +1907,7 @@ def plot_truth_from_pipeline(
                     theta_calc=theta_true_pct,
                     utm_x=utm_x, utm_y=utm_y,
                     survey_labels=survey_labels,
-                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    theta_vmin=theta_vmin, theta_vmax=theta_vmax,
                     output_dir=output_dir, scenario_name=truth_scenario_name,
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
@@ -1869,7 +1919,7 @@ def plot_truth_from_pipeline(
                     theta_calc=theta_true_pct,
                     utm_x=utm_x, utm_y=utm_y,
                     survey_labels=survey_labels,
-                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    theta_vmin=theta_vmin, theta_vmax=theta_vmax,
                     output_dir=output_dir, scenario_name=truth_scenario_name,
                     probe_utm_x=_probe_utm_x,
                     probe_utm_y=_probe_utm_y,
@@ -1882,7 +1932,7 @@ def plot_truth_from_pipeline(
                 plot_water_content_xy(
                     theta_calc=tc,
                     utm_x=utm_x, utm_y=utm_y,
-                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    theta_vmin=theta_vmin, theta_vmax=theta_vmax,
                     title=f"Soil Water Content (XY, interpolated) — Ground Truth — {scenario_name}",
                     output_path=os.path.join(
                         output_dir, f"water_content_xy_{truth_scenario_name}_imshow.png"
@@ -1895,7 +1945,7 @@ def plot_truth_from_pipeline(
                 plot_water_content_xy(
                     theta_calc=tc,
                     utm_x=utm_x, utm_y=utm_y,
-                    theta_vmin=0.0, theta_vmax=theta_vmax,
+                    theta_vmin=theta_vmin, theta_vmax=theta_vmax,
                     title=f"Soil Water Content (XY, binned mean) — Ground Truth — {scenario_name}",
                     output_path=os.path.join(
                         output_dir, f"water_content_xy_{truth_scenario_name}_imshow_binned.png"

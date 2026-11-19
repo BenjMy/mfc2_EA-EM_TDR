@@ -97,6 +97,7 @@ XY_PATCH_SIGMA=""
 DEPTH_DRYING_STRENGTH=""
 PROBE_XYZ=""
 XY_RENDER_MODE=""
+THETA_LIMITS=""
 NUM_SWC_POSITIONS=""
 SWC_DEPTHS=()
 WINDOW_M=""
@@ -217,6 +218,11 @@ Probe placement and XY plot rendering:
                           'scatter' (default) draws one square per
                           measurement point; 'imshow' interpolates onto a
                           smooth raster (scipy.griddata).
+      --theta-limits {zero_p98,percentile}
+                          Colour limits of the water-content maps.
+                          'zero_p98' (default): 0 to the 98th percentile.
+                          'percentile': 2nd-98th percentile of the data,
+                          shared by inverted and ground-truth figures.
 
 SWC / TDR sensor options (override the scenario JSON's sensor network):
       --num-swc-positions N
@@ -704,6 +710,11 @@ while [[ $# -gt 0 ]]; do
             [[ "${XY_RENDER_MODE}" == "scatter" || "${XY_RENDER_MODE}" == "imshow" ]] \
                 || die "--xy-render-mode must be 'scatter' or 'imshow', got '${XY_RENDER_MODE}'"
             shift 2 ;;
+        --theta-limits)
+            THETA_LIMITS="${2:?'--theta-limits requires zero_p98 or percentile'}"
+            [[ "${THETA_LIMITS}" == "zero_p98" || "${THETA_LIMITS}" == "percentile" ]] \
+                || die "--theta-limits must be 'zero_p98' or 'percentile', got '${THETA_LIMITS}'"
+            shift 2 ;;
         -h|--help)  usage; exit 0 ;;
         *) die "Unknown option: $1  (run with --help for usage)" ;;
     esac
@@ -1002,6 +1013,9 @@ fi
 PLOT_ARGS=()
 if [[ -n "${XY_RENDER_MODE}" ]]; then
     PLOT_ARGS+=(--xy-render-mode "${XY_RENDER_MODE}")
+fi
+if [[ -n "${THETA_LIMITS}" ]]; then
+    PLOT_ARGS+=(--theta-limits "${THETA_LIMITS}")
 fi
 
 INVERSION_OVERRIDE_ARGS=()

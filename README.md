@@ -246,6 +246,8 @@ python plot_validation_1to1.py --ids <surface_run_id> <full_run_id> \
 
 XY water-content rasters (2-D runs, when a bandwidth or window is known): `water_content_xy_<scenario>_imshow.png` is **linearly interpolated** (no blank pixels); `_imshow_binned.png` is the **binned mean** (one pixel = mean of the raw points inside it, empty pixels blank, pixel size = the bandwidth); the ground-truth versions carry `_truth` in the name. Pixels resting on few raw points (<= 3, `coverage_count_threshold`) are **faded** (`coverage_style="alpha"`, the default; `coverage_alpha_min` sets the faintest opacity); `coverage_style="hatch"` restores the hatched overlay and `"none"` draws no marker. On the interpolated raster the support is counted inside a window of one pixel size (the bandwidth), because its pixels are finer than the data.
 
+Colour scale of the θ maps: `--theta-limits zero_p98` (default) is 0 to the 98th percentile, per figure; `--theta-limits percentile` uses the 2nd to 98th percentile of the data rounded outwards to whole %VWC, and on synthetic runs one scale shared by the inverted and the ground-truth figures (e.g. `./run_one_scenario.sh -s 2d --mode 2d --theta-limits percentile`).
+
 Saved arrays for synthetic runs (`<run>/output_model/`): `theta_calc.npy`, `K.npy`, `rmse.npy`, `cv_map.npy`, `is_calibrated.npy`, plus the `synthetic_*` truth arrays. `ec_optimal.npy` is written only by runs made after `mfc2_all_changes.patch` was applied (older runs don't have it).
 
 See `refactoring.md` for the code map and cleanup plan.

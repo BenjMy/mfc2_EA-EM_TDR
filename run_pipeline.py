@@ -1495,6 +1495,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          gamma: float | None = None,
          probe_xyz_file: str | None = None,
          xy_render_mode: str = "scatter",
+         theta_limits: str = "zero_p98",
          full_range_gradient: bool | None = None,
          xy_z_blend: float | None = None,
          invert_z_gradient: bool | None = None,
@@ -4899,6 +4900,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             probe_labels=PROBE_LABELS, utm_x=utm_x, utm_y=utm_y, output_dir=OUTPUT_DIR,
             output_model_dir=OUTPUT_MODEL_DIR, scenario_name=cfg.name if cfg else "default",
             timelapse=timelapse, xy_render_mode=xy_render_mode, window_m=WINDOW_M,
+            theta_limits=theta_limits,
             theta_true_realization=theta_true_realization, realization_index=REALIZATION_INDEX,
             cond_ranges=COND_RANGES, coils_list=step0.COILS_LIST,
             forward_model=PARAM_GRID.get("forwardModel", ["FSlin"])[0])
@@ -5296,6 +5298,13 @@ if __name__ == "__main__":
              "interpolates onto a smooth raster (scipy.griddata).",
     )
     parser.add_argument(
+        "--theta-limits", default="zero_p98", choices=["zero_p98", "percentile"],
+        help="Colour limits of the water-content (theta) maps. 'zero_p98' "
+             "(default): 0 to the 98th percentile, per figure. 'percentile': "
+             "2nd to 98th percentile of the data rounded to whole %%VWC, shared "
+             "by the inverted and the ground-truth figures (synthetic runs).",
+    )
+    parser.add_argument(
         "--em-unit", default=None, choices=["ppm", "ppt"],
         help="Physical unit of the quadrature/in-phase columns in the EM "
              "survey CSV. 'ppm' for GEM-2 / CMD-Explorer real-data "
@@ -5594,6 +5603,7 @@ if __name__ == "__main__":
              gamma=args.gamma,
              probe_xyz_file=args.probe_xyz,
              xy_render_mode=args.xy_render_mode,
+             theta_limits=args.theta_limits,
              full_range_gradient=(True if args.full_range_gradient else None),
              xy_z_blend=args.xy_z_blend,
              invert_z_gradient=(True if args.invert_z_gradient else None),
