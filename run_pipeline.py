@@ -1506,6 +1506,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          ws_localized_bandwidth: float | None = None,
          ws_localized_bandwidth_sweep: list[float] | None = None,
          ws_map_calibration: str | None = None,
+         k_selection: str | None = None,
          em_footprint_diagnostic: bool = False,
          quick: bool = False,
          quick_epochs: int | None = None,
@@ -1677,6 +1678,13 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         its own (a, m, sigma_w, sigma_s), with the global per-horizon fit where no
         probe lies within 2*bandwidth. ``"global"`` = one set per horizon. With no
         bandwidth available the maps are global (logged). See ``localized_mapping.py``.
+    k_selection : {"global", "localized-loo"} or None, optional
+        How Step 5 picks the stack depth K. ``None`` (default) = ``"global"``: minimum
+        probe RMSE of the global per-horizon fit of each stack. ``"localized-loo"``:
+        minimum leave-one-probe-out RMSE of the kernel-localized fit (bandwidth as resolved
+        above; N stacks x n_probes small refits). The global curve is still computed and
+        plotted; the ensemble ranking stays global. Without a bandwidth it falls back to
+        ``"global"`` (logged). See ``localized_mapping.localized_loo_rmse``.
     em_footprint_diagnostic : bool, optional
         Compute a McNeill-type depth-weighted "effective EM theta" per
         probe (see ``em_sensitivity.py``) and report its discrepancy
@@ -4686,19 +4694,6 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         # -----------------------------------------------------------------------
         reporter.end_step("Step 4")
 
-        selected_output = steps_step5.run_step5_select(
-            reporter, models_clean=models_clean, averaged_models=averaged_models,
-            ranking=ranking, sample_positions=sample_positions,
-            sample_times=sample_times, theta_obs=theta_obs, fits_step4=fits_step4,
-            depths0=DEPTHS0, output_dir=OUTPUT_DIR,
-            probe_layer_indices=probe_layer_indices)
-
-        # -----------------------------------------------------------------------
-        # STEP 5 (maps) -- kernel-localized Waxman-Smits for the EC -> theta maps
-        #   Default. K / RMSE stay those of the global Step 4/5 selection; only
-        #   selected_output.theta_calc changes (global fit outside the kernel
-        #   support). Opt out with --ws-map-calibration global. See localized_mapping.py.
-        # -----------------------------------------------------------------------
         if ws_localized_bandwidth is not None and not _bandwidth_from_sweep:
             _map_bw_source = "--ws-localized-bandwidth"
         elif _bandwidth_from_sweep:
@@ -4707,6 +4702,23 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             _map_bw_source = "from the calibration run"
         else:
             _map_bw_source = "scenario ws_localized_bandwidth"
+
+        selected_output = steps_step5.run_step5_select(
+            reporter, models_clean=models_clean, averaged_models=averaged_models,
+            ranking=ranking, sample_positions=sample_positions,
+            sample_times=sample_times, theta_obs=theta_obs, fits_step4=fits_step4,
+            depths0=DEPTHS0, output_dir=OUTPUT_DIR,
+            probe_layer_indices=probe_layer_indices,
+            k_selection=k_selection, bandwidth=WS_LOCALIZED_BANDWIDTH, point_x=x_transect,
+            point_y=_localized_y, lab_p0=LAB_P0, fixed_params=WS_FIXED_PARAMS,
+            theta_obs_std=_theta_obs_std_step2, ws_bounds=WS_BOUNDS_OVERRIDE)
+
+        # -----------------------------------------------------------------------
+        # STEP 5 (maps) -- kernel-localized Waxman-Smits for the EC -> theta maps
+        #   Default. K / RMSE stay those of the global Step 4/5 selection; only
+        #   selected_output.theta_calc changes (global fit outside the kernel
+        #   support). Opt out with --ws-map-calibration global. See localized_mapping.py.
+        # -----------------------------------------------------------------------
         steps_step5.run_step5_localized_mapping(
             reporter, selected_output=selected_output, averaged_models=averaged_models,
             requested_mode=ws_map_calibration, bandwidth=WS_LOCALIZED_BANDWIDTH,
@@ -5340,6 +5352,17 @@ if __name__ == "__main__":
              "no sweep) otherwise.",
     )
     parser.add_argument(
+        "--k-selection", choices=list(lmap.K_SELECTION_CHOICES), default=None,
+        help="How Step 5 selects the stack depth K. 'global' (default): minimum probe RMSE "
+             "of the pooled per-horizon Waxman-Smits fit of each stack. 'localized-loo': "
+             "minimum leave-one-probe-out RMSE of the kernel-localized fit (each probe "
+             "location held out, refit on the others, predicted with its own local "
+             "parameters; probes with no neighbour within 2c are skipped). Costs N stacks x "
+             "n_probes small refits; needs a bandwidth (else falls back to global, logged). "
+             "The global curve is kept in the log, figure_3 and output_model/. The ensemble "
+             "ranking (Steps 2-3) stays global.",
+    )
+    parser.add_argument(
         "--ws-map-calibration", choices=list(lmap.MAP_CALIBRATION_CHOICES), default=None,
         help="Waxman-Smits calibration behind the water-content MAPS (EC -> theta). "
              "'localized' (default): after Step 5 picks K, every EM point is converted with "
@@ -5555,6 +5578,7 @@ if __name__ == "__main__":
              ws_localized_bandwidth=args.ws_localized_bandwidth,
              ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
              ws_map_calibration=args.ws_map_calibration,
+             k_selection=args.k_selection,
              em_footprint_diagnostic=args.em_footprint_diagnostic,
              quick=args.quick, quick_epochs=args.quick_epochs,
              stage=args.stage, calibration=args.calibration)

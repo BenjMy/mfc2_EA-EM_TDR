@@ -26,24 +26,76 @@ import step4_select as step4_5
 
 def run_step5_select(reporter, *, models_clean, averaged_models, ranking, sample_positions,
                      sample_times, theta_obs, fits_step4, depths0, output_dir,
-                     probe_layer_indices):
+                     probe_layer_indices, k_selection=None, bandwidth=None, point_x=None,
+                     point_y=None, lab_p0=None, fixed_params=None, theta_obs_std=None,
+                     ws_bounds=None):
     """STEP 5: select the optimal stack depth K and map reliability (CV).
 
     Returns the ``SelectionOutput`` of ``step4_select.run_select_assess``.
     ``fits_step4`` are the Step 4 fits (passed as ``fits_step2=`` downstream).
+
+    ``k_selection`` None / ``"global"`` (default): K minimises the probe RMSE of the global
+    Step 4 fit of each stack. ``"localized-loo"``: K minimises the leave-one-probe-out RMSE
+    of the kernel-localized fit (``localized_mapping.localized_loo_rmse_by_k``, bandwidth
+    ``bandwidth``, ``point_x`` / ``point_y`` = EM point coordinates); the global curve is
+    still computed, logged and plotted. Downgraded to global, with the reason logged, when
+    there is no bandwidth, no point coordinates, or no probe can be scored. The ensemble
+    ranking (Steps 2-3) is global in both modes.
     """
     reporter.step("Step 5", "Convergence selection & reliability mapping")
     reporter.log("\n" + "=" * 80)
     reporter.log(" [PIPELINE] STEP 5: CONVERGENCE SELECTION & RELIABILITY MAPPING")
     reporter.log("=" * 80)
 
-    return step4_5.run_select_assess(
+    mode, why = lmap.resolve_k_selection(k_selection, bandwidth)
+    if mode == "localized-loo" and point_x is None:
+        mode, why = "global", "no EM point coordinates"
+    loo_curve = None
+    if mode == "localized-loo":
+        reporter.log(f"[STEP 5] K selection: localized leave-one-probe-out, bandwidth c={bandwidth:g} "
+                     f"({len(averaged_models)} stacks x {len(set(sample_positions))} probe locations "
+                     "refits)")
+        try:
+            loo_curve, n_scored = lmap.localized_loo_rmse_by_k(
+                averaged_models, bandwidth=bandwidth, point_x=point_x, point_y=point_y,
+                sample_positions=sample_positions, sample_times=sample_times, theta_obs=theta_obs,
+                probe_layer_indices=probe_layer_indices, lab_p0=lab_p0, fixed_params=fixed_params,
+                theta_obs_std=theta_obs_std, ws_bounds=ws_bounds)
+        except Exception as exc:   # noqa: BLE001 -- keep the run on the global selection
+            mode, why = "global", f"localized LOO failed ({type(exc).__name__}: {exc})"
+        else:
+            if np.all(np.isnan(loo_curve)):
+                loo_curve, mode = None, "global"
+                why = ("no probe has another probe of its horizon within 2c, nothing to score: "
+                       "increase the bandwidth")
+            else:
+                n_total = len(sample_positions)
+                if int(np.max(n_scored)) < n_total:
+                    reporter.log(f"[STEP 5] K selection: {int(np.max(n_scored))} of {n_total} probe "
+                                 "observations are scorable (the rest have no other probe within 2c "
+                                 "and are skipped for every K).")
+    if mode == "global":
+        reporter.log("[STEP 5] K selection: global per-horizon fit"
+                     + (f" (localized-loo requested but unavailable: {why})" if why else ""))
+
+    out = step4_5.run_select_assess(
         models=models_clean, averaged_models=averaged_models, ranking=ranking,
         sample_positions=sample_positions, sample_times=sample_times,
         theta_obs=theta_obs, fits_step2=fits_step4,
         depths0=depths0, output_dir=output_dir, generate_plots=True,
-        probe_layer_indices=probe_layer_indices,
+        probe_layer_indices=probe_layer_indices, selection_rmse_by_k=loo_curve,
     )
+    reporter.metric("Step 5 — K selection", getattr(out, "k_selection", "global"))
+    if getattr(out, "rmse_by_k_localized_loo", None) is not None:
+        k_loc, k_glob = out.K, out.K_global
+        loo_at = out.rmse_by_k_localized_loo[k_loc - 1]
+        reporter.log(f"[STEP 5] K = {k_loc} (localized LOO, RMSE {loo_at:.5f}); the global curve "
+                     f"would pick K = {k_glob}"
+                     + ("" if k_loc != k_glob else " (the two agree)")
+                     + f". Global RMSE at K = {k_loc}: {out.rmse:.5f} m³/m³.")
+        reporter.metric("Step 5 — K (global curve minimum)", str(k_glob))
+        reporter.metric("Step 5 — localized LOO RMSE at K", f"{loo_at:.5f} m³/m³")
+    return out
 
 
 def run_step5_localized_mapping(reporter, *, selected_output, averaged_models, requested_mode,
@@ -195,6 +247,11 @@ def persist_step5_result(reporter, *, selected_output, averaged_models, theta_ob
         reporter.log(f"[STEP 5][WARN] could not capture WS params / TDR obs: {_e}")
     if getattr(selected_output, "coverage", None) is not None:
         _step5_capture["coverage"] = np.asarray(selected_output.coverage)
+    if getattr(selected_output, "rmse_by_k_global", None) is not None:
+        _step5_capture["rmse_by_k_global"] = np.asarray(selected_output.rmse_by_k_global)
+    if getattr(selected_output, "rmse_by_k_localized_loo", None) is not None:
+        _step5_capture["rmse_by_k_localized_loo"] = np.asarray(selected_output.rmse_by_k_localized_loo)
+        _step5_capture["K_global"] = np.array(selected_output.K_global)
     if getattr(selected_output, "ws_map_mode", "global") == "localized":
         # theta_calc.npy is the LOCALIZED map; keep the global one and the per-point parameters.
         _lm = selected_output.localized_mapping

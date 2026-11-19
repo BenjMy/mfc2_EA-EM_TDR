@@ -37,6 +37,8 @@ import numpy as np
 import em_methodology as EMmethod
 
 MAP_CALIBRATION_CHOICES = ("localized", "global")
+K_SELECTION_CHOICES = ("global", "localized-loo")
+DEFAULT_K_SELECTION = "global"
 DEFAULT_MAP_CALIBRATION = "localized"
 _PARAM_NAMES = ("a", "m", "sigma_w", "sigma_s")
 
@@ -171,3 +173,105 @@ def theta_at_points(mapping: LocalizedMapping, avg_model: np.ndarray,
         ratio = a * max(ec, 1e-6) / (sigma_w + sigma_s) if np.isfinite(ec) else np.nan
         out[i] = np.power(max(ratio, 0.0), 1.0 / m) if np.isfinite(ratio) else np.nan
     return out
+
+
+def resolve_k_selection(requested: str | None, bandwidth: float | None) -> tuple[str, str]:
+    """``(mode, reason)``: how the stack depth K is selected.
+
+    ``requested`` None -> the default (``global``). ``localized-loo`` needs a bandwidth;
+    without one it is downgraded to ``global`` and ``reason`` says why.
+    """
+    mode = DEFAULT_K_SELECTION if requested is None else str(requested)
+    if mode not in K_SELECTION_CHOICES:
+        raise ValueError(f"k_selection must be one of {K_SELECTION_CHOICES}, got {mode!r}")
+    if mode == "localized-loo" and (bandwidth is None or not np.isfinite(bandwidth) or bandwidth <= 0):
+        return "global", ("no localized bandwidth: set ws_localized_bandwidth / "
+                          "ws_localized_bandwidth_sweep in the scenario or pass "
+                          "--ws-localized-bandwidth")
+    return mode, ""
+
+
+def localized_loo_rmse(
+    avg_model: np.ndarray,
+    *,
+    bandwidth: float,
+    point_x: Sequence[float],
+    point_y: Sequence[float] | None,
+    sample_positions: Sequence[int],
+    sample_times: Sequence[int],
+    theta_obs: np.ndarray,
+    probe_layer_indices: Sequence[int] | None = None,
+    lab_p0=None,
+    fixed_params: dict | None = None,
+    theta_obs_std=None,
+    ws_bounds: dict | None = None,
+) -> tuple[float, int, int]:
+    """Leave-one-probe-out RMSE of the localized Waxman-Smits fit on ``avg_model``.
+
+    For every distinct probe LOCATION (``sample_positions`` value) all observations at that
+    location are removed (all epochs, so a time-lapse probe cannot leak through its other
+    epochs), the localized fit is refitted on the remaining probes, and evaluated at the
+    held-out location with the parameters fitted FOR THAT POINT. The RMSE is taken over the
+    held-out observations.
+
+    A held-out probe with no remaining probe of its horizon within the kernel support (2c),
+    or whose EC / parameters are not finite, is NOT scored: it has no localized prediction,
+    and substituting the global fit would leak the held-out probe (the global fit saw it).
+    Which probes are skipped depends on the geometry and bandwidth only, so the scored set
+    is the same for every K and the curves are comparable.
+
+    Returns ``(rmse, n_scored, n_total)``; ``rmse`` is NaN when nothing could be scored.
+    """
+    avg = np.asarray(avg_model, dtype=float)
+    positions = np.asarray(sample_positions, dtype=int)
+    times = np.asarray(sample_times, dtype=int)
+    theta_obs = np.asarray(theta_obs, dtype=float)
+    layers = None if probe_layer_indices is None else np.asarray(probe_layer_indices, dtype=int)
+    std = None if theta_obs_std is None else np.broadcast_to(
+        np.asarray(theta_obs_std, dtype=float), (len(positions),))
+    n_total = len(positions)
+
+    sq_err: list[float] = []
+    for pos in np.unique(positions):
+        held = positions == pos
+        keep = ~held
+        if not keep.any():
+            continue
+        fits = EMmethod.calibrate_petrophysical_relationship_localized(
+            models=avg[np.newaxis],
+            sample_positions=positions[keep].tolist(), sample_times=times[keep].tolist(),
+            theta_obs=theta_obs[keep], point_x_coords=point_x, bandwidth=bandwidth,
+            point_y_coords=point_y, target_indices=[int(pos)], lab_p0=lab_p0,
+            probe_layer_indices=None if layers is None else layers[keep].tolist(),
+            fixed_params=fixed_params,
+            theta_obs_std=None if std is None else std[keep], ws_bounds=ws_bounds)
+        horizons = fits[0].horizon_fits
+        for i in np.flatnonzero(held):
+            layer = 0 if layers is None else min(max(int(layers[i]), 0), len(horizons) - 1)
+            hz = horizons[layer]
+            if not bool(np.asarray(hz.is_calibrated)[0]):
+                continue
+            a, m, sigma_w, sigma_s = (float(np.asarray(v)[0]) for v in (hz.a, hz.m, hz.sigma_w, hz.sigma_s))
+            ec = avg[int(times[i]), int(pos), layer] if avg.ndim == 3 else avg[int(pos), layer]
+            if not (np.isfinite(ec) and np.isfinite([a, m, sigma_w, sigma_s]).all()
+                    and np.isfinite(theta_obs[i])):
+                continue
+            ratio = a * max(ec, 1e-6) / (sigma_w + sigma_s)
+            sq_err.append((theta_obs[i] - np.power(max(ratio, 0.0), 1.0 / m)) ** 2)
+
+    if not sq_err:
+        return float("nan"), 0, n_total
+    return float(np.sqrt(np.mean(sq_err))), len(sq_err), n_total
+
+
+def localized_loo_rmse_by_k(averaged_models: Sequence[np.ndarray], **kwargs) -> tuple[np.ndarray, np.ndarray]:
+    """:func:`localized_loo_rmse` for every cumulative stack ``averaged_models[k]`` (K = k + 1).
+
+    ``kwargs`` are those of :func:`localized_loo_rmse`. Returns ``(rmse_by_k, n_scored_by_k)``.
+    """
+    rmse, n_scored = [], []
+    for avg in averaged_models:
+        r, n, _ = localized_loo_rmse(avg, **kwargs)
+        rmse.append(r)
+        n_scored.append(n)
+    return np.array(rmse, dtype=float), np.array(n_scored, dtype=int)

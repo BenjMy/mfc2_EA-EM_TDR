@@ -38,6 +38,9 @@ class Rep:
     def metric(self, k, v):
         self.metrics[k] = v
 
+    def step(self, *a, **k):
+        pass
+
 
 def build(avg, positions, times=None, bandwidth=30.0, gfit=None, p0=TRUTH, y=None):
     positions = list(positions)
@@ -217,3 +220,105 @@ def test_persist_writes_the_localized_arrays(tmp_path):
         assert os.path.exists(tmp_path / f"{name}.npy"), name
     assert np.load(tmp_path / "ws_localized_params.npy").shape == (4, 1, 11)
     assert float(np.load(tmp_path / "ws_localized_bandwidth.npy")) == 30.0
+
+
+# ------------------------------------------------------------ K selection
+def _loo(avg, positions, theta_obs=None, times=None, bandwidth=30.0, **kw):
+    positions = list(positions)
+    times = [0] * len(positions) if times is None else list(times)
+    if theta_obs is None:
+        ec_at = [avg[t, p, 0] if avg.ndim == 3 else avg[p, 0] for t, p in zip(times, positions)]
+        theta_obs = ws_theta(ec_at, *TRUTH)
+    return lmap.localized_loo_rmse(
+        avg, bandwidth=bandwidth, point_x=X, point_y=None, sample_positions=positions,
+        sample_times=times, theta_obs=np.asarray(theta_obs, dtype=float),
+        probe_layer_indices=[0] * len(positions), lab_p0=np.array(TRUTH, dtype=float), **kw)
+
+
+def test_resolve_k_selection():
+    assert lmap.resolve_k_selection(None, None) == ("global", "")
+    assert lmap.resolve_k_selection("global", None) == ("global", "")
+    assert lmap.resolve_k_selection("localized-loo", 5.0) == ("localized-loo", "")
+    mode, why = lmap.resolve_k_selection("localized-loo", None)
+    assert mode == "global" and "bandwidth" in why
+    with pytest.raises(ValueError):
+        lmap.resolve_k_selection("loo", 5.0)
+
+
+def test_loo_is_near_zero_on_exact_data_and_grows_with_ec_error():
+    avg = EC[:, None].copy()
+    rmse, n, total = _loo(avg, [1, 3, 5, 7, 9])
+    assert (n, total) == (5, 5) and rmse < 1e-4
+    bad = avg.copy()
+    bad[[3, 7], 0] *= 1.5                                    # EC biased at two probes
+    rmse_bad, _, _ = _loo(bad, [1, 3, 5, 7, 9], theta_obs=ws_theta(EC[[1, 3, 5, 7, 9]], *TRUTH))
+    assert rmse_bad > 10 * max(rmse, 1e-6)
+
+
+def test_loo_skips_probes_without_a_neighbour_in_support():
+    avg = EC[:, None].copy()
+    # bandwidth 5 -> support 10 m, probes 10 m apart: nobody has a neighbour strictly inside
+    rmse, n, total = _loo(avg, [1, 5, 9], bandwidth=5.0)
+    assert n == 0 and total == 3 and np.isnan(rmse)
+
+
+def test_loo_holds_out_a_whole_location_in_time_lapse():
+    avg = np.stack([EC, 1.2 * EC])[:, :, None]
+    positions, times = [2, 2, 5, 8], [0, 1, 0, 0]
+    ec_at = [avg[t, p, 0] for t, p in zip(times, positions)]
+    rmse, n, total = _loo(avg, positions, theta_obs=ws_theta(ec_at, *TRUTH), times=times)
+    assert total == 4 and n == 4 and rmse < 1e-4
+
+
+def test_loo_rmse_by_k_scores_every_stack():
+    good = EC[:, None].copy()
+    bad = good.copy()
+    bad[[3, 7], 0] *= 1.5
+    pos = [1, 3, 5, 7, 9]
+    obs = ws_theta(EC[pos], *TRUTH)
+    rmse, n_scored = lmap.localized_loo_rmse_by_k(
+        [bad, good], bandwidth=30.0, point_x=X, point_y=None, sample_positions=pos,
+        sample_times=[0] * 5, theta_obs=obs, probe_layer_indices=[0] * 5,
+        lab_p0=np.array(TRUTH, dtype=float))
+    assert rmse.shape == (2,) and rmse[1] < rmse[0] and list(n_scored) == [5, 5]
+
+
+def _stub_select(monkeypatch, seen):
+    def fake(**kw):
+        seen.update(kw)
+        c = kw["selection_rmse_by_k"]
+        return SimpleNamespace(K=3 if c is None else int(np.nanargmin(c)) + 1, K_global=3, rmse=0.02,
+                               k_selection="global" if c is None else "localized-loo",
+                               rmse_by_k_localized_loo=c)
+    monkeypatch.setattr(s5.step4_5, "run_select_assess", fake)
+
+
+def test_step5_select_localized_loo_passes_its_curve(monkeypatch):
+    seen = {}
+    _stub_select(monkeypatch, seen)
+    good, bad = EC[:, None].copy(), EC[:, None].copy()
+    bad[[3, 7], 0] *= 1.5
+    pos = [1, 3, 5, 7, 9]
+    rep = Rep()
+    out = s5.run_step5_select(
+        rep, models_clean="m", averaged_models=[bad, bad, good], ranking="r",
+        sample_positions=pos, sample_times=[0] * 5, theta_obs=ws_theta(EC[pos], *TRUTH),
+        fits_step4="f4", depths0="d", output_dir="out", probe_layer_indices=[0] * 5,
+        k_selection="localized-loo", bandwidth=30.0, point_x=X, point_y=None,
+        lab_p0=np.array(TRUTH, dtype=float))
+    assert out.k_selection == "localized-loo" and out.K == 3
+    assert seen["selection_rmse_by_k"].shape == (3,)
+    assert rep.metrics["Step 5 — K selection"] == "localized-loo"
+    assert "localized leave-one-probe-out" in "\n".join(rep.logs)
+
+
+def test_step5_select_downgrades_to_global_without_bandwidth(monkeypatch):
+    seen = {}
+    _stub_select(monkeypatch, seen)
+    rep = Rep()
+    out = s5.run_step5_select(
+        rep, models_clean="m", averaged_models=[EC[:, None]], ranking="r", sample_positions=[1],
+        sample_times=[0], theta_obs=[0.3], fits_step4="f4", depths0="d", output_dir="out",
+        probe_layer_indices=[0], k_selection="localized-loo", bandwidth=None, point_x=X)
+    assert seen["selection_rmse_by_k"] is None and out.k_selection == "global"
+    assert any("localized-loo requested but unavailable" in m for m in rep.logs)

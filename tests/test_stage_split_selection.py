@@ -109,3 +109,41 @@ def test_selection_is_not_trivial_across_seeds(tmp_path):
         *_, sel = _run_steps_2_to_5(models, pos, times, theta_obs, layers, tmp_path)
         Ks.append(sel.K)
     assert max(Ks) > 1, Ks
+
+
+def test_selection_curve_override_picks_k_but_keeps_global_rmse(tmp_path):
+    """selection_rmse_by_k decides K; rmse / rmse_by_k_global stay the global-fit scores."""
+    combos, models, pos, times, layers, theta_obs = _ensemble(0, N_PROBE)
+    kw = dict(sample_positions=pos, sample_times=times, theta_obs=theta_obs,
+              probe_layer_indices=layers, depths_are_fixed=True, fixed_params=FIXED)
+    fits2 = step2_petro.run_petro(models=models, depths0=DEPTHS0, output_dir=str(tmp_path),
+                                  generate_plots=False, **kw)
+    averaged, ranking = step3_average.run_average(models=models, fits_step2=fits2, depths0=DEPTHS0,
+                                                  output_dir=str(tmp_path), generate_plots=False)
+    fits4 = EMmethod.recalibrate_petrophysical_relationship(
+        averaged_models=averaged, depths0=DEPTHS0, **kw)
+    common = dict(models=models, averaged_models=averaged, ranking=ranking, fits_step2=fits4,
+                  depths0=DEPTHS0, output_dir=str(tmp_path), generate_plots=False, **{
+                      k: kw[k] for k in ("sample_positions", "sample_times", "theta_obs",
+                                         "probe_layer_indices")})
+    base = step4_select.run_select_assess(**common)
+    assert base.k_selection == "global" and base.rmse_by_k_localized_loo is None
+    assert base.K_global == base.K
+
+    n = len(averaged)
+    forced = np.full(n, 1.0)
+    forced[n - 1] = 0.0                                   # localized curve says: all models
+    out = step4_select.run_select_assess(selection_rmse_by_k=forced, **common)
+    assert out.K == n and out.k_selection == "localized-loo" and out.K_global == base.K
+    assert out.rmse == pytest.approx(out.rmse_by_k_global[n - 1])      # global RMSE at chosen K
+    assert np.allclose(out.rmse_by_k_global, base.rmse_by_k_global)
+    assert out.best_fit is fits4[n - 1]
+
+    nan_curve = step4_select.run_select_assess(selection_rmse_by_k=np.full(n, np.nan), **common)
+    assert nan_curve.K == base.K and nan_curve.k_selection == "global"
+
+
+def test_figure_3_draws_the_localized_loo_curve(tmp_path):
+    step4_select._generate_figure_3(np.array([.05, .03, .04, .06]), 3, .04, str(tmp_path),
+                                    loo_rmse_by_k=np.array([.04, .05, .02, .03]))
+    assert (tmp_path / "figure_3_rmse_curve.png").stat().st_size > 0

@@ -28,6 +28,12 @@ class SelectionOutput:
         self.ws_map_mode = "global"   # "global" | "localized": calibration behind ``theta_calc``
         self.theta_calc_global = None # global per-horizon WS map, only when ws_map_mode == "localized"
         self.localized_mapping = None # localized_mapping.LocalizedMapping, same condition
+        # Set by run_select_assess. ``rmse`` / ``rmse_by_k_global`` are always the GLOBAL-fit
+        # scores; ``k_selection`` says which curve picked K.
+        self.k_selection = "global"          # "global" | "localized-loo"
+        self.rmse_by_k_global = None         # (N,) global-fit probe RMSE per K
+        self.rmse_by_k_localized_loo = None  # (N,) leave-one-probe-out localized RMSE per K, or None
+        self.K_global = K                    # argmin of the global curve (== K when k_selection == "global")
 
 def run_select_assess(
     models: np.ndarray,
@@ -41,6 +47,7 @@ def run_select_assess(
     output_dir: str,
     generate_plots: bool = True,
     probe_layer_indices: list[int] | None = None,
+    selection_rmse_by_k: np.ndarray | None = None,
 ) -> SelectionOutput:
     """
     Evaluates every stack depth K to find the optimal ensemble model,
@@ -63,6 +70,11 @@ def run_select_assess(
         same horizon that ``best_fit_opt`` was actually fit against. When
         ``None``, falls back to the strided/modulo heuristic used
         elsewhere in the pipeline when probe depths aren't available.
+    selection_rmse_by_k : array of length N, optional
+        Alternative curve (e.g. the localized leave-one-probe-out RMSE of
+        ``localized_mapping.localized_loo_rmse_by_k``) whose minimum picks K instead of the
+        global-fit curve computed here. ``SelectionOutput.rmse`` stays the GLOBAL RMSE at
+        the chosen K; both curves are kept on the output and drawn in Fig. 3.
     """
     num_models = len(models)
     rmse_by_k = []
@@ -192,9 +204,18 @@ def run_select_assess(
             "window_m matching diagnostics (probe_em_matching*.png) before "
             "re-running."
         )
-    optimal_idx = int(np.nanargmin(rmse_by_k))
+    global_idx = int(np.nanargmin(rmse_by_k))
+    loo_curve = None
+    if selection_rmse_by_k is not None:
+        loo_curve = np.asarray(selection_rmse_by_k, dtype=float)
+        if loo_curve.shape != rmse_by_k.shape:
+            raise ValueError(f"selection_rmse_by_k has shape {loo_curve.shape}, expected {rmse_by_k.shape}")
+        if np.all(np.isnan(loo_curve)):
+            print("[STEP 4/5][WARN] selection_rmse_by_k is all-NaN; selecting K on the global curve.")
+            loo_curve = None
+    optimal_idx = int(np.nanargmin(loo_curve)) if loo_curve is not None else global_idx
     optimal_K = optimal_idx + 1
-    min_rmse = rmse_by_k[optimal_idx]
+    min_rmse = rmse_by_k[optimal_idx]   # always the GLOBAL-fit RMSE at the chosen K
 
     # 3. Compute reliability/uncertainty map (Coefficient of Variation) at optimal depth
     # Paper Eq. 8: CV_c = sd_c / rho_c  where rho_c and sd_c are WEIGHTED mean and
@@ -254,7 +275,7 @@ def run_select_assess(
 
     # 4. Generate and save Figure 3 Optimization Curve
     if generate_plots:
-        _generate_figure_3(rmse_by_k, optimal_K, min_rmse, output_dir)
+        _generate_figure_3(rmse_by_k, optimal_K, min_rmse, output_dir, loo_rmse_by_k=loo_curve)
         _generate_uncertainty_plots(cv_map, depths0, output_dir)
 
     # -----------------------------------------------------------------------
@@ -350,7 +371,7 @@ def run_select_assess(
     # Align cv_map to the same 3-D shape
     cv_map_3d = cv_map[np.newaxis, ...] if cv_map.ndim == 2 else cv_map
 
-    return SelectionOutput(
+    out = SelectionOutput(
         K=optimal_K,
         rmse=min_rmse,
         cv_map=cv_map_3d,
@@ -358,9 +379,15 @@ def run_select_assess(
         theta_calc=theta_calc,
         coverage=coverage,
     )
+    out.k_selection = "localized-loo" if loo_curve is not None else "global"
+    out.rmse_by_k_global = rmse_by_k
+    out.rmse_by_k_localized_loo = loo_curve
+    out.K_global = global_idx + 1
+    return out
 
 
-def _generate_figure_3(rmse_by_k: np.ndarray, optimal_K: int, min_rmse: float, output_dir: str):
+def _generate_figure_3(rmse_by_k: np.ndarray, optimal_K: int, min_rmse: float, output_dir: str,
+                       loo_rmse_by_k: np.ndarray | None = None):
     """
     Renders the exact visual style of Fig. 3 from the article text.
     """
@@ -401,6 +428,16 @@ def _generate_figure_3(rmse_by_k: np.ndarray, optimal_K: int, min_rmse: float, o
         markeredgewidth=1.8,
         label="Lowest RMSE ensemble variant"
     )
+
+    if loo_rmse_by_k is not None:
+        # Localized leave-one-probe-out curve (--k-selection localized-loo): this one picks K.
+        # The circle above sits on the GLOBAL RMSE at that K; the global curve stays in black.
+        ax.plot(x_axis, loo_rmse_by_k, color="tab:red", linestyle="-", linewidth=1.2,
+                marker="s", markersize=3, label="Localized leave-one-probe-out (selects K)")
+        g_K = int(np.nanargmin(rmse_by_k)) + 1
+        if g_K != optimal_K:
+            ax.axvline(g_K, color="gray", linestyle=":", linewidth=1.0,
+                       label=f"Global-curve minimum (K={g_K})")
 
     # Annotation text anchors matching Article layout labels
     ax.text(1, rmse_by_k[0], " Single Best Model ", verticalalignment="bottom", color="green", fontsize=9)
