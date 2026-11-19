@@ -100,10 +100,19 @@ Only the latest run of each scenario is used: if you looped over several probe c
 Not a `compare_scenarios` job: one run already holds both maps (`theta_calc.npy` localized, `theta_calc_global.npy`) next to the truth, and the script scores them itself.
 
 ```bash
-python bench_ws_global_vs_localized.py all --design oat --quick --only wsb_xy_random_L4_P4 \
-    --out-root mfc2_outputs/ws_bench_test            # --quick = smoke test
-python bench_ws_global_vs_localized.py score          # re-score existing runs (same options as run)
+python bench_ws_global_vs_localized.py all --design oat --quick \
+    --only wsb_xy_random_L4_P4 --n-free 1 2 3 4 --bandwidth 5 \
+    --seeds 21 22 23 \
+    --out-root mfc2_outputs/ws_bench_nfree           # --quick = smoke test; 4 K x 3 seeds = 12 runs
+
+# re-score existing runs: repeat the SAME options and --out-root (scenario names and design.json depend on them)
+python bench_ws_global_vs_localized.py score \
+    --only wsb_xy_random_L4_P4 --n-free 1 2 3 4 --bandwidth 5 \
+    --seeds 21 22 23 \
+    --out-root mfc2_outputs/ws_bench_nfree
 ```
+
+`--seeds` sets `ws_xy_seed` (a new realisation of the random WS field per seed); `score` then reports mean and sd over the seeds in `ws_global_vs_localized_agg.csv`. Use one `--out-root` per batch and a different one for `--quick` and full runs.
 
 Outputs in `--out-root`: `ws_global_vs_localized.csv`, `ws_global_vs_localized_agg.csv`, `ws_global_vs_localized.png`, `ws_error_by_distance.csv/.png`.
 
