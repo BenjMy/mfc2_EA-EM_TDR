@@ -2071,6 +2071,7 @@ def _fit_ws_horizon_weighted(
     fixed_params: dict[str, bool],
     x0_start: np.ndarray | None = None,
     ws_bounds: dict | None = None,
+    lambda_reg: float = 0.1,
 ) -> tuple[float, float, float, float, np.ndarray]:
     """
     Single Waxman-Smits horizon fit for an arbitrary observation-weight
@@ -2111,11 +2112,13 @@ def _fit_ws_horizon_weighted(
         params (computed against ALL observations, not just the
         nonzero-weight ones, so RMSE stays comparable across bandwidths).
     """
+    # ``lambda_reg`` (default 0.1 = the value that was hard-coded here) scales the Gaussian
+    # prior centred on ``p0``; ws_spatial.fit_stations uses it to set the shrinkage of a
+    # per-station fit towards the pooled value.
     from scipy.optimize import minimize
 
     _PARAM_ORDER = ("a", "m", "sigma_w", "sigma_s")
     PRIOR_STDS = {"a": 0.5, "m": 0.5, "sigma_w": 150.0, "sigma_s": 30.0}
-    lambda_reg = 0.1
     _LN10 = np.log(10.0)
 
     theta_clip = np.clip(theta_layer, 1e-6, 1.0)

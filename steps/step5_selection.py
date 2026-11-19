@@ -22,6 +22,7 @@ import numpy as np
 import em_methodology as EMmethod
 import localized_mapping as lmap
 import step4_select as step4_5
+import ws_spatial as wss
 
 
 def run_step5_select(reporter, *, models_clean, averaged_models, ranking, sample_positions,
@@ -101,7 +102,10 @@ def run_step5_select(reporter, *, models_clean, averaged_models, ranking, sample
 def run_step5_localized_mapping(reporter, *, selected_output, averaged_models, requested_mode,
                                 bandwidth, bandwidth_source, point_x, point_y, sample_positions,
                                 sample_times, theta_obs, probe_layer_indices, lab_p0,
-                                fixed_params, theta_obs_std, ws_bounds):
+                                fixed_params, theta_obs_std, ws_bounds,
+                                ws_spatial=None, sensor_ids=None, output_dir=None,
+                                spatial_free=("sigma_s",), spatial_power=2.0,
+                                spatial_shrinkage=1.0):
     """Switch ``selected_output.theta_calc`` to the localized-WS map (see localized_mapping.py).
 
     K and its RMSE come from the global Step 4/5 selection and are not touched. Only the
@@ -111,8 +115,25 @@ def run_step5_localized_mapping(reporter, *, selected_output, averaged_models, r
     ``requested_mode`` None = default (localized); it is downgraded to global, with the
     reason logged, when no bandwidth is available or the localized fit fails.
 
+    ``ws_spatial`` (``pooled`` | ``kernel`` | ``voronoi`` | ``idw``; None = keep ``requested_mode``)
+    chooses the calibration unit: ``pooled`` = global, ``kernel`` = localized, and ``voronoi`` /
+    ``idw`` fit ``sigma_s`` per station and spread it over the field
+    (:func:`ws_spatial.build_station_mapping`; same container, so Steps 5b / 6 need no change).
+
     Returns the ``LocalizedMapping`` or None (global maps).
     """
+    if ws_spatial is not None:
+        if ws_spatial not in wss.SPATIAL_CHOICES:
+            raise ValueError(f"ws_spatial must be one of {wss.SPATIAL_CHOICES}, got {ws_spatial!r}")
+        if ws_spatial in wss.STATION_METHODS:
+            return _run_station_mapping(
+                reporter, selected_output=selected_output, averaged_models=averaged_models,
+                method=ws_spatial, point_x=point_x, point_y=point_y, sample_positions=sample_positions,
+                sample_times=sample_times, theta_obs=theta_obs, probe_layer_indices=probe_layer_indices,
+                sensor_ids=sensor_ids, fixed_params=fixed_params, theta_obs_std=theta_obs_std,
+                ws_bounds=ws_bounds, output_dir=output_dir, free=spatial_free,
+                power=spatial_power, shrinkage=spatial_shrinkage)
+        requested_mode = "global" if ws_spatial == "pooled" else "localized"
     mode, why = lmap.resolve_map_calibration(requested_mode, bandwidth)
     selected_output.ws_map_mode = "global"
     if mode == "global":
@@ -155,6 +176,57 @@ def run_step5_localized_mapping(reporter, *, selected_output, averaged_models, r
     reporter.metric("Step 5 — localized vs global map, mean |dθ|", f"{diff:.5f} m³/m³")
     reporter.metric("Step 5 — points on global fallback (per horizon)",
                     ", ".join(f"{100 * f:.0f}%" for f in frac))
+    return mapping
+
+
+def _run_station_mapping(reporter, *, selected_output, averaged_models, method, point_x, point_y,
+                         sample_positions, sample_times, theta_obs, probe_layer_indices, sensor_ids,
+                         fixed_params, theta_obs_std, ws_bounds, output_dir, free, power, shrinkage):
+    """Per-station WS fit spread over the field (``voronoi`` | ``idw``); None on failure (global)."""
+    selected_output.ws_map_mode = "global"
+    n_st = wss.count_stations(sensor_ids, fallback=len(set(np.asarray(sample_positions).tolist())))
+    reporter.log(f"[STEP 5] maps: per-station Waxman-Smits ({method}), free = {', '.join(free)}, "
+                 f"{n_st} stations, prior shrinkage x{shrinkage:g}"
+                 + (f", IDW power {power:g}" if method == "idw" else "") + ".")
+    try:
+        mapping = wss.build_station_mapping(
+            averaged_models[selected_output.K - 1], selected_output.best_fit, method=method,
+            point_x=point_x, point_y=point_y, sample_positions=sample_positions,
+            sample_times=sample_times, theta_obs=theta_obs, probe_layer_indices=probe_layer_indices,
+            sensor_ids=sensor_ids, fixed_params=fixed_params, theta_obs_std=theta_obs_std,
+            ws_bounds=ws_bounds, free=free, power=power, shrinkage=shrinkage)
+    except Exception as exc:   # noqa: BLE001 -- keep the run, but say loudly that maps are global
+        reporter.log(f"[STEP 5][WARN] station mapping failed ({type(exc).__name__}: {exc}); "
+                     f"the maps use the global per-horizon fit instead.")
+        reporter.metric("Step 5 — WS calibration behind the maps", "global (station mapping failed)")
+        return None
+
+    theta = mapping.theta[np.newaxis, ...] if mapping.theta.ndim == 2 else mapping.theta
+    selected_output.theta_calc_global = selected_output.theta_calc
+    selected_output.theta_calc = theta
+    selected_output.localized_mapping = mapping       # same attribute: Steps 5b / 6 read it
+    selected_output.ws_map_mode = method
+    sf = mapping.station_fits
+    for note in sf.notes:
+        reporter.log(f"[STEP 5][WARN] {note}")
+    n_bound = int(sf.at_bound.sum())
+    n_fit = int(sf.valid.sum())
+    reporter.log(f"[STEP 5] per-station fits: {n_fit} of {sf.valid.size} (horizon, station) pairs fitted; "
+                 f"{n_bound} with a free parameter on a bound"
+                 + (" -- those values are not identified, do not interpret them" if n_bound else "") + ".")
+    diff = np.nanmean(np.abs(theta - selected_output.theta_calc_global))
+    reporter.metric("Step 5 — WS calibration behind the maps", f"{method} (per-station {', '.join(free)})")
+    reporter.metric("Step 5 — stations used", str(n_st))
+    reporter.metric("Step 5 — per-station fits on a bound", f"{n_bound} of {n_fit}")
+    reporter.metric(f"Step 5 — {method} vs global map, mean |dθ|", f"{diff:.5f} m³/m³")
+    if output_dir:
+        wss.write_ws_by_station_csv(sf, os.path.join(output_dir, "ws_by_station.csv"))
+        try:
+            from plots import ws_spatial_plots
+            ws_spatial_plots.plot_station_params(
+                mapping, point_x, point_y, os.path.join(output_dir, "ws_spatial_sigma_s_map.png"))
+        except Exception as exc:   # noqa: BLE001 -- a plot must never stop a run
+            reporter.log(f"[STEP 5][WARN] ws_spatial plot failed ({type(exc).__name__}: {exc}).")
     return mapping
 
 

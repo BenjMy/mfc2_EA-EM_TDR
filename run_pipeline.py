@@ -62,6 +62,7 @@ import em_methodology as EMmethod
 import em_subsample
 import geometry_utils
 import localized_mapping as lmap
+import ws_spatial as wss
 import quick_preset
 import stage_split
 import train_val_split as tvs
@@ -1506,6 +1507,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          ws_localized_bandwidth: float | None = None,
          ws_localized_bandwidth_sweep: list[float] | None = None,
          ws_map_calibration: str | None = None,
+         ws_spatial: str | None = None,
+         ws_spatial_power: float = 2.0,
+         ws_spatial_shrinkage: float = 1.0,
          k_selection: str | None = None,
          em_footprint_diagnostic: bool = False,
          quick: bool = False,
@@ -1671,6 +1675,11 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         the scenario config's ``ws_localized_bandwidth_sweep`` field, or
         skips the sweep if that isn't set either. Overrides the scenario
         value when passed (CLI > scenario, same precedence as beta/gamma).
+    ws_spatial : {"pooled", "kernel", "voronoi", "idw"} or None, optional
+        Calibration unit of the maps (supersedes ``ws_map_calibration`` when set): ``pooled`` =
+        ``global``, ``kernel`` = ``localized``, ``voronoi`` / ``idw`` = ``sigma_s`` fitted per
+        station and spread over the field (``ws_spatial.py``). ``ws_spatial_power`` is the IDW
+        exponent, ``ws_spatial_shrinkage`` the prior weight of a station fit (1 = pooled fit's).
     ws_map_calibration : {"localized", "global"} or None, optional
         Waxman-Smits calibration used to convert the optimal EC model to the
         water-content maps. ``None`` (default) = ``"localized"``: the
@@ -4383,11 +4392,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             f"max: {np.nanmax(_all_rmse):.5f}  [m³/m³]"
         )
 
+        # Stations actually used (not the config's NUM_POSITIONS: 20 real stations vs 4 positions)
+        _n_stations_used = wss.count_stations(sample_sensor_ids, fallback=NUM_POSITIONS)
+
         # Count SWC sensors per horizon
         _probe_layer_arr = np.array(probe_layer_indices) if probe_layer_indices is not None else None
         reporter.log(
             f"[STEP 2] SWC sensors used for calibration: {len(theta_obs)} total observations "
-            f"across {NUM_POSITIONS} spatial positions × {n_time} time step(s)"
+            f"across {_n_stations_used} stations × {n_time} time step(s)"
         )
         if _probe_layer_arr is not None:
             for _hz in range(_n_horizons):
@@ -4725,7 +4737,9 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             bandwidth_source=_map_bw_source, point_x=x_transect, point_y=_localized_y,
             sample_positions=sample_positions, sample_times=sample_times, theta_obs=theta_obs,
             probe_layer_indices=probe_layer_indices, lab_p0=LAB_P0, fixed_params=WS_FIXED_PARAMS,
-            theta_obs_std=_theta_obs_std_step2, ws_bounds=WS_BOUNDS_OVERRIDE)
+            theta_obs_std=_theta_obs_std_step2, ws_bounds=WS_BOUNDS_OVERRIDE,
+            ws_spatial=ws_spatial, sensor_ids=sample_sensor_ids, output_dir=OUTPUT_DIR,
+            spatial_power=ws_spatial_power, spatial_shrinkage=ws_spatial_shrinkage)
 
         # -----------------------------------------------------------------------
         # STEP 5c — EM FOOTPRINT DISCREPANCY (McNeill depth weighting)
@@ -5026,7 +5040,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.metric("Measured points / survey",num_measured_points)
         reporter.metric("Soil layers (n_layers)",  num_layers)
         reporter.metric("SWC sensor observations", len(theta_obs))
-        reporter.metric("SWC spatial positions",   NUM_POSITIONS)
+        reporter.metric("SWC spatial positions",   _n_stations_used)
         reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
         reporter.metric("Final RMSE (Step 5)",     f"{selected_output.rmse:.6f} m³/m³")
         _cv_shape = selected_output.cv_map.shape
@@ -5363,6 +5377,20 @@ if __name__ == "__main__":
              "ranking (Steps 2-3) stays global.",
     )
     parser.add_argument(
+        "--ws-spatial", choices=list(wss.SPATIAL_CHOICES), default=None,
+        help="Calibration unit behind the water-content maps; supersedes --ws-map-calibration. "
+             "'pooled' = one parameter set per horizon; 'kernel' = Gaspari-Cohn localized "
+             "(needs a bandwidth); 'voronoi' / 'idw' = sigma_s fitted per station (a, m, sigma_w "
+             "held at the pooled value, shrunk towards it) and spread over the field by the "
+             "nearest station or inverse-distance weights. Writes ws_by_station.csv and "
+             "ws_spatial_sigma_s_map.png. See ws_spatial.py.",
+    )
+    parser.add_argument("--ws-spatial-power", type=float, default=2.0,
+                        help="IDW exponent for --ws-spatial idw (default 2).")
+    parser.add_argument("--ws-spatial-shrinkage", type=float, default=1.0,
+                        help="Prior weight of a per-station fit relative to the pooled fit's own "
+                             "regularisation (default 1; 0 = unregularised).")
+    parser.add_argument(
         "--ws-map-calibration", choices=list(lmap.MAP_CALIBRATION_CHOICES), default=None,
         help="Waxman-Smits calibration behind the water-content MAPS (EC -> theta). "
              "'localized' (default): after Step 5 picks K, every EM point is converted with "
@@ -5578,6 +5606,9 @@ if __name__ == "__main__":
              ws_localized_bandwidth=args.ws_localized_bandwidth,
              ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
              ws_map_calibration=args.ws_map_calibration,
+             ws_spatial=args.ws_spatial,
+             ws_spatial_power=args.ws_spatial_power,
+             ws_spatial_shrinkage=args.ws_spatial_shrinkage,
              k_selection=args.k_selection,
              em_footprint_diagnostic=args.em_footprint_diagnostic,
              quick=args.quick, quick_epochs=args.quick_epochs,

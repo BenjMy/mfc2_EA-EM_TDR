@@ -105,6 +105,7 @@ GAMMA=()
 WS_LOCALIZED_BANDWIDTH=""
 WS_LOCALIZED_BANDWIDTH_SWEEP=()
 WS_MAP_CALIBRATION=""
+WS_SPATIAL=""
 EM_FOOTPRINT_DIAGNOSTIC=false
 QUICK=false
 QUICK_EPOCHS=""
@@ -290,6 +291,9 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           --ws-localized-bandwidth / scenario value.
                           Overrides 'ws_localized_bandwidth_sweep' in
                           the scenario config.
+      --ws-spatial {pooled,kernel,voronoi,idw}
+                          Calibration unit of the maps; supersedes --ws-map-calibration.
+                          voronoi / idw fit sigma_s per station and spread it (ws_spatial.py).
       --ws-map-calibration {localized,global}
                           Waxman-Smits calibration behind the water-content
                           MAPS. 'localized' (DEFAULT): every EM point is
@@ -652,6 +656,11 @@ while [[ $# -gt 0 ]]; do
             [[ "${WS_MAP_CALIBRATION}" == "localized" || "${WS_MAP_CALIBRATION}" == "global" ]] \
                 || die "--ws-map-calibration must be 'localized' or 'global', got '${WS_MAP_CALIBRATION}'"
             shift 2 ;;
+        --ws-spatial)
+            WS_SPATIAL="${2:?'--ws-spatial requires pooled, kernel, voronoi or idw'}"
+            [[ "${WS_SPATIAL}" =~ ^(pooled|kernel|voronoi|idw)$ ]] \
+                || die "--ws-spatial must be pooled, kernel, voronoi or idw, got '${WS_SPATIAL}'"
+            shift 2 ;;
         --train-val-split)
             TRAIN_VAL_SPLIT="${2:?'--train-val-split requires a method'}"
             case "${TRAIN_VAL_SPLIT}" in
@@ -1011,6 +1020,9 @@ fi
 if [[ -n "${WS_MAP_CALIBRATION}" ]]; then
     INVERSION_OVERRIDE_ARGS+=(--ws-map-calibration "${WS_MAP_CALIBRATION}")
 fi
+if [[ -n "${WS_SPATIAL}" ]]; then
+    INVERSION_OVERRIDE_ARGS+=(--ws-spatial "${WS_SPATIAL}")
+fi
 
 TRAIN_VAL_ARGS=()
 if [[ -n "${TRAIN_VAL_SPLIT}" ]]; then
@@ -1117,6 +1129,7 @@ cat >> "${HEADER_TMP}" << MDEOF
 | ws-localized-bandwidth | \`${WS_LOCALIZED_BANDWIDTH:-scenario default (or disabled)}\` |
 | ws-localized-bandwidth-sweep | \`${WS_LOCALIZED_BANDWIDTH_SWEEP[*]:-scenario default (or disabled)}\` |
 | ws-map-calibration | \`${WS_MAP_CALIBRATION:-localized (default)}\` |
+| ws-spatial | \`${WS_SPATIAL:-(not set: ws-map-calibration decides)}\` |
 | train-val-split | \`${TRAIN_VAL_SPLIT:-scenario default (or off)}\` |
 | em-footprint-diagnostic | \`${EM_FOOTPRINT_DIAGNOSTIC}\` |
 | quick | \`${QUICK}${QUICK_EPOCHS:+ (epochs=${QUICK_EPOCHS})}\` |
