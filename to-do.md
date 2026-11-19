@@ -36,6 +36,9 @@ Update 2026-11-12 (night): refactoring phases 8 (sweeps + golden equality test) 
   5. Compare per horizon (EC and theta RMSE/bias vs truth, `plot_validation_1to1.py`): free (now) vs pinned-to-TDR (realistic) vs pinned-to-truth (oracle upper bound) vs full-depth TDR (reference). Success = pinned-to-TDR beats free at H1-H3 and sits between free and oracle. Run on the uniform and the hetero truth.
   Open points: the deeper horizons still need WS parameters (default `lab_p0`, or the parked "borrowing" option); TDR sees ~0.2 m while horizon 0 may be thicker (representativeness error).
 
+
+
+
 ## Parked
 - [ ] repeat run_1d_surface_vs_full.sh with calibration of each horizon (not only the first one) — NOT DONE, needs a decision: the surface-only runs have TDR only at 0.2 m, so horizons 1-3 have no data to calibrate with. Options: (a) the existing `full` runs already calibrate all 4 horizons, nothing to add; (b) share horizon 0's fitted WS parameters with the deeper horizons (a new "borrowing" option; the code deliberately does not do this today); (c) add TDR at more depths to the surface study.
 
@@ -91,6 +94,13 @@ Context (read from the report / `stage_calibration.json`): 20 TDR stations (Unit
 - [ ] **G. Housekeeping found on this run.** (1) The log line `SWC sensors used for calibration: 252 total observations across 4 spatial positions` prints the config value `num_swc_positions` (`NUM_POSITIONS`), not the 20 stations actually used; print the real number for `data_source='real'`. (2) The pre-existing reading "no spatial structure" from the flat sweep was wrong (see A) - do not quote it.
   - Status (feat/ws-spatial): (1) DONE, the log line and the `SWC spatial positions` metric print `ws_spatial.count_stations(sample_sensor_ids)`.
 - [ ] **Decision needed from Ben:** which spreading method (C) to implement first, and in-sample, held-out or both for the error map (F). Suggested default: kernel (already exists) with the sweep from A, compared against Voronoi and IDW on the leave-one-station-out CV; held-out error map (plus in-sample as a second row).
+
+
+- [ ] I’m happy to rename kernel to localized and pooled to global in --ws-spatial, the code, the tests and the flowchart, so they match the old --ws-map-calibration names. Do you want me to do that? yes please
+
+- [ ] And should Voronoi and IDW stay as selectable options, or be demoted to a comparison-only diagnostic? to a comparison only at the moment
+
+
 
 ### Reading of the sweep run (2026-11-17; figures `bandwidth_sweep.png`, `petro_calibration_localized_overlay.png`, `petro_calibration_localized_map.png`)
 - The sweep was still 0.5-20 m (the run was started before item A): LOO-CV RMSE 0.11264 flat up to 8 m, 0.11262 at 12 m, 0.11209 at 20 m = a 0.5 % gain, i.e. no evidence either way. A re-run with 15-100 m is still needed.
