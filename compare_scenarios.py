@@ -234,6 +234,10 @@ def parse_report(path: str, use_manifest: bool = True) -> dict:
         return _first_number(metrics.get(key)) if key in metrics else default
 
     out["final_rmse"] = m("Final RMSE (Step 5)")
+    # RMSE in context (rmse_context.py); older reports lack these -> derived / nan
+    out["final_rmse_pct"] = m("Final RMSE (% vol)", out["final_rmse"] * 100.0)
+    out["rsr"] = m("Normalised RMSE (RMSE/std, RSR)")
+    out["rmse_rating"] = str(metrics.get("RMSE rating", "")).strip()
     out["cv_mean"] = m("CV map mean (relative uncertainty)")
     out["cv_max"] = m("CV map max")
     out["theta_calc_mean"] = m("theta_calc mean [m³/m³]")
@@ -442,6 +446,9 @@ SCALAR_METRIC_ROWS = [
     ("result_line", "Result"),
     ("quality_gate_level", "Quality gate"),
     ("final_rmse", "Final RMSE (Step 5) [m3/m3]"),
+    ("final_rmse_pct", "Final RMSE [% vol]"),
+    ("rsr", "RSR = RMSE / std(observed SWC)"),
+    ("rmse_rating", "RMSE rating"),
     ("cv_mean", "CV map mean"),
     ("cv_max", "CV map max"),
     ("theta_calc_mean", "theta_calc mean [m3/m3]"),
@@ -495,12 +502,16 @@ def _bar_grid(ax, labels, values, ylabel, title, fmt="{:.3f}"):
 
 def plot_rmse_and_cv(parsed, out_dir):
     labels = list(parsed.keys())
-    final_rmse = [parsed[l]["final_rmse"] for l in labels]
+    final_rmse = [parsed[l].get("final_rmse_pct", parsed[l]["final_rmse"] * 100.0) for l in labels]
     cv_mean = [parsed[l]["cv_mean"] for l in labels]
     cv_max = [parsed[l]["cv_max"] for l in labels]
 
     fig, axes = plt.subplots(1, 3, figsize=(4.5 * len(labels) ** 0.3 + 6, 4.2))
-    _bar_grid(axes[0], labels, final_rmse, "RMSE [m3/m3]", "Final RMSE (Step 5)")
+    _bar_grid(axes[0], labels, final_rmse, "RMSE [% vol]", "Final RMSE (Step 5)")
+    _rsr = [parsed[l].get("rsr", float("nan")) for l in labels]
+    if any(np.isfinite(v) for v in _rsr):
+        axes[0].set_title("Final RMSE (Step 5)  [RSR " + ", ".join(
+            "n/a" if not np.isfinite(v) else f"{v:.2f}" for v in _rsr) + "]", fontsize=8)
     _bar_grid(axes[1], labels, cv_mean, "CV (mean)", "Mean CV (relative uncertainty)")
     _bar_grid(axes[2], labels, cv_max, "CV (max)", "Max CV")
     for ax, thresh in zip(axes[1:], [0.30, None]):
