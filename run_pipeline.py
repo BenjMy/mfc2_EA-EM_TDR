@@ -488,6 +488,20 @@ class PipelineReporter:
 from run_log import (DEFAULT_RUN_LOG, RUN_LOG_COLUMNS, RunLog, git_commit,  # noqa: E402,F401
                      write_run_manifest)
 
+def _validation_log_fields(reporter) -> dict:
+    """Run-log columns of the held-out RMSE (Step 5b metrics; empty without a split)."""
+    try:
+        from rmse_context import parse_leading_number as parse_rmse
+        out = {}
+        for col, name in (("val_rmse_pct", "Validation RMSE (% vol)"),
+                          ("val_rsr", "Validation RSR (RMSE/std of its own SWC obs)")):
+            v = parse_rmse(reporter.get_metric(name))
+            out[col] = "" if v != v else f"{v:.4f}"       # nan -> ""
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _record_rmse_context(reporter, rmse, theta_obs) -> dict:
     """Report RMSE in % vol + normalised by the std of the measured SWC (rmse_context.py).
 
@@ -4910,6 +4924,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 "quality_level": quality_gate_result.level,
                 "error":         "",
                 **_rmse_ctx_fields,
+                **_validation_log_fields(reporter),
             })
             return
 
@@ -5156,6 +5171,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             "quality_level": quality_gate_result.level,
             "error":         "",
             **_rmse_ctx_fields,
+            **_validation_log_fields(reporter),
         })
 
     except Exception as exc:

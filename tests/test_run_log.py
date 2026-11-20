@@ -191,3 +191,24 @@ def test_cli_latest_matches_old_awk_semantics(tmp_path):
     assert run("1d_full_free1", "--status", "SUCCESS") == "old"
     assert run("1d_full_free1", "--field", "status") == "FAILED"
     assert run("nope") == ""
+
+
+def test_validation_columns_in_log(tmp_path):
+    from run_log import RunLog, RUN_LOG_COLUMNS
+    assert "val_rmse_pct" in RUN_LOG_COLUMNS and "val_rsr" in RUN_LOG_COLUMNS
+    log = RunLog(str(tmp_path / "v.csv"))
+    log.append({"run_id": "a", "scenario": "real_tv_by_probe", "val_rmse_pct": "11.2000", "val_rsr": "0.9100"})
+    r = log.rows()[0]
+    assert r["val_rsr"] == "0.9100" and r["study_type"] == "hyp2_train_val_split"
+
+
+def test_validation_log_fields_helper():
+    import run_pipeline as rp
+
+    class R:
+        def get_metric(self, n, d=""):
+            return {"Validation RMSE (% vol)": "4.50 % vol",
+                    "Validation RSR (RMSE/std of its own SWC obs)": "n/a  (obs std n/a, n=1)"}.get(n, d)
+    assert rp._validation_log_fields(R()) == {"val_rmse_pct": "4.5000", "val_rsr": ""}
+    assert rp._validation_log_fields(type("E", (), {"get_metric": lambda s, n, d="": d})()) == \
+        {"val_rmse_pct": "", "val_rsr": ""}

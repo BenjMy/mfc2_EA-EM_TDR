@@ -68,3 +68,9 @@ def test_prefixed_metric_lines():
     d = dict(rc.prefixed_metric_lines("Validation", c))
     assert d["Validation RMSE (% vol)"].startswith("10.00")
     assert d["Validation RMSE rating"] == "unsatisfactory"      # RSR 0.1 / 0.1118 = 0.89
+
+
+def test_parse_leading_number():
+    assert rc.parse_leading_number("0.51  (obs std 0.1, n=3)") == 0.51
+    assert np.isnan(rc.parse_leading_number("n/a  (obs std n/a, n=1)"))
+    assert np.isnan(rc.parse_leading_number(None))

@@ -56,6 +56,13 @@ def parse_rmse(value) -> float:
     return float(m.group(0)) if m else float("nan")
 
 
+def parse_leading_number(value) -> float:
+    """Number at the START of a metric string (nan otherwise): ``'0.51  (n=3)'`` -> 0.51,
+    ``'n/a  (obs std n/a, n=1)'`` -> nan (``parse_rmse`` would return the 1 of ``n=1``)."""
+    m = re.match(r"\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)", str(value if value is not None else ""))
+    return float(m.group(1)) if m else float("nan")
+
+
 def rating_from_rsr(rsr: float, obs_std: float | None = None) -> str:
     """Plain-language rating of an RSR (see module docstring)."""
     if obs_std is not None and (not np.isfinite(obs_std) or obs_std < MIN_STD):

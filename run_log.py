@@ -37,6 +37,8 @@ RUN_LOG_COLUMNS = [
     # added 2026-11: which study the run belongs to + the RMSE in context
     # (see rmse_context.py: % vol, RMSE / std of the measured SWC, rating)
     "study_type", "rmse_pct", "swc_obs_std", "rsr", "rmse_rating",
+    # held-out (train/validation split) counterparts, empty without a split
+    "val_rmse_pct", "val_rsr",
 ]
 
 # (regex on the scenario name, study type), first match wins. Keep in sync with the
