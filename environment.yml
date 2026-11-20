@@ -9,6 +9,8 @@ dependencies:
   - matplotlib
   - tqdm
   - pytest
+  - xarray
+  - netcdf4
   - pip
   - pip:
       - emagpy

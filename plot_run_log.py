@@ -19,6 +19,8 @@ Usage
     python plot_run_log.py --upgrade                    # add the new columns to the CSV first
     python plot_run_log.py --figures                    # + copy the key pipeline figures of each run
     python plot_run_log.py --figures --tile             # + one contact sheet per figure (scenarios side by side)
+    python plot_run_log.py --maps                       # + re-plot the SWC maps of all runs of a study on ONE colour scale
+    python plot_run_log.py --maps --map-var theta_std_total --epoch 0
 
 Output: ``<out-dir>/<study_type>/`` (default ``comparison_output/run_log_plots``), with
 
@@ -32,6 +34,9 @@ Output: ``<out-dir>/<study_type>/`` (default ``comparison_output/run_log_plots``
     runtime_vs_rmse.png    cost / accuracy trade-off
     runs.csv               the table behind the plots
     figures/<figure>/<scenario>.png   (--figures) the key figure of every run, one folder per figure
+    maps_<var>_epoch<t>.png  (--maps) the maps of all scenarios redrawn from output_model/maps.nc
+                           (maps_export.py): rows = scenarios, columns = layers, ONE shared colour
+                           scale (2-98 percentile of all panels); 1-D runs: theta along x, one line per layer
     figures/<figure>_tiled.png        (--tile) those images side by side (a contact sheet of the
                            existing PNGs, not a re-plot: colour scales are those of each run;
                            a real re-plot needs the maps as arrays / NetCDF, see to-do.md)
@@ -313,7 +318,88 @@ def tile_figures(label: str, images: dict[str, str], out_dir: str, ncols: int = 
     return _save(fig, os.path.join(out_dir, "figures"), f"{label}_tiled.png")
 
 
-def plot_study(study: str, rows: list[dict], out_root: str, figures: bool = False, tile: bool = False) -> list[str]:
+def load_run_maps(latest: dict[str, dict]) -> dict:
+    """scenario -> xarray.Dataset of its ``output_model/maps.nc`` (runs without one are skipped)."""
+    import maps_export as mx
+    out = {}
+    for name, r in sorted(latest.items()):
+        d = r.get("output_dir", "")
+        for sub in ("output_model", ""):
+            p = os.path.join(d, sub, mx.MAPS_NAME)
+            if d and os.path.isfile(p):
+                ds = mx.load_maps(p)
+                if ds is not None:
+                    out[name] = ds
+                break
+    return out
+
+
+def shared_limits(arrays: list, lo: float = 2.0, hi: float = 98.0) -> tuple[float, float]:
+    """Colour limits shared by all panels: percentiles of the pooled finite values."""
+    vals = np.concatenate([np.asarray(a, dtype=float).ravel() for a in arrays]) if arrays else np.array([])
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return 0.0, 1.0
+    vmin, vmax = np.percentile(vals, [lo, hi])
+    return (float(vmin), float(vmax)) if vmax > vmin else (float(vmin), float(vmin) + 1e-9)
+
+
+def plot_maps_side_by_side(maps: dict, out_dir: str, var: str = "theta", epoch: int = -1,
+                           title: str = "") -> str | None:
+    """Redraw ``var`` of several runs on ONE colour scale (rows = scenarios, columns = layers).
+
+    2-D runs: scatter of the measured points (x, y); 1-D runs (all y equal): ``var`` along x,
+    one line per layer. Runs without ``var`` are skipped. Returns the figure path or None.
+    """
+    maps = {k: ds for k, ds in maps.items() if var in ds}
+    if len(maps) < 1:
+        return None
+    unit = "% vol" if var.startswith("theta") else ""
+    scale = 100.0 if unit else 1.0
+    get = lambda ds: np.asarray(ds[var].isel(time=epoch if abs(epoch) <= ds.sizes["time"] else -1), dtype=float) * scale
+    is2d = all(np.unique(np.asarray(ds["y"])).size > 1 for ds in maps.values())
+    names = list(maps)
+    nl = max(ds.sizes["layer"] for ds in maps.values())
+    lab = lambda ds, l: (f"{float(ds['layer_depth'][l]):.2f} m" if "layer_depth" in ds.coords else f"layer {l}")
+    vmin, vmax = shared_limits([get(ds) for ds in maps.values()])
+    if is2d:
+        fig, axes = plt.subplots(len(names), nl, figsize=(3.2 * nl + 1, 2.8 * len(names)), squeeze=False)
+        sc = None
+        for i, n in enumerate(names):
+            ds = maps[n]
+            a = get(ds)
+            for j in range(nl):
+                ax = axes[i, j]
+                if j >= ds.sizes["layer"]:
+                    ax.axis("off")
+                    continue
+                sc = ax.scatter(ds["x"], ds["y"], c=a[:, j], s=10, vmin=vmin, vmax=vmax, cmap="viridis_r")
+                ax.set_aspect("equal")
+                ax.tick_params(labelsize=5)
+                ax.set_title(f"{n}\n{lab(ds, j)}" if j == 0 else lab(ds, j), fontsize=6)
+        fig.colorbar(sc, ax=axes.ravel().tolist(), label=f"{var} [{unit}]" if unit else var, shrink=0.8)
+    else:
+        fig, axes = plt.subplots(len(names), 1, figsize=(6, 2.4 * len(names)), squeeze=False, sharex=False)
+        for i, n in enumerate(names):
+            ds = maps[n]
+            a = get(ds)
+            order = np.argsort(np.asarray(ds["x"]))
+            for j in range(ds.sizes["layer"]):
+                axes[i, 0].plot(np.asarray(ds["x"])[order], a[order, j], "o-", ms=3, lw=1, label=lab(ds, j))
+            axes[i, 0].set_ylim(vmin, vmax)
+            axes[i, 0].set_ylabel(f"{var} [{unit}]" if unit else var, fontsize=7)
+            axes[i, 0].set_title(n, fontsize=7)
+            axes[i, 0].legend(fontsize=5, ncol=4)
+            axes[i, 0].grid(alpha=0.3)
+        axes[-1, 0].set_xlabel("x [m]")
+    fig.suptitle(f"{title}: {var}, epoch {epoch}, shared colour scale {vmin:.1f}-{vmax:.1f} {unit}".strip(), fontsize=9)
+    if not is2d:
+        fig.tight_layout()
+    return _save(fig, out_dir, f"maps_{var}_epoch{epoch}.png")
+
+
+def plot_study(study: str, rows: list[dict], out_root: str, figures: bool = False, tile: bool = False,
+               maps: bool = False, map_var: str = "theta", epoch: int = -1) -> list[str]:
     """All plots of one study type; returns the files written."""
     out_dir = os.path.join(out_root, study)
     latest = latest_per_scenario(rows)
@@ -330,6 +416,13 @@ def plot_study(study: str, rows: list[dict], out_root: str, figures: bool = Fals
         files += [p for d in found.values() for p in d.values()]
         if tile:
             files += [t for lab, d in found.items() if (t := tile_figures(lab, d, out_dir))]
+    if maps:
+        p = plot_maps_side_by_side(load_run_maps(latest), out_dir, map_var, epoch, study)
+        if p:
+            files.append(p)
+        else:
+            print(f"[plot_run_log] {study}: no run has {map_var} in output_model/maps.nc "
+                  f"(written by runs made after maps_export.py was added)")
     return files
 
 
@@ -362,6 +455,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--compare", action="store_true", help="also run compare_scenarios.py per study type")
     ap.add_argument("--figures", action="store_true", help="also copy the key pipeline figures of each run")
     ap.add_argument("--tile", action="store_true", help="also tile those figures side by side (implies --figures)")
+    ap.add_argument("--maps", action="store_true", help="re-plot the SWC maps of all runs on one colour scale (maps.nc)")
+    ap.add_argument("--map-var", default="theta", help="variable of maps.nc (theta, theta_global, theta_std_total, ...)")
+    ap.add_argument("--epoch", type=int, default=-1, help="survey epoch index for --maps (default: last)")
     ap.add_argument("--dry-run", action="store_true", help="with --compare: print the commands only")
     a = ap.parse_args(argv)
 
@@ -383,7 +479,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.list:
         return 0
     for s, rows in groups.items():
-        for f in plot_study(s, rows, a.out_dir, a.figures, a.tile):
+        for f in plot_study(s, rows, a.out_dir, a.figures, a.tile, a.maps, a.map_var, a.epoch):
             print(f"   wrote {f}")
         if a.compare:
             compare_study(s, rows, a.log_file, a.out_dir, a.dry_run)

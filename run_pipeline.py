@@ -5067,6 +5067,27 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
         reporter.metric("Final RMSE (Step 5)",     f"{selected_output.rmse:.6f} m³/m³")
         _rmse_ctx_fields = _record_rmse_context(reporter, selected_output.rmse, theta_obs)
+        try:   # final maps as NetCDF so runs can be re-plotted side by side (plot_run_log.py --maps)
+            import maps_export as _mx
+            _th = np.asarray(selected_output.theta_calc, dtype=float)
+            _x = np.asarray(utm_x if mode == "2d" else x_transect, dtype=float)
+            _y = np.asarray(utm_y, dtype=float) if mode == "2d" and utm_y is not None else None
+            _extra = _mx.collect_extra(OUTPUT_MODEL_DIR, _th.shape)
+            _glob = getattr(selected_output, "theta_calc_global", None)
+            if _glob is not None and np.size(_glob) == _th.size:
+                _extra["theta_global"] = np.asarray(_glob, dtype=float)
+            _p = _mx.export_maps(
+                os.path.join(OUTPUT_MODEL_DIR, _mx.MAPS_NAME), _th, _x, _y,
+                layer_depth=synthetic_geometry.get("layer_centers") if isinstance(synthetic_geometry, dict) else None,
+                extra=_extra,
+                attrs={"scenario": _scenario_name, "run_id": reporter.run_id, "mode": mode,
+                       "rmse_m3m3": float(selected_output.rmse),
+                       "rmse_pct": float(selected_output.rmse) * 100.0,
+                       "rsr": _rmse_ctx_fields.get("rsr"), "rating": _rmse_ctx_fields.get("rmse_rating"),
+                       "K": int(selected_output.K), "units": "theta in m3/m3"})
+            reporter.log(f"[MAPS] {'wrote ' + _p if _p else 'maps.nc not written (see message above)'}")
+        except Exception as _mx_exc:  # noqa: BLE001
+            reporter.log(f"[MAPS] skipped: {_mx_exc}")
         _cv_shape = selected_output.cv_map.shape
         reporter.metric(
             "CV map shape",

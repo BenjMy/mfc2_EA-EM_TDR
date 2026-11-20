@@ -396,3 +396,4 @@ Things to settle with it: minimum number of TDR probes per zone (20 probes in to
 * `run_log.csv` has the columns `study_type`, `rmse_pct`, `swc_obs_std`, `rsr`, `rmse_rating`. Add them to an existing log with `python run_log.py upgrade --log mfc2_outputs/run_log.csv`.
 * `python plot_run_log.py [--study-type ...] [--compare]` writes all summary plots per study type to `comparison_output/run_log_plots/`; `python plot_swc_study_log.py` does the same for `run_log_swc_study.csv`.
 * `python study_status.py` writes `STUDY_STATUS.md`: per study type what is done, failed or missing (with the commands to run it) and the caveats found in the run manifests.
+* Runs write `output_model/maps.nc` (theta, uncertainty, coordinates; `maps_export.py`, needs `xarray` + `netcdf4`). `python plot_run_log.py --maps` redraws the maps of all runs of a study on one shared colour scale; `--figures --tile` gathers the existing PNGs.
