@@ -114,6 +114,17 @@ def metric_lines(ctx: dict) -> list[tuple[str, str]]:
     ]
 
 
+def prefixed_metric_lines(prefix: str, ctx: dict) -> list[tuple[str, str]]:
+    """Compact metrics for a secondary RMSE (e.g. ``'Validation'`` = held-out probes)."""
+    f = lambda v, p: "n/a" if not math.isfinite(v) else f"{v:.{p}f}"
+    return [
+        (f"{prefix} RMSE (% vol)", f"{f(ctx['rmse_pct'], 2)} % vol"),
+        (f"{prefix} RSR (RMSE/std of its own SWC obs)",
+         f"{f(ctx['rsr'], 3)}  (obs std {f(ctx['obs_std'], 4)}, n={ctx['n_obs']})"),
+        (f"{prefix} RMSE rating", ctx["rating"]),
+    ]
+
+
 def log_fields(ctx: dict) -> dict:
     """Values for the run-log CSV columns ``CONTEXT_COLUMNS`` (strings)."""
     f = lambda v, p: "" if not math.isfinite(v) else f"{v:.{p}f}"

@@ -81,6 +81,12 @@ def run_step5b_validation(reporter, *, split, selected_output, fits_step4, train
     gap = val_rmse - train_rmse
     reporter.metric("Train RMSE", f"{train_rmse:.5f} m³/m³")
     reporter.metric("Validation RMSE", f"{val_rmse:.5f} m³/m³")
+    try:   # held-out RMSE in context: % vol and RSR against the spread of the held-out SWC
+        import rmse_context as _rc
+        for _name, _text in _rc.prefixed_metric_lines("Validation", _rc.rmse_context(val_rmse, theta_obs_val)):
+            reporter.metric(_name, _text)
+    except Exception as _exc:  # noqa: BLE001 - never stop a run for a context metric
+        reporter.log(f"[STEP 5b] RMSE context skipped: {_exc}")
     reporter.metric("Train↔Val RMSE gap", f"{gap:+.5f} m³/m³")
     if not split.independent:
         reporter.log(

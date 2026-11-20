@@ -61,3 +61,10 @@ def test_old_log_is_upgraded_and_appended(tmp_path):
     assert rows[1]["study_type"] == "surface_vs_full" and rows[1]["rmse_pct"] == "5.000"
     assert os.path.isfile(str(p) + ".bak")
     assert log.ensure_schema() is False            # idempotent
+
+
+def test_prefixed_metric_lines():
+    c = rc.rmse_context(0.1, [0.1, 0.2, 0.3, 0.4])
+    d = dict(rc.prefixed_metric_lines("Validation", c))
+    assert d["Validation RMSE (% vol)"].startswith("10.00")
+    assert d["Validation RMSE rating"] == "unsatisfactory"      # RSR 0.1 / 0.1118 = 0.89

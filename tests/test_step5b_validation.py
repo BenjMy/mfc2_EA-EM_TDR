@@ -84,3 +84,11 @@ def test_plot_failure_warns_but_returns(monkeypatch, tmp_path):
     (tr, va, _), rep = _run(tmp_path)
     assert va == 0.04 and rep.ended == ["Step 5b"]
     assert any("[STEP 5b][WARN]" in l and "RuntimeError: png" in l for l in rep.lines)
+
+
+def test_validation_rmse_context_metrics(monkeypatch, tmp_path):
+    _setup(monkeypatch, [0.05, 0.045, 0.06])
+    _, rep = _run(tmp_path)
+    assert rep.metrics["Validation RMSE (% vol)"].startswith("4.50")
+    assert "Validation RSR (RMSE/std of its own SWC obs)" in rep.metrics     # one held-out obs -> n/a, no crash
+    assert rep.metrics["Validation RMSE rating"] == "n/a"
