@@ -488,6 +488,25 @@ class PipelineReporter:
 from run_log import (DEFAULT_RUN_LOG, RUN_LOG_COLUMNS, RunLog, git_commit,  # noqa: E402,F401
                      write_run_manifest)
 
+def _record_rmse_context(reporter, rmse, theta_obs) -> dict:
+    """Report RMSE in % vol + normalised by the std of the measured SWC (rmse_context.py).
+
+    Adds the metrics to the report/manifest and returns the run-log fields. Never
+    raises: a failure here must not stop a finished run.
+    """
+    try:
+        import rmse_context as _rc
+        ctx = _rc.rmse_context(rmse, theta_obs)
+        for _name, _text in _rc.metric_lines(ctx):
+            reporter.metric(_name, _text)
+        reporter.log(f"  RMSE in context          : {ctx['rmse_pct']:.2f} % vol, "
+                     f"RSR (RMSE/std obs) = {ctx['rsr']:.3f}  -> {ctx['rating']}")
+        return _rc.log_fields(ctx)
+    except Exception as _exc:  # noqa: BLE001
+        print(f"[RMSE CONTEXT] WARNING: skipped ({_exc})")
+        return {}
+
+
 # Seed of the Step 1 inversion workers (task i uses DEFAULT_INVERSION_SEED + i).
 DEFAULT_INVERSION_SEED = 1234
 
@@ -4871,6 +4890,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter.metric("Ensemble size (Step 1)", f"{ensemble_size} realisations  [axis 0 of ensemble matrix]")
             reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
             reporter.metric("Final RMSE (Step 5)", f"{selected_output.rmse:.6f} m³/m³")
+            _rmse_ctx_fields = _record_rmse_context(reporter, selected_output.rmse, theta_obs)
             reporter.finish(exit_ok=True, quality_level=quality_gate_result.level,
                             quality_reasons=quality_gate_result.reasons)
             append_run_log(LOG_FILE, {
@@ -4889,6 +4909,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 "runtime_s":     f"{reporter.elapsed_total:.1f}" if reporter.elapsed_total is not None else "",
                 "quality_level": quality_gate_result.level,
                 "error":         "",
+                **_rmse_ctx_fields,
             })
             return
 
@@ -5045,6 +5066,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.metric("SWC spatial positions",   _n_stations_used)
         reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
         reporter.metric("Final RMSE (Step 5)",     f"{selected_output.rmse:.6f} m³/m³")
+        _rmse_ctx_fields = _record_rmse_context(reporter, selected_output.rmse, theta_obs)
         _cv_shape = selected_output.cv_map.shape
         reporter.metric(
             "CV map shape",
@@ -5112,6 +5134,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             "runtime_s":     f"{reporter.elapsed_total:.1f}" if reporter.elapsed_total is not None else "",
             "quality_level": quality_gate_result.level,
             "error":         "",
+            **_rmse_ctx_fields,
         })
 
     except Exception as exc:

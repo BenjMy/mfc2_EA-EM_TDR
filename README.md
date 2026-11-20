@@ -389,3 +389,9 @@ Things to settle with it: minimum number of TDR probes per zone (20 probes in to
 * The scenario banner shows "Forward model : CS" while the parameter grid sweeps FSlin and CS.
 * Epoch 4 (`5_ALENTO_300421.csv`) covers only 25.8 % of the union reference grid, epoch 1 36.3 %; 50.2 % of the EC cells in `models_clean` become NaN before layers are considered. Thinning on a common grid should improve this.
 
+
+## Reading the RMSE and comparing many runs
+
+* Every run reports the RMSE in **% vol** (m³/m³ × 100) and normalised by the spread of the measured SWC: `RSR = RMSE / std(observed SWC)` (≤ 0.5 very good, 0.5–0.6 good, 0.6–0.7 satisfactory, > 0.7 unsatisfactory, ≥ 1 no skill). See `rmse_context.py`.
+* `run_log.csv` has the columns `study_type`, `rmse_pct`, `swc_obs_std`, `rsr`, `rmse_rating`. Add them to an existing log with `python run_log.py upgrade --log mfc2_outputs/run_log.csv`.
+* `python plot_run_log.py [--study-type ...] [--compare]` writes all summary plots per study type to `comparison_output/run_log_plots/`; `python plot_swc_study_log.py` does the same for `run_log_swc_study.csv`.

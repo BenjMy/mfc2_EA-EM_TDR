@@ -34,7 +34,37 @@ RUN_LOG_COLUMNS = [
     "run_id", "timestamp", "scenario", "mode", "data_source", "status",
     "output_dir", "report_path", "final_rmse", "cv_mean", "cv_max",
     "ensemble_size", "runtime_s", "quality_level", "error",
+    # added 2026-11: which study the run belongs to + the RMSE in context
+    # (see rmse_context.py: % vol, RMSE / std of the measured SWC, rating)
+    "study_type", "rmse_pct", "swc_obs_std", "rsr", "rmse_rating",
 ]
+
+# (regex on the scenario name, study type), first match wins. Keep in sync with the
+# scenario families: hyp1/2/3 scripts, run_1d_surface_vs_full.sh, study_swc_design.py,
+# generate_synthetic_real_mirror.py, bench_ws_global_vs_localized.py.
+STUDY_TYPE_RULES = [
+    (r"^swcstudy_", "swc_design_study"),
+    (r"^ws_bench", "ws_global_vs_localized"),
+    (r"^real_study_", "hyp1_layers_ws_freedom"),
+    (r"^real_tv_", "hyp2_train_val_split"),
+    (r"^real_bw_sweep", "hyp3_localized_bandwidth"),
+    (r"^mfc2_real_synthetic_mirror", "synthetic_mirror"),
+    (r"_pin0$", "pinned_horizon"),
+    (r"_tv_probe$", "train_val_synthetic"),
+    (r"^1d_(surface|full).*hetero", "surface_vs_full_hetero"),
+    (r"^1d_(surface|full)", "surface_vs_full"),
+    (r"^real_(single|multi|L\d)", "real_scenarios"),
+    (r"^2d", "synthetic_2d"),
+]
+
+
+def infer_study_type(scenario: str | None) -> str:
+    """Study family of a scenario name (``"other"`` when no rule matches)."""
+    name = str(scenario or "")
+    for pattern, study in STUDY_TYPE_RULES:
+        if re.search(pattern, name):
+            return study
+    return "other"
 
 MANIFEST_NAME = "run_manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
@@ -52,6 +82,14 @@ class RunLog:
             log_dir = os.path.dirname(self.path)
             if log_dir:
                 os.makedirs(log_dir, exist_ok=True)
+            self.ensure_schema()      # old log without the new columns -> upgrade first
+            row = dict(row)
+            if not row.get("study_type"):
+                row["study_type"] = infer_study_type(row.get("scenario"))
+            if not row.get("rmse_pct") and row.get("final_rmse"):
+                from rmse_context import log_fields_from_rmse
+                row.update({k: v for k, v in log_fields_from_rmse(row["final_rmse"]).items()
+                            if not row.get(k)})
             write_header = (not os.path.isfile(self.path)) or os.path.getsize(self.path) == 0
             with open(self.path, "a", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=RUN_LOG_COLUMNS)
@@ -62,6 +100,47 @@ class RunLog:
             return True
         except OSError as e:
             print(f"[RUN LOG] WARNING: could not write run log at {self.path!r}: {e}")
+            return False
+
+    def ensure_schema(self, backup: bool = True) -> bool:
+        """Upgrade an existing log to ``RUN_LOG_COLUMNS``; True when it was rewritten.
+
+        Rows keep their values; the new columns are filled from what the old row
+        allows: ``study_type`` from the scenario name (``infer_study_type``) and
+        ``rmse_pct`` from ``final_rmse``. ``swc_obs_std`` / ``rsr`` / ``rmse_rating``
+        need the observations and stay empty for old runs. The old file is kept as
+        ``<log>.bak`` (once). Never raises.
+        """
+        try:
+            if not os.path.isfile(self.path) or os.path.getsize(self.path) == 0:
+                return False
+            with open(self.path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                header = list(reader.fieldnames or [])
+                old_rows = list(reader)
+            if header == RUN_LOG_COLUMNS:
+                return False
+            if backup and not os.path.isfile(self.path + ".bak"):
+                import shutil
+                shutil.copy2(self.path, self.path + ".bak")
+            from rmse_context import log_fields_from_rmse
+            for r in old_rows:
+                if not r.get("study_type"):
+                    r["study_type"] = infer_study_type(r.get("scenario"))
+                if not r.get("rmse_pct"):
+                    r["rmse_pct"] = log_fields_from_rmse(r.get("final_rmse"))["rmse_pct"]
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=RUN_LOG_COLUMNS, extrasaction="ignore")
+                w.writeheader()
+                for r in old_rows:
+                    w.writerow({k: r.get(k, "") or "" for k in RUN_LOG_COLUMNS})
+            os.replace(tmp, self.path)
+            print(f"[RUN LOG] Upgraded {self.path} to {len(RUN_LOG_COLUMNS)} columns "
+                  f"({len(old_rows)} rows; backup {self.path}.bak)")
+            return True
+        except (OSError, csv.Error) as e:
+            print(f"[RUN LOG] WARNING: could not upgrade run log {self.path!r}: {e}")
             return False
 
     def rows(self) -> list[dict]:
@@ -146,11 +225,16 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="Query the shared run-log CSV.")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    up = sub.add_parser("upgrade", help="add the study_type / rmse_* columns to an existing log")
+    up.add_argument("--log", default=DEFAULT_RUN_LOG)
     lt = sub.add_parser("latest", help="field of the most recent run of a scenario")
     lt.add_argument("scenario")
     lt.add_argument("--log", default=DEFAULT_RUN_LOG)
     lt.add_argument("--field", default="run_id", choices=RUN_LOG_COLUMNS)
     lt.add_argument("--status", default=None)
     a = ap.parse_args()
+    if a.cmd == "upgrade":
+        print("upgraded" if RunLog(a.log).ensure_schema() else "already up to date (or no log)")
+        raise SystemExit(0)
     row = RunLog(a.log).latest(scenario=a.scenario, status=a.status)
     print(row.get(a.field, "") if row else "")
