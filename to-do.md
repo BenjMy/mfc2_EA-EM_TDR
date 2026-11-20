@@ -38,6 +38,17 @@ Update 2026-11-12 (night): refactoring phases 8 (sweeps + golden equality test) 
 
 
 
+## Result interpretation
+
+- [ ] I really dont know how to evaluate rmse in m3/m3 (diffcult to me to sens if its large or not!) help me with that. 
+- [ ] Add this to pipeline: The best check is to compare each RMSE with the standard deviation of the measured SWC in the same dataset.
+- [ ] Report the absolute RMSE in % vol (m³/m³ × 100) as the headline number, and add a normalised version next to it.
+- [ ] It is exteemely difficult to interpret the results of so many scenarii / simulation I need help for that I propose (but you can suggest a better idea): 
+- [ ] In the log.csv add a new column to identify the sutdy type. Then create a plot file that reads the log file and generate all plots (e.g. compare_scenarios etc ..) outputs (to test the various study hypotheses, etc...). Add this new columns from the existing csv file.
+- [ ] Same than the previsous item but using run_log_swc_study.csv file and plot_swc file to generate all plots. 
+
+
+
 
 ## Parked
 - [ ] repeat run_1d_surface_vs_full.sh with calibration of each horizon (not only the first one) — NOT DONE, needs a decision: the surface-only runs have TDR only at 0.2 m, so horizons 1-3 have no data to calibrate with. Options: (a) the existing `full` runs already calibrate all 4 horizons, nothing to add; (b) share horizon 0's fitted WS parameters with the deeper horizons (a new "borrowing" option; the code deliberately does not do this today); (c) add TDR at more depths to the surface study.

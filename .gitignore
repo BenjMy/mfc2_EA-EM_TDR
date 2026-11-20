@@ -1,7 +1,12 @@
 tmp
 IA.md
 bayesian_pipeline_refactor_spec.md
-mfc2_outputs
+mfc2_outputs/*
+!mfc2_outputs/run_log*.csv
+!mfc2_outputs/**/
+mfc2_outputs/**/*
+!mfc2_outputs/**/run_manifest.json
+!mfc2_outputs/**/pipeline_report_*.md
 data
 
 # generated artefacts (refactoring.md, phase 1)
