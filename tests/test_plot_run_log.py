@@ -39,3 +39,31 @@ def test_plots_written(tmp_path):
     out2 = tmp_path / "o2"
     assert psl.main(["--log-file", str(tmp_path / "l.csv"), "--out-dir", str(out2)]) == 0
     assert (out2 / "swc_runs.csv").is_file() and (out2 / "swc_rmse_vs_k.png").is_file()
+
+
+def _png(path):
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(1, 1)); fig.savefig(path); plt.close(fig)
+
+
+def test_gather_and_tile_figures(tmp_path):
+    log = RunLog(str(tmp_path / "l.csv"))
+    for sc in ("1d_surface_free1", "1d_surface_free2"):
+        d = tmp_path / "runs" / sc
+        _png(d / "water_content_xy_x_imshow.png"); _png(d / "water_content_xy_x_pctdiff.png")
+        _png(d / "solution" / "solution_swc_uncertainty.png")
+        log.append({"run_id": sc, "scenario": sc, "status": "SUCCESS", "final_rmse": "0.05", "output_dir": str(d)})
+    # a run without figures must be skipped silently
+    log.append({"run_id": "n", "scenario": "1d_surface_free3", "status": "SUCCESS", "final_rmse": "0.05",
+                "output_dir": str(tmp_path / "nothing")})
+    rows = prl.group_by_study(prl.load_rows(str(tmp_path / "l.csv")))["surface_vs_full"]
+    lat = prl.latest_per_scenario(rows)
+    assert prl.find_figure(lat["1d_surface_free1"]["output_dir"], prl.KEY_FIGURES["swc_map_xy"]).endswith("_imshow.png")
+    out = tmp_path / "o"
+    files = prl.plot_study("surface_vs_full", rows, str(out), figures=True, tile=True)
+    assert (out / "surface_vs_full/figures/swc_map_xy/1d_surface_free2.png").is_file()
+    assert not (out / "surface_vs_full/figures/swc_map_xy/1d_surface_free3.png").exists()
+    assert (out / "surface_vs_full/figures/swc_uncertainty_tiled.png").is_file()
+    assert any(f.endswith("swc_map_xy_tiled.png") for f in files)

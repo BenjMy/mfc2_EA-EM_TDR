@@ -17,6 +17,8 @@ Usage
     python plot_run_log.py --log-file mfc2_outputs/run_log_swc_study.csv   # (see also plot_swc_study_log.py)
     python plot_run_log.py --compare                    # + compare_scenarios.py on each study
     python plot_run_log.py --upgrade                    # add the new columns to the CSV first
+    python plot_run_log.py --figures                    # + copy the key pipeline figures of each run
+    python plot_run_log.py --figures --tile             # + one contact sheet per figure (scenarios side by side)
 
 Output: ``<out-dir>/<study_type>/`` (default ``comparison_output/run_log_plots``), with
 
@@ -29,6 +31,10 @@ Output: ``<out-dir>/<study_type>/`` (default ``comparison_output/run_log_plots``
     rmse_history.png       RMSE of every run over time, one line per scenario (did a change help?)
     runtime_vs_rmse.png    cost / accuracy trade-off
     runs.csv               the table behind the plots
+    figures/<figure>/<scenario>.png   (--figures) the key figure of every run, one folder per figure
+    figures/<figure>_tiled.png        (--tile) those images side by side (a contact sheet of the
+                           existing PNGs, not a re-plot: colour scales are those of each run;
+                           a real re-plot needs the maps as arrays / NetCDF, see to-do.md)
 
 Only the latest finished run of each scenario is used (failed runs are skipped), except
 in rmse_history.png.
@@ -238,7 +244,76 @@ def write_table(latest: dict[str, dict], out_dir: str) -> str:
     return path
 
 
-def plot_study(study: str, rows: list[dict], out_root: str) -> list[str]:
+# --------------------------------------------------------------------------
+# Key pipeline figures: copy and tile
+# --------------------------------------------------------------------------
+# label -> glob patterns (first match wins) searched recursively in the run folder
+KEY_FIGURES = {
+    "swc_map_xy": ["water_content_xy_*_imshow.png", "water_content_xy_*.png"],
+    "swc_section_xz": ["water_content_xz_*.png"],
+    "swc_uncertainty": ["solution_swc_uncertainty.png"],
+    "swc_profiles": ["solution_swc_profiles.png"],
+    "parity_by_sensor": ["parity_validation_by_sensor.png", "parity_validation.png"],
+    "theta_1to1_by_horizon": ["fig_theta_1to1_by_horizon.png"],
+    "ws_histograms": ["ws_parameter_histograms.png"],
+    "bandwidth_sweep": ["bandwidth_sweep.png"],
+}
+_SKIP = ("pctdiff", "truth", "binned", "_test")
+
+
+def find_figure(run_dir: str, patterns: list[str]) -> str | None:
+    """First figure of the run folder matching one of the glob patterns (None if absent)."""
+    import glob
+    if not run_dir or not os.path.isdir(run_dir):
+        return None
+    for pat in patterns:
+        hits = sorted(h for h in glob.glob(os.path.join(run_dir, "**", pat), recursive=True)
+                      if not any(k in os.path.basename(h) for k in _SKIP)
+                      or any(k in pat for k in _SKIP))
+        if hits:
+            return hits[0]
+    return None
+
+
+def gather_figures(latest: dict[str, dict], out_dir: str, labels: list[str] | None = None) -> dict[str, dict[str, str]]:
+    """Copy the key figure of each run to ``<out_dir>/figures/<label>/<scenario>.png``.
+
+    Returns {label: {scenario: copied path}}; figures a run does not have are skipped.
+    """
+    import shutil
+    found: dict[str, dict[str, str]] = {}
+    for label in (labels or list(KEY_FIGURES)):
+        for name, r in sorted(latest.items()):
+            src = find_figure(r.get("output_dir", ""), KEY_FIGURES[label])
+            if src:
+                dst_dir = os.path.join(out_dir, "figures", label)
+                os.makedirs(dst_dir, exist_ok=True)
+                dst = os.path.join(dst_dir, f"{name}.png")
+                shutil.copyfile(src, dst)
+                found.setdefault(label, {})[name] = dst
+    return found
+
+
+def tile_figures(label: str, images: dict[str, str], out_dir: str, ncols: int = 3) -> str | None:
+    """One contact sheet: the images of several scenarios side by side, titled by scenario."""
+    if len(images) < 2:
+        return None
+    import matplotlib.image as mpimg
+    names = sorted(images)
+    ncols = min(ncols, len(names))
+    nrows = -(-len(names) // ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
+    for ax in axes.ravel():
+        ax.axis("off")
+    for ax, n in zip(axes.ravel(), names):
+        ax.imshow(mpimg.imread(images[n]))
+        ax.set_title(n, fontsize=8)
+    fig.suptitle(label, fontsize=10)
+    fig.tight_layout()
+    return _save(fig, os.path.join(out_dir, "figures"), f"{label}_tiled.png")
+
+
+def plot_study(study: str, rows: list[dict], out_root: str, figures: bool = False, tile: bool = False) -> list[str]:
     """All plots of one study type; returns the files written."""
     out_dir = os.path.join(out_root, study)
     latest = latest_per_scenario(rows)
@@ -250,6 +325,11 @@ def plot_study(study: str, rows: list[dict], out_root: str) -> list[str]:
         p = fn(arg, out_dir, study)
         if p:
             files.append(p)
+    if figures or tile:
+        found = gather_figures(latest, out_dir)
+        files += [p for d in found.values() for p in d.values()]
+        if tile:
+            files += [t for lab, d in found.items() if (t := tile_figures(lab, d, out_dir))]
     return files
 
 
@@ -280,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true", help="print the runs per study type and exit")
     ap.add_argument("--upgrade", action="store_true", help="add the new columns to the CSV first (backup .bak)")
     ap.add_argument("--compare", action="store_true", help="also run compare_scenarios.py per study type")
+    ap.add_argument("--figures", action="store_true", help="also copy the key pipeline figures of each run")
+    ap.add_argument("--tile", action="store_true", help="also tile those figures side by side (implies --figures)")
     ap.add_argument("--dry-run", action="store_true", help="with --compare: print the commands only")
     a = ap.parse_args(argv)
 
@@ -301,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.list:
         return 0
     for s, rows in groups.items():
-        for f in plot_study(s, rows, a.out_dir):
+        for f in plot_study(s, rows, a.out_dir, a.figures, a.tile):
             print(f"   wrote {f}")
         if a.compare:
             compare_study(s, rows, a.log_file, a.out_dir, a.dry_run)
