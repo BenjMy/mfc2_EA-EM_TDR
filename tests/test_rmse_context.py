@@ -74,3 +74,17 @@ def test_parse_leading_number():
     assert rc.parse_leading_number("0.51  (obs std 0.1, n=3)") == 0.51
     assert np.isnan(rc.parse_leading_number("n/a  (obs std n/a, n=1)"))
     assert np.isnan(rc.parse_leading_number(None))
+
+
+def test_per_horizon_context():
+    from types import SimpleNamespace as NS
+    rng = np.random.default_rng(0)
+    obs0 = np.array([0.1, 0.2, 0.3, 0.4])
+    hf = [NS(observed_theta=obs0, predicted_theta=obs0 + 0.05, is_calibrated=True),
+          NS(observed_theta=np.array([]), predicted_theta=np.array([]), is_calibrated=False),
+          NS(observed_theta=np.array([0.2, np.nan]), predicted_theta=np.array([0.2, 0.3]), is_calibrated=True)]
+    c = rc.per_horizon_context(hf)
+    assert abs(c[0]["rmse_pct"] - 5.0) < 1e-9 and c[0]["rating"] == "very good"
+    assert c[1]["rating"] == "no TDR" and c[2]["n_obs"] == 1
+    lines = dict(rc.horizon_metric_lines(c))
+    assert lines["RMSE horizon H0"].startswith("5.00 % vol, RSR 0.447") and "no TDR" in lines["RMSE horizon H1"]

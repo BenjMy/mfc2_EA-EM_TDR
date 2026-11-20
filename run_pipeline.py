@@ -502,7 +502,7 @@ def _validation_log_fields(reporter) -> dict:
         return {}
 
 
-def _record_rmse_context(reporter, rmse, theta_obs) -> dict:
+def _record_rmse_context(reporter, rmse, theta_obs, horizon_fits=None) -> dict:
     """Report RMSE in % vol + normalised by the std of the measured SWC (rmse_context.py).
 
     Adds the metrics to the report/manifest and returns the run-log fields. Never
@@ -515,6 +515,13 @@ def _record_rmse_context(reporter, rmse, theta_obs) -> dict:
             reporter.metric(_name, _text)
         reporter.log(f"  RMSE in context          : {ctx['rmse_pct']:.2f} % vol, "
                      f"RSR (RMSE/std obs) = {ctx['rsr']:.3f}  -> {ctx['rating']}")
+        try:   # per horizon: which horizon carries the error? (TDR only constrains some horizons)
+            _hf = horizon_fits
+            if _hf:
+                for _name, _text in _rc.horizon_metric_lines(_rc.per_horizon_context(_hf)):
+                    reporter.metric(_name, _text)
+        except Exception as _hexc:  # noqa: BLE001
+            reporter.log(f"[RMSE CONTEXT] per-horizon part skipped ({_hexc})")
         return _rc.log_fields(ctx)
     except Exception as _exc:  # noqa: BLE001
         print(f"[RMSE CONTEXT] WARNING: skipped ({_exc})")
@@ -4904,7 +4911,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             reporter.metric("Ensemble size (Step 1)", f"{ensemble_size} realisations  [axis 0 of ensemble matrix]")
             reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
             reporter.metric("Final RMSE (Step 5)", f"{selected_output.rmse:.6f} m³/m³")
-            _rmse_ctx_fields = _record_rmse_context(reporter, selected_output.rmse, theta_obs)
+            _rmse_ctx_fields = _record_rmse_context(reporter, selected_output.rmse, theta_obs,
+                                                    getattr(getattr(selected_output, "best_fit", None), "horizon_fits", None))
             reporter.finish(exit_ok=True, quality_level=quality_gate_result.level,
                             quality_reasons=quality_gate_result.reasons)
             append_run_log(LOG_FILE, {
@@ -5081,7 +5089,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         reporter.metric("SWC spatial positions",   _n_stations_used)
         reporter.metric("Optimal stack depth (K)", f"{selected_output.K}  (out of {len(averaged_models)} candidates)")
         reporter.metric("Final RMSE (Step 5)",     f"{selected_output.rmse:.6f} m³/m³")
-        _rmse_ctx_fields = _record_rmse_context(reporter, selected_output.rmse, theta_obs)
+        _rmse_ctx_fields = _record_rmse_context(reporter, selected_output.rmse, theta_obs,
+                                                    getattr(getattr(selected_output, "best_fit", None), "horizon_fits", None))
         try:   # final maps as NetCDF so runs can be re-plotted side by side (plot_run_log.py --maps)
             import maps_export as _mx
             _th = np.asarray(selected_output.theta_calc, dtype=float)

@@ -132,6 +132,33 @@ def prefixed_metric_lines(prefix: str, ctx: dict) -> list[tuple[str, str]]:
     ]
 
 
+def per_horizon_context(horizon_fits) -> list[dict]:
+    """RMSE context per horizon from fits carrying ``observed_theta`` / ``predicted_theta``
+    (``em_methodology.HorizonWaxmanSmitsParams``). Horizons without TDR data (not
+    calibrated or no finite pairs) get ``rating == 'no TDR'``. RMSE is recomputed from the
+    pairs, so it is the horizon's own error at the probes, in m3/m3."""
+    out = []
+    for i, h in enumerate(horizon_fits):
+        obs = np.asarray(getattr(h, "observed_theta", []), dtype=float).ravel()
+        pred = np.asarray(getattr(h, "predicted_theta", []), dtype=float).ravel()
+        ok = np.isfinite(obs) & np.isfinite(pred) if obs.size == pred.size else np.zeros(0, bool)
+        if not getattr(h, "is_calibrated", True) or not ok.any():
+            ctx = rmse_context(float("nan"), [])
+            ctx["rating"] = "no TDR"
+        else:
+            ctx = rmse_context(float(np.sqrt(np.mean((obs[ok] - pred[ok]) ** 2))), obs[ok])
+        out.append({"horizon": i, **ctx})
+    return out
+
+
+def horizon_metric_lines(ctxs: list[dict]) -> list[tuple[str, str]]:
+    """(name, text) per horizon for ``reporter.metric``."""
+    f = lambda v, p: "n/a" if not math.isfinite(v) else f"{v:.{p}f}"
+    return [(f"RMSE horizon H{c['horizon']}",
+             f"{f(c['rmse_pct'], 2)} % vol, RSR {f(c['rsr'], 3)}, {c['rating']}  (n={c['n_obs']})")
+            for c in ctxs]
+
+
 def log_fields(ctx: dict) -> dict:
     """Values for the run-log CSV columns ``CONTEXT_COLUMNS`` (strings)."""
     f = lambda v, p: "" if not math.isfinite(v) else f"{v:.{p}f}"
