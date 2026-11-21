@@ -20,6 +20,8 @@ Plots (RMSE in % vol; the RSR panel title is added when the runs logged RMSE/std
     swc_reg_effect.png      RMSE by regularisation (noreg/beta/gamma/both)
     swc_rmse_vs_rsr.png     (from plot_run_log) error vs spread of the data
     swc_runs.csv            table behind the plots
+    provenance.md, manifests/   how the runs were made (see plot_run_log.py): factors, code version,
+                            settings that differ, copy of every run_manifest.json
 The final RMSE here is the one at the probes; the truth-based metrics of the full study
 are made by ``study_swc_design.py analyze``.
 """
@@ -95,6 +97,7 @@ def plot_all(rows: list[dict], out_dir: str) -> list[str]:
             w.writerow([r["scenario"], *[r[k] for k in FACTORS], f"{r['rmse_pct']:.3f}",
                         "" if not np.isfinite(r["rsr"]) else f"{r['rsr']:.3f}", r["rating"]])
     files.append(path)
+    files.append(prl.write_provenance({r["scenario"]: r for r in table}, out_dir, "swc design study"))
     ref_truth = dict(smc=ref["smc"], ws=ref["ws"], reg=ref["reg"])
     files.append(_lines(table, "n", lambda r: r["dist"], out_dir, "swc_rmse_vs_n.png",
                         "RMSE vs number of SWC positions", "n positions", k=ref["k"], **ref_truth))

@@ -78,3 +78,39 @@ def test_stale_other_study_type_is_reinferred(tmp_path):
         w.writerow({"run_id": "a", "scenario": "wsb_xy_random_L4_P4_C10_bw5", "status": "SUCCESS",
                     "final_rmse": "0.05", "study_type": "other"})
     assert prl.load_rows(str(p))[0]["study_type"] == "ws_global_vs_localized"
+
+
+def _manifest(d, run_id, config, commit="abc12345def+dirty", mode="1d", stage="all"):
+    import json
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "run_manifest.json").write_text(json.dumps(
+        {"run_id": run_id, "mode": mode, "stage": stage, "git_commit": commit, "config": config}))
+
+
+def test_truth_hint_and_config_differences():
+    assert "heterogeneous" in prl.truth_hint("1d_full_hetero_free2")
+    assert "homogeneous-in-depth" in prl.truth_hint("1d_full_free2")
+    assert prl.truth_hint("swcstudy_smchomo_wshetero_noreg_spread_n5_free1") == "SMC homogeneous; WS heterogeneous"
+    differ, common = prl.config_differences({"a": {"x": 1, "y": {"z": [1, 2]}, "k": 3},
+                                             "b": {"x": 2, "y": {"z": [1, 2]}, "k": 3}})
+    assert differ == {"x": {"1": ["a"], "2": ["b"]}} and common == {"k": "3", "y.z": "[1, 2]"}
+
+
+def test_provenance_written(tmp_path):
+    log = RunLog(str(tmp_path / "l.csv"))
+    for sc, cfg in (("1d_surface_free1", {"n_zones": 1, "k": 1}), ("1d_surface_free2", {"n_zones": 1, "k": 2})):
+        d = tmp_path / "runs" / sc
+        _manifest(d, sc, cfg)
+        log.append({"run_id": sc, "scenario": sc, "status": "SUCCESS", "final_rmse": "0.05", "output_dir": str(d)})
+    # third run: manifest of a LATER run, fourth: no manifest
+    d3 = tmp_path / "runs" / "1d_full_free1"; _manifest(d3, "LATER", {"n_zones": 1})
+    log.append({"run_id": "r3", "scenario": "1d_full_free1", "status": "SUCCESS", "final_rmse": "0.05", "output_dir": str(d3)})
+    log.append({"run_id": "r4", "scenario": "1d_full_free2", "status": "SUCCESS", "final_rmse": "0.05",
+                "output_dir": str(tmp_path / "runs" / "none")})
+    out = tmp_path / "o"
+    assert prl.main(["--log-file", str(tmp_path / "l.csv"), "--out-dir", str(out)]) == 0
+    text = (out / "surface_vs_full" / "provenance.md").read_text()
+    assert "homogeneous-in-depth" in text                                            # truth hint from the name
+    assert "`k`:" in text and "**1** -> 1d_surface_free1" in text and "**2** -> 1d_surface_free2" in text
+    assert "abc12345+dirty" in text and "LATER run" in text and "no run_manifest.json" in text
+    assert (out / "surface_vs_full" / "manifests" / "1d_surface_free1.json").is_file()

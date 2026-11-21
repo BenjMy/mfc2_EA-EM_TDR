@@ -33,6 +33,11 @@ Output: ``<out-dir>/<study_type>/`` (default ``comparison_output/run_log_plots``
     rmse_history.png       RMSE of every run over time, one line per scenario (did a change help?)
     runtime_vs_rmse.png    cost / accuracy trade-off
     runs.csv               the table behind the plots
+    provenance.md          HOW the simulations were made: per scenario the run id, code version
+                           (+dirty), mode, stage, quick / subsample, seeds, a truth hint from the
+                           name (homogeneous / heterogeneous), the settings that DIFFER between
+                           the scenarios of the study (from the manifests) and those common to all
+    manifests/<scenario>.json         copy of each run's run_manifest.json (full config of the run)
     figures/<figure>/<scenario>.png   (--figures) the key figure of every run, one folder per figure
     maps_<var>_epoch<t>.png  (--maps) the maps of all scenarios redrawn from output_model/maps.nc
                            (maps_export.py): rows = scenarios, columns = layers, ONE shared colour
@@ -400,6 +405,115 @@ def plot_maps_side_by_side(maps: dict, out_dir: str, var: str = "theta", epoch: 
     return _save(fig, out_dir, f"maps_{var}_epoch{epoch}.png")
 
 
+# --------------------------------------------------------------------------
+# Provenance: how were these simulations produced?
+# --------------------------------------------------------------------------
+def truth_hint(scenario: str) -> str:
+    """What the scenario NAME says about the synthetic truth (a hint; the manifest has the facts)."""
+    n = scenario.lower()
+    hints = []
+    if "smchetero" in n or "smc_hetero" in n:
+        hints.append("SMC heterogeneous")
+    if "smchomo" in n:
+        hints.append("SMC homogeneous")
+    if "wshetero" in n:
+        hints.append("WS heterogeneous")
+    if "wshomo" in n:
+        hints.append("WS homogeneous")
+    if not hints:
+        if "hetero" in n:
+            hints.append("heterogeneous (two-zone) truth")
+        elif n.startswith(("1d_surface", "1d_full")):
+            hints.append("homogeneous-in-depth truth (no 'hetero' in the name)")
+        elif n.startswith("real_"):
+            hints.append("real data")
+    return "; ".join(hints) or "not in the name"
+
+
+def _flatten(d, prefix: str = "") -> dict[str, str]:
+    """Nested config -> {'a.b': 'value'} with short string values (lists as JSON)."""
+    import json
+    out: dict[str, str] = {}
+    if isinstance(d, dict):
+        for k, v in d.items():
+            out.update(_flatten(v, f"{prefix}{k}."))
+    else:
+        txt = json.dumps(d, default=str) if isinstance(d, (list, tuple)) else str(d)
+        out[prefix[:-1]] = txt if len(txt) <= 90 else txt[:87] + "..."
+    return out
+
+
+def config_differences(configs: dict[str, dict]) -> tuple[dict[str, dict[str, list[str]]], dict[str, str]]:
+    """({key: {value: [scenarios]}} for keys that differ, {key: value} for keys equal everywhere)."""
+    flat = {n: _flatten(c or {}) for n, c in configs.items()}
+    keys = sorted({k for f in flat.values() for k in f})
+    differ: dict[str, dict[str, list[str]]] = {}
+    common: dict[str, str] = {}
+    for k in keys:
+        vals = {n: f.get(k, "(not set)") for n, f in flat.items()}
+        if len(set(vals.values())) > 1:
+            groups: dict[str, list[str]] = {}
+            for n, v in vals.items():
+                groups.setdefault(v, []).append(n)
+            differ[k] = groups
+        else:
+            common[k] = next(iter(vals.values()))
+    return differ, common
+
+
+def write_provenance(latest: dict[str, dict], out_dir: str, title: str = "") -> str | None:
+    """``provenance.md`` + ``manifests/<scenario>.json`` for the runs behind a plot folder."""
+    import json
+    import shutil
+    from run_log import read_run_manifest
+    if not latest:
+        return None
+    os.makedirs(os.path.join(out_dir, "manifests"), exist_ok=True)
+    rows, configs, notes = [], {}, []
+    for name, r in sorted(latest.items()):
+        od = r.get("output_dir", "")
+        m = read_run_manifest(od) if od else None
+        belongs = bool(m) and m.get("run_id") == r.get("run_id")
+        if m and not belongs:
+            notes.append(f"`{name}`: the manifest in the folder is from a LATER run ({m.get('run_id')}) than the "
+                         f"logged one ({r.get('run_id')}); its settings may differ from the plotted run.")
+        if m:
+            with open(os.path.join(out_dir, "manifests", f"{name}.json"), "w", encoding="utf-8") as f:
+                json.dump(m, f, indent=1, default=str)
+            if belongs or name not in configs:
+                configs[name] = m.get("config") or {}
+        else:
+            notes.append(f"`{name}`: no run_manifest.json found in `{od}` (run before manifests existed, or folder moved).")
+        commit = str((m or {}).get("git_commit", ""))
+        rows.append((name, str(r.get("run_id", "")), str(r.get("timestamp", "")), r.get("status", ""),
+                     commit.split("+")[0][:8] + ("+dirty" if commit.endswith("+dirty") else ""),
+                     str((m or {}).get("mode", r.get("mode", ""))), str((m or {}).get("stage", "")),
+                     "quick" if "_quick" in od else "", truth_hint(name)))
+    differ, common = config_differences(configs)
+    L = [f"# Provenance: {title or os.path.basename(out_dir)}", "",
+         "How the simulations behind these plots were produced. The full settings of each run are in "
+         "`manifests/<scenario>.json`; the 'truth hint' only reads the scenario name.", "",
+         "| scenario | run_id | timestamp | status | code | mode | stage | quick | truth hint (from the name) |",
+         "|---|---|---|---|---|---|---|---|---|"]
+    L += ["| " + " | ".join(x if x else "-" for x in row) + " |" for row in rows]
+    if notes:
+        L += ["", "**Notes**", ""] + [f"- {n}" for n in notes]
+    L += ["", "## Settings that differ between the scenarios", ""]
+    if differ:
+        for k, groups in differ.items():
+            L.append(f"- `{k}`: " + "; ".join(f"**{v}** -> {', '.join(sorted(ns))}" for v, ns in groups.items()))
+    else:
+        L.append("None found (or only one scenario / no manifests)." if len(configs) < 2 else "None: identical settings.")
+    L += ["", f"## Settings common to all scenarios ({len(common)})", ""]
+    L += [f"- `{k}` = {v}" for k, v in list(common.items())[:80]]
+    if len(common) > 80:
+        L.append(f"- ... {len(common) - 80} more (see the manifests)")
+    path = os.path.join(out_dir, "provenance.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+    return path
+
+
 def plot_study(study: str, rows: list[dict], out_root: str, figures: bool = False, tile: bool = False,
                maps: bool = False, map_var: str = "theta", epoch: int = -1) -> list[str]:
     """All plots of one study type; returns the files written."""
@@ -408,6 +522,9 @@ def plot_study(study: str, rows: list[dict], out_root: str, figures: bool = Fals
     if not latest:
         return []
     files = [write_table(latest, out_dir)]
+    prov = write_provenance(latest, out_dir, study)
+    if prov:
+        files.append(prov)
     for fn, arg in ((plot_rmse_by_scenario, latest), (plot_rmse_vs_rsr, latest),
                     (plot_rmse_vs_k, latest), (plot_rmse_history, rows), (plot_runtime_vs_rmse, latest)):
         p = fn(arg, out_dir, study)
