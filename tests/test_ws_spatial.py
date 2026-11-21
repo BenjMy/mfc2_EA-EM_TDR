@@ -7,6 +7,7 @@ beyond, so the expected per-station values and maps are known.
 import csv
 from types import SimpleNamespace
 
+import os
 import numpy as np
 import pytest
 
@@ -286,7 +287,9 @@ def test_step5_pooled_and_unknown_spatial_choice():
 
 
 def test_renamed_choices_and_old_aliases(capsys):
-    assert wss.SPATIAL_CHOICES == ("global", "localized", "voronoi", "idw")
+    assert wss.SPATIAL_CHOICES == ("global", "localized")            # selectable on the command line
+    assert wss.STATION_METHODS == ("voronoi", "idw")                  # comparison only (RD0.1)
+    assert wss.ALL_METHODS == ("global", "localized", "voronoi", "idw")
     assert wss.SIMPLICITY_ORDER == ("global", "voronoi", "idw", "localized")
     assert wss.normalize_spatial("pooled") == "global" and wss.normalize_spatial("kernel") == "localized"
     assert "renamed" in capsys.readouterr().out
@@ -308,3 +311,20 @@ def test_cli_accepts_old_and_new_names():
     assert ap.parse_args(["--ws-spatial", "localized"]).ws_spatial == "localized"
     assert ap.parse_args(["--ws-spatial", "kernel"]).ws_spatial == "localized"
     assert ap.parse_args(["--ws-spatial", "pooled"]).ws_spatial == "global"
+
+
+def test_station_methods_are_not_cli_choices():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ws-spatial", type=wss.normalize_spatial, choices=list(wss.SPATIAL_CHOICES))
+    for name in ("voronoi", "idw"):
+        with pytest.raises(SystemExit):
+            ap.parse_args(["--ws-spatial", name])
+
+
+def test_run_pipeline_cli_has_no_station_options():
+    import re
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "run_pipeline.py")).read()
+    assert "--ws-spatial-power" not in src and "--ws-spatial-shrinkage" not in src
+    sh = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "run_one_scenario.sh")).read()
+    assert "(global|localized)" in sh and "voronoi|idw" not in sh

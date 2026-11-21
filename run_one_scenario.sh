@@ -297,11 +297,12 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           --ws-localized-bandwidth / scenario value.
                           Overrides 'ws_localized_bandwidth_sweep' in
                           the scenario config.
-      --ws-spatial {global,localized,voronoi,idw}
+      --ws-spatial {global,localized}
                           Calibration unit of the maps; supersedes --ws-map-calibration.
                           global / localized = the same as --ws-map-calibration (the old
                           names pooled / kernel are still accepted).
-                          voronoi / idw fit sigma_s per station and spread it (ws_spatial.py).
+                          (voronoi / idw per-station variants are a comparison diagnostic only,
+                          not selectable; see ws_spatial.py.)
       --ws-map-calibration {localized,global}
                           Waxman-Smits calibration behind the water-content
                           MAPS. 'localized' (DEFAULT): every EM point is
@@ -665,13 +666,13 @@ while [[ $# -gt 0 ]]; do
                 || die "--ws-map-calibration must be 'localized' or 'global', got '${WS_MAP_CALIBRATION}'"
             shift 2 ;;
         --ws-spatial)
-            WS_SPATIAL="${2:?'--ws-spatial requires global, localized, voronoi or idw'}"
+            WS_SPATIAL="${2:?'--ws-spatial requires global or localized'}"
             case "${WS_SPATIAL}" in            # old names (before 2026-11-20)
                 pooled) echo "[WARN] --ws-spatial pooled was renamed global" >&2; WS_SPATIAL=global ;;
                 kernel) echo "[WARN] --ws-spatial kernel was renamed localized" >&2; WS_SPATIAL=localized ;;
             esac
-            [[ "${WS_SPATIAL}" =~ ^(global|localized|voronoi|idw)$ ]] \
-                || die "--ws-spatial must be global, localized, voronoi or idw, got '${WS_SPATIAL}'"
+            [[ "${WS_SPATIAL}" =~ ^(global|localized)$ ]] \
+                || die "--ws-spatial must be global or localized, got '${WS_SPATIAL}' (voronoi / idw are comparison-only, not selectable)"
             shift 2 ;;
         --train-val-split)
             TRAIN_VAL_SPLIT="${2:?'--train-val-split requires a method'}"

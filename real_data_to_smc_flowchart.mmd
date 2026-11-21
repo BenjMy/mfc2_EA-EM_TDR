@@ -38,23 +38,22 @@ flowchart TD
     K --> O_MAP{"--ws-spatial<br/>(supersedes --ws-map-calibration)"}
     O_MAP -- "global" --> M2["One WS set per horizon<br/>(pooled over all stations)"]
     O_MAP -- "localized (default)" --> M1["Gaspari-Cohn localized WS<br/>per EM point; pooled fit if no probe within 2c"]
-    O_MAP -- "voronoi | idw" --> B1
+    O_MAP -. "comparison only (not a choice)" .-> B1
 
     BW["Bandwidth c:<br/>--ws-localized-bandwidth | sweep (LOO-CV) |<br/>calibration run | scenario value"] -.-> M1
     SWA["A: sweep from probe spacing<br/>c = 0.5-5 x median nearest-neighbour distance<br/>flag if all c below the spacing"] -.-> BW
 
-    subgraph ST["Per-station WS (ws_spatial.py)"]
-        B1["B: per-station sigma_s fit, per horizon<br/>a, m, sigma_w held at pooled value (prior centre)<br/>--ws-spatial-shrinkage; fewer than 3 obs: pooled"]
+    subgraph ST["Per-station WS: comparison only (ws_spatial.py)"]
+        B1["B: per-station sigma_s fit, per horizon<br/>a, m, sigma_w held at pooled value (prior centre)<br/>shrinkage towards the pooled fit; fewer than 3 obs: pooled"]
         B1 --> B2["ws_by_station.csv<br/>station, x, y, horizon, sigma_s, n_obs, RMSE, at-bound"]
         B1 --> C1{"C: spread station values<br/>over the EM points"}
         C1 -- "voronoi: nearest station" --> D1
-        C1 -- "idw: 1/d^p, --ws-spatial-power" --> D1
+        C1 -- "idw: 1/d^p, power p" --> D1
         D1["D: per-point parameters (4, layers, points)<br/>pooled value where no station is fitted"]
     end
 
     M1 --> SMC
     M2 --> SMC
-    D1 --> SMC
     D1 --> E1["E: ws_spatial_sigma_s_map.png<br/>field + stations + pooled line"]
 
     %% ---------- method choice (implemented in ws_spatial.py, not yet called by the pipeline) ----------

@@ -115,18 +115,18 @@ def run_step5_localized_mapping(reporter, *, selected_output, averaged_models, r
     ``requested_mode`` None = default (localized); it is downgraded to global, with the
     reason logged, when no bandwidth is available or the localized fit fails.
 
-    ``ws_spatial`` (``global`` | ``localized`` | ``voronoi`` | ``idw``; None = keep ``requested_mode``;
-    the old names ``pooled`` / ``kernel`` are still accepted) chooses the calibration unit: ``global`` =
-    one set per horizon, ``localized`` = Gaspari-Cohn per EM point, and ``voronoi`` /
-    ``idw`` fit ``sigma_s`` per station and spread it over the field
-    (:func:`ws_spatial.build_station_mapping`; same container, so Steps 5b / 6 need no change).
+    ``ws_spatial`` (``global`` | ``localized``; None = keep ``requested_mode``; the old names ``pooled`` /
+    ``kernel`` are still accepted) chooses the calibration unit: ``global`` = one set per horizon,
+    ``localized`` = Gaspari-Cohn per EM point. ``voronoi`` / ``idw`` (``sigma_s`` fitted per station and
+    spread over the field, :func:`ws_spatial.build_station_mapping`; same container, so Steps 5b / 6
+    need no change) are a COMPARISON diagnostic: accepted here for scripts, not offered on the command line.
 
     Returns the ``LocalizedMapping`` or None (global maps).
     """
     if ws_spatial is not None:
         ws_spatial = wss.normalize_spatial(ws_spatial)
-        if ws_spatial not in wss.SPATIAL_CHOICES:
-            raise ValueError(f"ws_spatial must be one of {wss.SPATIAL_CHOICES}, got {ws_spatial!r}")
+        if ws_spatial not in wss.ALL_METHODS:
+            raise ValueError(f"ws_spatial must be one of {wss.ALL_METHODS}, got {ws_spatial!r}")
         if ws_spatial in wss.STATION_METHODS:
             return _run_station_mapping(
                 reporter, selected_output=selected_output, averaged_models=averaged_models,

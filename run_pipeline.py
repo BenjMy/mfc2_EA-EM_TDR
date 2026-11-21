@@ -1716,10 +1716,10 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         the scenario config's ``ws_localized_bandwidth_sweep`` field, or
         skips the sweep if that isn't set either. Overrides the scenario
         value when passed (CLI > scenario, same precedence as beta/gamma).
-    ws_spatial : {"global", "localized", "voronoi", "idw"} or None, optional (old names "pooled" / "kernel" accepted)
-        Calibration unit of the maps (supersedes ``ws_map_calibration`` when set): ``pooled`` =
-        ``global``, ``kernel`` = ``localized``, ``voronoi`` / ``idw`` = ``sigma_s`` fitted per
-        station and spread over the field (``ws_spatial.py``). ``ws_spatial_power`` is the IDW
+    ws_spatial : {"global", "localized"} or None, optional (old names "pooled" / "kernel" accepted)
+        Calibration unit of the maps (supersedes ``ws_map_calibration`` when set). ``voronoi`` / ``idw``
+        (``sigma_s`` fitted per station and spread over the field, ``ws_spatial.py``) are accepted here
+        as a comparison diagnostic only, not on the command line. ``ws_spatial_power`` is the IDW
         exponent, ``ws_spatial_shrinkage`` the prior weight of a station fit (1 = pooled fit's).
     ws_map_calibration : {"localized", "global"} or None, optional
         Waxman-Smits calibration used to convert the optimal EC model to the
@@ -5458,16 +5458,9 @@ if __name__ == "__main__":
         "--ws-spatial", type=wss.normalize_spatial, choices=list(wss.SPATIAL_CHOICES), default=None,
         help="Calibration unit behind the water-content maps; supersedes --ws-map-calibration. "
              "'global' = one parameter set per horizon; 'localized' = Gaspari-Cohn localized "
-             "(needs a bandwidth); 'voronoi' / 'idw' = sigma_s fitted per station (a, m, sigma_w "
-             "held at the global value, shrunk towards it) and spread over the field by the "
-             "nearest station or inverse-distance weights. Writes ws_by_station.csv and "
-             "ws_spatial_sigma_s_map.png. See ws_spatial.py.",
+             "(needs a bandwidth). Per-station variants (voronoi / idw) are a comparison "
+             "diagnostic only, not selectable here (see ws_spatial.py).",
     )
-    parser.add_argument("--ws-spatial-power", type=float, default=2.0,
-                        help="IDW exponent for --ws-spatial idw (default 2).")
-    parser.add_argument("--ws-spatial-shrinkage", type=float, default=1.0,
-                        help="Prior weight of a per-station fit relative to the pooled fit's own "
-                             "regularisation (default 1; 0 = unregularised).")
     parser.add_argument(
         "--ws-map-calibration", choices=list(lmap.MAP_CALIBRATION_CHOICES), default=None,
         help="Waxman-Smits calibration behind the water-content MAPS (EC -> theta). "
@@ -5686,8 +5679,6 @@ if __name__ == "__main__":
              ws_localized_bandwidth_sweep=args.ws_localized_bandwidth_sweep,
              ws_map_calibration=args.ws_map_calibration,
              ws_spatial=args.ws_spatial,
-             ws_spatial_power=args.ws_spatial_power,
-             ws_spatial_shrinkage=args.ws_spatial_shrinkage,
              k_selection=args.k_selection,
              em_footprint_diagnostic=args.em_footprint_diagnostic,
              quick=args.quick, quick_epochs=args.quick_epochs,

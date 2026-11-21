@@ -42,9 +42,12 @@ import localized_mapping as lmap
 
 PARAMS = ("a", "m", "sigma_w", "sigma_s")
 # User-facing names (same as --ws-map-calibration): "global" = one parameter set per horizon,
-# "localized" = Gaspari-Cohn kernel-localized fit per EM point. voronoi / idw = per-station sigma_s.
-SPATIAL_CHOICES = ("global", "localized", "voronoi", "idw")
-STATION_METHODS = ("voronoi", "idw")
+# "localized" = Gaspari-Cohn kernel-localized fit per EM point. voronoi / idw = per-station sigma_s,
+# kept as a COMPARISON diagnostic (loso_predictions, build_station_mapping), not a --ws-spatial choice
+# (decision RD0.1, 2026-11-20).
+SPATIAL_CHOICES = ("global", "localized")            # what --ws-spatial offers (the maps' calibration unit)
+STATION_METHODS = ("voronoi", "idw")                 # comparison-only: not selectable on the command line
+ALL_METHODS = SPATIAL_CHOICES + STATION_METHODS      # what the Python API / leave-one-station-out compare
 SIMPLICITY_ORDER = ("global", "voronoi", "idw", "localized")
 # Names before 2026-11-20; still accepted (normalize_spatial) so old commands / scripts keep working.
 SPATIAL_ALIASES = {"pooled": "global", "kernel": "localized"}
