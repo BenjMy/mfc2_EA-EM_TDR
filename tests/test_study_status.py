@@ -38,6 +38,19 @@ def test_caveats():
         assert key in txt, key
 
 
+def test_same_commit_dirty_and_clean_is_one_version():
+    rows = [_row("a"), {**_row("b"), "run_id": "b-1"}]
+    man = {rows[0]["run_id"]: {"git_commit": "c38b2d24aaaa+dirty"}, "b-1": {"git_commit": "c38b2d24aaaa"}}
+    txt = " | ".join(ss.caveats(rows, man, "c38b2d24aaaa"))
+    assert "different code versions" not in txt and "+dirty" in txt
+
+
+def test_real_matrix_excludes_test_scenarios():
+    m = ss.expected_matrix()
+    if "real_scenarios" in m:
+        assert not any("_test_" in n for n in m["real_scenarios"]["scenarios"])
+
+
 def test_report_end_to_end(tmp_path):
     log = tmp_path / "l.csv"
     l = RunLog(str(log))

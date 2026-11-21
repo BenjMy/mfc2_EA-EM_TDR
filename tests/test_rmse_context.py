@@ -42,6 +42,7 @@ def test_infer_study_type():
              "1d_full_hetero_free3": "surface_vs_full_hetero", "1d_surface_free4_pin0": "pinned_horizon",
              "1d_full_free2_tv_probe": "train_val_synthetic", "real_single_base": "real_scenarios",
              "mfc2_real_synthetic_mirror": "synthetic_mirror", "ws_bench_nfree": "ws_global_vs_localized",
+             "wsb_xy_random_L4_P4_C10_bw5_s22": "ws_global_vs_localized",
              "foo": "other"}
     for name, want in cases.items():
         assert infer_study_type(name) == want, name

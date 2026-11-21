@@ -46,7 +46,7 @@ RUN_LOG_COLUMNS = [
 # generate_synthetic_real_mirror.py, bench_ws_global_vs_localized.py.
 STUDY_TYPE_RULES = [
     (r"^swcstudy_", "swc_design_study"),
-    (r"^ws_bench", "ws_global_vs_localized"),
+    (r"^(ws_bench|wsb_)", "ws_global_vs_localized"),
     (r"^real_study_", "hyp1_layers_ws_freedom"),
     (r"^real_tv_", "hyp2_train_val_split"),
     (r"^real_bw_sweep", "hyp3_localized_bandwidth"),

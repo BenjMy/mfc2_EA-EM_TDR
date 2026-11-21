@@ -70,7 +70,8 @@ def expected_matrix(swc_preset: str = "oat", npos: int = 5) -> "OrderedDict[str,
             scenarios=[h1.scenario_name(d, k) for d in designs for k in (1, 2, 3, 4)],
             command=lambda n: "python hyp1_layers_ws_freedom.py --designs "
                               f"{n.split('_')[2]} --free-k {n.rsplit('free', 1)[1]}",
-            note="python hyp1_layers_ws_freedom.py")
+            note="python hyp1_layers_ws_freedom.py  (default K = 1 2 3 4; with --fast only K = 1 and 4, "
+                 "so K = 2, 3 reported missing after a --fast run is expected)")
     except Exception:  # noqa: BLE001 - heavy import failed: study simply not listed
         pass
     try:
@@ -84,7 +85,7 @@ def expected_matrix(swc_preset: str = "oat", npos: int = 5) -> "OrderedDict[str,
     out["hyp3_localized_bandwidth"] = dict(
         scenarios=["real_bw_sweep"], command=lambda n: "python hyp3_localized_bandwidth.py",
         note="python hyp3_localized_bandwidth.py")
-    real = _real_json_names()
+    real = [n for n in _real_json_names() if "_test_" not in n]     # test_* = smoke-test scenarios
     if real:
         out["real_scenarios"] = dict(scenarios=real, command=lambda n: one(n) + " --mode 2d",
                                      note="run_real_all_scenarios.sh (all scenarios of ensemble_scenarios_real.json)")
@@ -107,7 +108,8 @@ def _is_failed(row: dict) -> bool:
 
 
 def study_of(row: dict) -> str:
-    return row.get("study_type") or infer_study_type(row.get("scenario"))
+    st = row.get("study_type")
+    return st if st and st != "other" else infer_study_type(row.get("scenario"))     # re-infer "other"
 
 
 def classify(expected: list[str], rows: list[dict]) -> dict:
@@ -166,9 +168,10 @@ def caveats(rows: list[dict], manifests: dict[str, dict | None], head: str | Non
             bounds.add(r["scenario"])
         if m.get("stage") and m["stage"] != "all":
             stage.add(r["scenario"])
-    if len(commits) > 1:
-        out.append(f"Runs come from {len(commits)} different code versions "
-                   f"({', '.join(sorted(c[:8] for c in commits))}): results may not be comparable.")
+    versions = {c.split("+")[0][:8] for c in commits}           # "abc+dirty" and "abc" are one version
+    if len(versions) > 1:
+        out.append(f"Runs come from {len(versions)} different code versions "
+                   f"({', '.join(sorted(versions))}): results may not be comparable.")
     if any(c.endswith("+dirty") for c in commits):
         out.append("Some runs were made with uncommitted changes (+dirty): not reproducible from git.")
     if head and commits and not any(c.split("+")[0] == head for c in commits):

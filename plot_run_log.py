@@ -84,7 +84,9 @@ def load_rows(log_path: str) -> list[dict]:
     out = []
     for r in RunLog(log_path).rows():
         d = dict(r)
-        d["study_type"] = r.get("study_type") or infer_study_type(r.get("scenario"))
+        st = r.get("study_type")
+        # "other" is re-inferred: a rule added after the log was upgraded then still applies
+        d["study_type"] = st if st and st != "other" else infer_study_type(r.get("scenario"))
         rmse = _num(r.get("final_rmse"))
         pct = _num(r.get("rmse_pct"))
         d["rmse"] = rmse

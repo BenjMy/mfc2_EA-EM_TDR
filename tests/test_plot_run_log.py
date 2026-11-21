@@ -67,3 +67,14 @@ def test_gather_and_tile_figures(tmp_path):
     assert not (out / "surface_vs_full/figures/swc_map_xy/1d_surface_free3.png").exists()
     assert (out / "surface_vs_full/figures/swc_uncertainty_tiled.png").is_file()
     assert any(f.endswith("swc_map_xy_tiled.png") for f in files)
+
+
+def test_stale_other_study_type_is_reinferred(tmp_path):
+    import csv
+    from run_log import RUN_LOG_COLUMNS
+    p = tmp_path / "l.csv"
+    with open(p, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=RUN_LOG_COLUMNS); w.writeheader()
+        w.writerow({"run_id": "a", "scenario": "wsb_xy_random_L4_P4_C10_bw5", "status": "SUCCESS",
+                    "final_rmse": "0.05", "study_type": "other"})
+    assert prl.load_rows(str(p))[0]["study_type"] == "ws_global_vs_localized"
