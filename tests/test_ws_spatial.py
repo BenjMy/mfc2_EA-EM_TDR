@@ -143,23 +143,23 @@ def test_spread_rejects_unknown_method():
 
 def test_loso_station_methods_beat_pooled_with_spatial_structure():
     _, obs = _obs()
-    preds = wss.loso_predictions(obs, 1, methods=("pooled", "voronoi", "idw"),
+    preds = wss.loso_predictions(obs, 1, methods=("global", "voronoi", "idw"),
                                  lab_p0=np.array([A, M, SW, 50.0]), shrinkage=0.0)
     s = wss.loso_summary(obs, preds)
-    assert s["voronoi"]["rmse"] < s["pooled"]["rmse"]
-    assert s["idw"]["rmse"] < s["pooled"]["rmse"]
-    assert s["pooled"]["n"] == s["voronoi"]["n"] == len(obs)    # same observations scored
+    assert s["voronoi"]["rmse"] < s["global"]["rmse"]
+    assert s["idw"]["rmse"] < s["global"]["rmse"]
+    assert s["global"]["n"] == s["voronoi"]["n"] == len(obs)    # same observations scored
 
 
 def test_choose_method_prefers_simplest_within_one_se():
-    summ = {"pooled": {"rmse": 0.115, "se": 0.0}, "voronoi": {"rmse": 0.100, "se": 0.01},
-            "kernel": {"rmse": 0.099, "se": 0.01}}
+    summ = {"global": {"rmse": 0.115, "se": 0.0}, "voronoi": {"rmse": 0.100, "se": 0.01},
+            "localized": {"rmse": 0.099, "se": 0.01}}
     assert wss.choose_method(summ)[0] == "voronoi"      # pooled 0.115 > 0.099 + 0.01; voronoi is simpler than kernel
-    summ["pooled"]["rmse"] = 0.105                      # now within the limit 0.109
-    assert wss.choose_method(summ)[0] == "pooled"
-    summ["pooled"]["rmse"] = 0.2
+    summ["global"]["rmse"] = 0.105                      # now within the limit 0.109
+    assert wss.choose_method(summ)[0] == "global"
+    summ["global"]["rmse"] = 0.2
     summ["voronoi"]["rmse"] = 0.2
-    assert wss.choose_method(summ)[0] == "kernel"       # only the best qualifies
+    assert wss.choose_method(summ)[0] == "localized"       # only the best qualifies
     assert wss.choose_method({})[0] is None
 
 
@@ -279,7 +279,32 @@ def test_step5_pooled_and_unknown_spatial_choice():
               bandwidth_source="", point_x=X, point_y=None, sample_positions=[], sample_times=[],
               theta_obs=[], probe_layer_indices=None, lab_p0=None, fixed_params=None,
               theta_obs_std=None, ws_bounds=None)
-    assert s5.run_step5_localized_mapping(rep, ws_spatial="pooled", **kw) is None
+    assert s5.run_step5_localized_mapping(rep, ws_spatial="global", **kw) is None
     assert so.ws_map_mode == "global"
     with pytest.raises(ValueError):
         s5.run_step5_localized_mapping(rep, ws_spatial="kriging", **kw)
+
+
+def test_renamed_choices_and_old_aliases(capsys):
+    assert wss.SPATIAL_CHOICES == ("global", "localized", "voronoi", "idw")
+    assert wss.SIMPLICITY_ORDER == ("global", "voronoi", "idw", "localized")
+    assert wss.normalize_spatial("pooled") == "global" and wss.normalize_spatial("kernel") == "localized"
+    assert "renamed" in capsys.readouterr().out
+    assert wss.normalize_spatial("idw") == "idw" and wss.normalize_spatial(None) is None
+    assert wss.normalize_spatial("kriging") == "kriging"          # unknown: left for the validator
+
+
+def test_old_names_still_accepted_downstream():
+    _, obs = _obs()
+    p = wss.loso_predictions(obs, 1, methods=("pooled", "voronoi"), lab_p0=np.array([A, M, SW, 50.0]),
+                             shrinkage=0.0)
+    assert set(p) == {"global", "voronoi"}                          # old name mapped to the new one
+
+
+def test_cli_accepts_old_and_new_names():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ws-spatial", type=wss.normalize_spatial, choices=list(wss.SPATIAL_CHOICES))
+    assert ap.parse_args(["--ws-spatial", "localized"]).ws_spatial == "localized"
+    assert ap.parse_args(["--ws-spatial", "kernel"]).ws_spatial == "localized"
+    assert ap.parse_args(["--ws-spatial", "pooled"]).ws_spatial == "global"

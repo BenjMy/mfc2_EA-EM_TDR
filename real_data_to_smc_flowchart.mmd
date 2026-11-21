@@ -36,8 +36,8 @@ flowchart TD
 
     %% ---------- calibration unit of the maps (--ws-spatial) ----------
     K --> O_MAP{"--ws-spatial<br/>(supersedes --ws-map-calibration)"}
-    O_MAP -- "pooled = global" --> M2["One WS set per horizon<br/>(pooled over all stations)"]
-    O_MAP -- "kernel = localized (default)" --> M1["Gaspari-Cohn localized WS<br/>per EM point; pooled fit if no probe within 2c"]
+    O_MAP -- "global" --> M2["One WS set per horizon<br/>(pooled over all stations)"]
+    O_MAP -- "localized (default)" --> M1["Gaspari-Cohn localized WS<br/>per EM point; pooled fit if no probe within 2c"]
     O_MAP -- "voronoi | idw" --> B1
 
     BW["Bandwidth c:<br/>--ws-localized-bandwidth | sweep (LOO-CV) |<br/>calibration run | scenario value"] -.-> M1
@@ -58,7 +58,7 @@ flowchart TD
     D1 --> E1["E: ws_spatial_sigma_s_map.png<br/>field + stations + pooled line"]
 
     %% ---------- method choice (implemented in ws_spatial.py, not yet called by the pipeline) ----------
-    LOSO["Leave-one-station-out CV of theta<br/>pooled | voronoi | idw | kernel<br/>simplest within 1 SE of the best"] -.-> O_MAP
+    LOSO["Leave-one-station-out CV of theta<br/>global | voronoi | idw | localized<br/>simplest within 1 SE of the best"] -.-> O_MAP
 
     %% ---------- checks ----------
     SMC --> V5b["Step 5b: held-out validation RMSE<br/>(global + localized / station mapping)"]

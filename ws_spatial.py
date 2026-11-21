@@ -41,9 +41,23 @@ import em_methodology as EMmethod
 import localized_mapping as lmap
 
 PARAMS = ("a", "m", "sigma_w", "sigma_s")
-SPATIAL_CHOICES = ("pooled", "kernel", "voronoi", "idw")
+# User-facing names (same as --ws-map-calibration): "global" = one parameter set per horizon,
+# "localized" = Gaspari-Cohn kernel-localized fit per EM point. voronoi / idw = per-station sigma_s.
+SPATIAL_CHOICES = ("global", "localized", "voronoi", "idw")
 STATION_METHODS = ("voronoi", "idw")
-SIMPLICITY_ORDER = ("pooled", "voronoi", "idw", "kernel")
+SIMPLICITY_ORDER = ("global", "voronoi", "idw", "localized")
+# Names before 2026-11-20; still accepted (normalize_spatial) so old commands / scripts keep working.
+SPATIAL_ALIASES = {"pooled": "global", "kernel": "localized"}
+
+
+def normalize_spatial(value):
+    """Map the old names ('pooled', 'kernel') to the current ones; anything else is returned
+    unchanged (validation against ``SPATIAL_CHOICES`` stays with the caller / argparse)."""
+    if isinstance(value, str) and value in SPATIAL_ALIASES:
+        new = SPATIAL_ALIASES[value]
+        print(f"[WS SPATIAL] '{value}' is the old name of '{new}' (renamed 2026-11-20); using '{new}'.")
+        return new
+    return value
 SWEEP_FACTORS = (0.5, 1.0, 1.5, 2.0, 3.0, 5.0)     # x median nearest-neighbour spacing
 MIN_STATION_OBS = 3
 
@@ -389,17 +403,18 @@ def loso_predictions(obs: ProbeObs, n_layers: int, *, methods: Sequence[str] = S
 
     All observations of a station (every epoch and horizon) are removed together, the
     method is refitted on the remaining stations, and evaluated at the held-out station's
-    location with the parameters the method assigns there. ``pooled`` is the baseline (a pooled
-    fit of the remaining stations). A method that cannot predict at a station (kernel without a
+    location with the parameters the method assigns there. ``global`` is the baseline (a pooled
+    fit of the remaining stations). A method that cannot predict at a station (localized without a
     neighbour within 2c) uses the pooled fit of the remaining stations, never the held-out one,
-    so all methods score the SAME observations. ``kernel`` needs ``bandwidth``, ``avg_model``,
+    so all methods score the SAME observations. ``localized`` needs ``bandwidth``, ``avg_model``,
     ``point_x`` (and ``point_y`` for 2-D); it is skipped otherwise.
 
     Returns ``{method: (n_obs,) predicted theta}`` (NaN for observations that are not valid).
     """
+    methods = [normalize_spatial(m) for m in methods]
     methods = [m for m in methods if m in SIMPLICITY_ORDER]
-    if "kernel" in methods and (bandwidth is None or avg_model is None or point_x is None):
-        methods = [m for m in methods if m != "kernel"]
+    if "localized" in methods and (bandwidth is None or avg_model is None or point_x is None):
+        methods = [m for m in methods if m != "localized"]
     out = {m: np.full(len(obs), np.nan) for m in methods}
     ok_all = obs.valid()
     for st in dict.fromkeys(obs.station.tolist()):
@@ -417,11 +432,11 @@ def loso_predictions(obs: ProbeObs, n_layers: int, *, methods: Sequence[str] = S
         hx, hy = float(obs.x[held][0]), float(obs.y[held][0])
         hpos = int(obs.pos[held][0])
         for method in methods:
-            if method == "pooled":
+            if method == "global":
                 params = np.repeat(pooled.T[:, :, None], 1, axis=2)
             elif method in STATION_METHODS:
                 params, _ = spread_station_params(sf, [hx], [hy], method, pooled, power=power)
-            else:                                           # kernel
+            else:                                           # localized
                 fits = EMmethod.calibrate_petrophysical_relationship_localized(
                     models=np.asarray(avg_model, dtype=float)[np.newaxis],
                     sample_positions=obs.pos[train].tolist(), sample_times=obs.time[train].tolist(),

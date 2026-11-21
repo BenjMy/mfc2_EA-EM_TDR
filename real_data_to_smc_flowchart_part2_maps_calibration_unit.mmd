@@ -2,8 +2,8 @@ flowchart TD
     %% Part 2/3: calibration unit behind the maps (EC -> theta), from the optimal stack K
     K[["Optimal stack K<br/>(from part 1)"]] --> O_MAP{"--ws-spatial<br/>(supersedes --ws-map-calibration)"}
 
-    O_MAP -- "global [pooled]" --> M2["One WS set per horizon<br/>(pooled over all stations)"]
-    O_MAP -- "localized [kernel] (default)" --> M1["Gaspari-Cohn localized WS<br/>per EM point; global fit if no probe within 2c"]
+    O_MAP -- "global" --> M2["One WS set per horizon<br/>(pooled over all stations)"]
+    O_MAP -- "localized (default)" --> M1["Gaspari-Cohn localized WS<br/>per EM point; global fit if no probe within 2c"]
     O_MAP -- "voronoi | idw" --> B1
 
     BW["Bandwidth c:<br/>--ws-localized-bandwidth | sweep (LOO-CV) |<br/>calibration run | scenario value"] -.-> M1

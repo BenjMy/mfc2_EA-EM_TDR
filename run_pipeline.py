@@ -1716,7 +1716,7 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         the scenario config's ``ws_localized_bandwidth_sweep`` field, or
         skips the sweep if that isn't set either. Overrides the scenario
         value when passed (CLI > scenario, same precedence as beta/gamma).
-    ws_spatial : {"pooled", "kernel", "voronoi", "idw"} or None, optional
+    ws_spatial : {"global", "localized", "voronoi", "idw"} or None, optional (old names "pooled" / "kernel" accepted)
         Calibration unit of the maps (supersedes ``ws_map_calibration`` when set): ``pooled`` =
         ``global``, ``kernel`` = ``localized``, ``voronoi`` / ``idw`` = ``sigma_s`` fitted per
         station and spread over the field (``ws_spatial.py``). ``ws_spatial_power`` is the IDW
@@ -5455,11 +5455,11 @@ if __name__ == "__main__":
              "ranking (Steps 2-3) stays global.",
     )
     parser.add_argument(
-        "--ws-spatial", choices=list(wss.SPATIAL_CHOICES), default=None,
+        "--ws-spatial", type=wss.normalize_spatial, choices=list(wss.SPATIAL_CHOICES), default=None,
         help="Calibration unit behind the water-content maps; supersedes --ws-map-calibration. "
-             "'pooled' = one parameter set per horizon; 'kernel' = Gaspari-Cohn localized "
+             "'global' = one parameter set per horizon; 'localized' = Gaspari-Cohn localized "
              "(needs a bandwidth); 'voronoi' / 'idw' = sigma_s fitted per station (a, m, sigma_w "
-             "held at the pooled value, shrunk towards it) and spread over the field by the "
+             "held at the global value, shrunk towards it) and spread over the field by the "
              "nearest station or inverse-distance weights. Writes ws_by_station.csv and "
              "ws_spatial_sigma_s_map.png. See ws_spatial.py.",
     )
