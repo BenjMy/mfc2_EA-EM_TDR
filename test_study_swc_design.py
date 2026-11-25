@@ -251,3 +251,31 @@ def test_pick_run_dir_prefers_reference(tmp_path):
             {"smc": "homo", "ws": "homo", "n": 5, "run_dir": str(tmp_path / "missing")}]
     assert ov.pick_run_dir(rows, "smc", "homo", {"n": 5}) == b
     assert ov.pick_run_dir(rows, "smc", "hetero") is None
+
+
+# ---------------------------------------------------------------- heat map variants
+def test_heatmap_variants_main_preset(tmp_path):
+    (tmp_path / "residuals").mkdir()
+    df = _fake_summary(tmp_path)
+    names = {os.path.basename(p) for p in st.plot_heatmap_variants(df, str(tmp_path))}
+    # main: other distributions at the reference regularisation; reg is only run at n = 5 (no heat map)
+    assert names == {"fig_heatmap_n_vs_k_clustered_noreg.png", "fig_heatmap_n_vs_k_random_noreg.png"}
+    assert "fig_heatmap_n_vs_k.png" not in names                       # the reference one is written separately
+    assert "fig_heatmap_n_vs_k_clustered_noreg.png" in {os.path.basename(p) for p in st.make_plots(df, str(tmp_path))}
+
+
+def test_heatmap_variants_other_regularisation(tmp_path):
+    import pandas as pd
+    (tmp_path / "residuals").mkdir()
+    df = _fake_summary(tmp_path)
+    beta = df[(df["reg"] == "noreg") & (df["dist"] == "spread")].copy()
+    beta["reg"] = "beta"                                                # as if reg had been run at every n
+    names = {os.path.basename(p) for p in st.plot_heatmap_variants(pd.concat([df, beta], ignore_index=True), str(tmp_path))}
+    assert "fig_heatmap_n_vs_k_spread_beta.png" in names
+
+
+def test_heatmap_variants_no_results(tmp_path):
+    (tmp_path / "residuals").mkdir()
+    df = _fake_summary(tmp_path)
+    df["rmse_truth"] = np.nan
+    assert st.plot_heatmap_variants(df, str(tmp_path)) == []

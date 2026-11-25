@@ -66,7 +66,8 @@ Outputs (``--out-dir``, default comparison_output/swc_design_study/)
     study_summary.csv      one row per run (design factors + metrics vs truth)
     study_report.md        tables
     residuals/*.npz        theta_calc - theta_true per run (for the distribution plots)
-    fig_*.png              comparison plots
+    fig_*.png              comparison plots (fig_heatmap_n_vs_k_<dist>_<reg>.png: n x K heat map of the
+                           other distributions / regularisations, same colour scale)
 Run folders: mfc2_outputs/swc_design_study/<scenario>/<NNNN>_<scenario>/
 """
 from __future__ import annotations
@@ -515,8 +516,12 @@ def plot_rmse_vs_k(df, out_dir, reg_ref="noreg"):
     return _save(fig, out_dir, "fig_rmse_vs_k.png")
 
 
-def plot_heatmap_n_k(df, out_dir, reg_ref="noreg", dist_ref="spread"):
-    """RMSE heat map number of probes x K, one panel per truth."""
+def plot_heatmap_n_k(df, out_dir, reg_ref="noreg", dist_ref="spread", fname="fig_heatmap_n_vs_k.png", vlim=None):
+    """RMSE heat map number of probes x K, one panel per truth.
+
+    ``fname`` / ``vlim`` = (vmin, vmax): used by ``plot_heatmap_variants`` so that the heat maps of the other
+    distributions / regularisations are written to their own file on one common colour scale.
+    """
     import matplotlib.pyplot as plt
     d = _ok(expand_degenerate(df)); d = d[d["reg"] == _ref_reg(d, reg_ref)]
     dist_ref = dist_ref if dist_ref in set(d["dist"]) else (d["dist"].iloc[0] if len(d) else dist_ref)
@@ -524,7 +529,7 @@ def plot_heatmap_n_k(df, out_dir, reg_ref="noreg", dist_ref="spread"):
     if d.empty:
         return None
     fig, axes = plt.subplots(1, len(truths), figsize=(3.6 * len(truths) + 1, 3.4), squeeze=False)
-    vmin, vmax = d["rmse_truth"].min(), d["rmse_truth"].max(); im = None
+    vmin, vmax = vlim if vlim else (d["rmse_truth"].min(), d["rmse_truth"].max()); im = None
     for ax, (smc, ws) in zip(axes[0], truths):
         sub = d[(d["smc"] == smc) & (d["ws"] == ws)]
         ns, ks = sorted(sub["n"].unique()), sorted(sub["k"].unique())
@@ -540,7 +545,33 @@ def plot_heatmap_n_k(df, out_dir, reg_ref="noreg", dist_ref="spread"):
         ax.set_title(_truth_label(smc, ws), fontsize=9); ax.set_xlabel("K free WS"); ax.set_ylabel("n SWC positions")
     fig.colorbar(im, ax=axes.ravel().tolist(), label="RMSE θ [m³/m³]", shrink=0.9)
     fig.suptitle(f"RMSE θ vs truth (probes: {dist_ref}, reg: {_ref_reg(d, reg_ref)})", y=1.02)
-    return _save(fig, out_dir, "fig_heatmap_n_vs_k.png")
+    return _save(fig, out_dir, fname)
+
+
+def plot_heatmap_variants(df, out_dir, reg_ref="noreg", dist_ref="spread"):
+    """One extra n x K heat map per (distribution, regularisation) other than the reference one.
+
+    Files ``fig_heatmap_n_vs_k_<dist>_<reg>.png``, all on the same colour scale (the one of the whole study) so
+    they can be compared with each other. A combination with fewer than two n levels has no heat map and is
+    skipped: with ``--preset main`` only the other distributions at reg = reference get one (distribution and
+    regularisation are only run at n = 5 there); ``--preset full`` fills every combination.
+    """
+    d = _ok(expand_degenerate(df))
+    if d.empty:
+        return []
+    reg_ref = _ref_reg(d, reg_ref)
+    dist_ref = dist_ref if dist_ref in set(d["dist"]) else d["dist"].iloc[0]
+    vlim = (d["rmse_truth"].min(), d["rmse_truth"].max())
+    order = {x: i for i, x in enumerate(LEVELS["dist"])}
+    paths = []
+    for dist in sorted(set(d["dist"]), key=lambda x: order.get(x, 9)):
+        for reg in LEVELS["reg"]:
+            if (dist, reg) == (dist_ref, reg_ref) or reg not in set(d["reg"]):
+                continue
+            if d[(d["dist"] == dist) & (d["reg"] == reg)]["n"].nunique() < 2:
+                continue
+            paths.append(plot_heatmap_n_k(df, out_dir, reg, dist, f"fig_heatmap_n_vs_k_{dist}_{reg}.png", vlim))
+    return [p for p in paths if p]
 
 
 def plot_distribution_effect(df, out_dir, reg_ref="noreg", n_ref=None):
@@ -686,7 +717,8 @@ def make_plots(df, out_dir: str, reg_ref: str = "noreg", realization: int = 0) -
         return []
     res = os.path.join(out_dir, "residuals")
     paths = [plot_rmse_vs_nswc(df, out_dir, reg_ref), plot_rmse_vs_k(df, out_dir, reg_ref),
-             plot_heatmap_n_k(df, out_dir, reg_ref), plot_distribution_effect(df, out_dir, reg_ref),
+             plot_heatmap_n_k(df, out_dir, reg_ref), *plot_heatmap_variants(df, out_dir, reg_ref),
+             plot_distribution_effect(df, out_dir, reg_ref),
              plot_regularisation_effect(df, out_dir), plot_truth_effect(df, out_dir, reg_ref),
              plot_calibrated_vs_uncalibrated(df, out_dir, reg_ref),
              plot_residual_distribution(df, out_dir, res, reg_ref),
