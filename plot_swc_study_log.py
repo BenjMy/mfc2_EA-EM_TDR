@@ -20,6 +20,8 @@ Plots (RMSE in % vol; the RSR panel title is added when the runs logged RMSE/std
     swc_reg_effect.png      RMSE by regularisation (noreg/beta/gamma/both)
     swc_rmse_vs_rsr.png     (from plot_run_log) error vs spread of the data
     swc_runs.csv            table behind the plots
+    (also, in comparison_output/swc_design_study/, --design-dir:)
+    fig_design_and_truth.png  probe layouts (spread/clustered/random) + truth SMC (t0) + truth WS, homo/hetero
     provenance.md, manifests/   how the runs were made (see plot_run_log.py): factors, code version,
                             settings that differ, copy of every run_manifest.json
 The final RMSE here is the one at the probes; the truth-based metrics of the full study
@@ -41,7 +43,9 @@ import numpy as np  # noqa: E402
 
 import plot_run_log as prl  # noqa: E402
 from EA_EM_config import OUTPUT_ROOT  # noqa: E402
-from study_swc_design import FACTORS, REFERENCE, parse_name  # noqa: E402
+from plots import swc_design_overview  # noqa: E402
+from study_swc_design import (FACTORS, OUT_DIR as STUDY_DIR, REFERENCE, parse_name, probe_positions,  # noqa: E402
+                              realization_from_config, survey_x)
 
 SWC_LOG = os.path.join(OUTPUT_ROOT, "run_log_swc_study.csv")
 DEFAULT_OUT = os.path.join("comparison_output", "swc_log_plots")
@@ -81,7 +85,7 @@ def _lines(table, x, by, out_dir, fname, title, xlabel, **fixed):
     return prl._save(fig, out_dir, fname)
 
 
-def plot_all(rows: list[dict], out_dir: str) -> list[str]:
+def plot_all(rows: list[dict], out_dir: str, design_dir: str | None = STUDY_DIR) -> list[str]:
     latest = prl.latest_per_scenario(rows)
     table = design_table(latest)
     if not table:
@@ -133,13 +137,29 @@ def plot_all(rows: list[dict], out_dir: str) -> list[str]:
         ax.set_title("Regularisation effect", fontsize=9)
         files.append(prl._save(fig, out_dir, "swc_reg_effect.png"))
     files.append(prl.plot_rmse_vs_rsr({r["scenario"]: r for r in table}, out_dir, "swc study"))
+    if design_dir:                       # lives with the study's own fig_*.png (comparison_output/swc_design_study)
+        files.append(plot_design_overview(table, design_dir))
     return [f for f in files if f]
+
+
+def plot_design_overview(table: list[dict], out_dir: str) -> str | None:
+    """fig_design_and_truth.png: probe layouts + truth SMC + truth WS (see plots/swc_design_overview.py)."""
+    if not table:
+        return None
+    rows = [{**r, "run_dir": r.get("output_dir", "")} for r in table]
+    real = realization_from_config(os.path.join(out_dir, "study_scenarios.json"))
+    return swc_design_overview.plot_design_and_truth(
+        rows, out_dir, survey_x(), probe_positions, n_ref=REFERENCE["n"], dist_ref=REFERENCE["dist"],
+        realization=real, ref=REFERENCE)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], allow_abbrev=False)
     ap.add_argument("--log-file", default=SWC_LOG)
     ap.add_argument("--out-dir", default=DEFAULT_OUT)
+    ap.add_argument("--design-dir", default=STUDY_DIR,
+                    help="folder of the study's fig_*.png, where fig_design_and_truth.png is also written "
+                         "('' to skip)")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--compare", action="store_true", help="also run auto_compare.py --preset swc (reference design)")
     a = ap.parse_args(argv)
@@ -151,7 +171,7 @@ def main(argv=None) -> int:
     print(f"[plot_swc_study_log] {a.log_file}: {len(rows)} runs, {len(latest)} finished scenarios")
     if a.list:
         return 0
-    for f in plot_all(rows, a.out_dir):
+    for f in plot_all(rows, a.out_dir, a.design_dir or None):
         print("   wrote", f)
     if a.compare:
         here = os.path.dirname(os.path.abspath(__file__))

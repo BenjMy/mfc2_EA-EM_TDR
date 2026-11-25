@@ -205,3 +205,49 @@ def test_plots_without_results(tmp_path):
     df = _fake_summary(tmp_path)
     df["rmse_truth"] = np.nan
     assert st.make_plots(df, str(tmp_path)) == []
+
+
+# ---------------------------------------------------------------- design + truth overview
+def _fake_truth_run(path, hetero_ws: bool, n_pts=10, n_lay=3):
+    path.mkdir(parents=True)
+    x = np.arange(n_pts) * 2.0
+    np.save(path / "synthetic_x_coords.npy", x)
+    np.save(path / "synthetic_layer_centers.npy", np.array([0.1, 0.4, 0.9])[:n_lay])
+    np.save(path / "synthetic_time_lapse_theta.npy", np.random.default_rng(0).uniform(0.1, 0.4, (1, 2, n_pts, n_lay)))
+    params = {"a": 1.0, "m": 1.5, "sigma_w": 500.0, "sigma_s": 100.0}
+    (path / "synthetic_ws_truth_params.json").write_text(json.dumps({str(l): params for l in range(n_lay)}))
+    if hetero_ws:                                   # per-point truth, as written when ws_xy_variation is on
+        for i, p in enumerate(("a", "m", "sigma_w", "sigma_s")):
+            np.save(path / f"synthetic_ws_truth_{p}.npy",
+                    (params[p] * (1 + 0.2 * np.linspace(0, 1, n_pts)))[None, :, None].repeat(n_lay, 2))
+    return str(path)
+
+
+def test_design_and_truth_figure(tmp_path):
+    from plots import swc_design_overview as ov
+    rows = [{"smc": s, "ws": w, "run_dir": _fake_truth_run(tmp_path / f"{s}_{w}", w == "hetero")}
+            for s in ("homo", "hetero") for w in ("homo", "hetero")]
+    path = ov.plot_design_and_truth(rows, str(tmp_path / "out"), SURVEY, st.probe_positions)
+    assert os.path.basename(path) == "fig_design_and_truth.png" and os.path.getsize(path) > 2000
+
+
+def test_design_and_truth_figure_without_runs(tmp_path):
+    from plots import swc_design_overview as ov          # the layout row needs no run
+    path = ov.plot_design_and_truth([], str(tmp_path), SURVEY, st.probe_positions)
+    assert os.path.getsize(path) > 2000
+
+
+def test_homogeneous_ws_truth_rebuilt_from_json(tmp_path):
+    from plots.ws_distribution import load_ws_truth
+    d = _fake_truth_run(tmp_path / "r", hetero_ws=False)
+    t = load_ws_truth(d, 0, None, 10)
+    assert t.shape == (10, 3, 4) and np.ptp(t, axis=0).max() == 0 and t[0, 0, 2] == 500.0
+
+
+def test_pick_run_dir_prefers_reference(tmp_path):
+    from plots import swc_design_overview as ov
+    a, b = _fake_truth_run(tmp_path / "a", False), _fake_truth_run(tmp_path / "b", False)
+    rows = [{"smc": "homo", "ws": "homo", "n": 1, "run_dir": a}, {"smc": "homo", "ws": "homo", "n": 5, "run_dir": b},
+            {"smc": "homo", "ws": "homo", "n": 5, "run_dir": str(tmp_path / "missing")}]
+    assert ov.pick_run_dir(rows, "smc", "homo", {"n": 5}) == b
+    assert ov.pick_run_dir(rows, "smc", "hetero") is None

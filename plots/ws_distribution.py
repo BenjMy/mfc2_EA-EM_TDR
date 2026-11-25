@@ -30,6 +30,7 @@ last axis order = ``PARAMS``.
 """
 from __future__ import annotations
 
+import json
 import os
 
 import matplotlib.pyplot as plt
@@ -69,6 +70,15 @@ def resolve_initial_ws(lab_p0, n_layers: int) -> np.ndarray:
     return arr
 
 
+def load_ws_truth_params(output_dir: str) -> dict | None:
+    """``{layer: {param: value}}`` from ``synthetic_ws_truth_params.json`` (None if absent)."""
+    path = os.path.join(output_dir, "synthetic_ws_truth_params.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return {int(l): p for l, p in json.load(f).items()}
+
+
 def load_ws_truth(output_dir: str, realization_index: int = 0,
                   ws_truth_params: dict | None = None,
                   n_points: int | None = None) -> np.ndarray | None:
@@ -81,8 +91,10 @@ def load_ws_truth(output_dir: str, realization_index: int = 0,
     paths = [os.path.join(output_dir, f"synthetic_ws_truth_{p}.npy") for p in PARAMS]
     if all(os.path.exists(p) for p in paths):
         return np.stack([np.load(p)[realization_index] for p in paths], axis=-1)
+    if not ws_truth_params:
+        ws_truth_params = load_ws_truth_params(output_dir)
     if ws_truth_params and n_points:
-        layers = sorted(ws_truth_params)
+        layers = sorted(ws_truth_params, key=int)
         one = np.array([[ws_truth_params[l][p] for p in PARAMS] for l in layers], dtype=float)
         return np.tile(one[None, :, :], (n_points, 1, 1))
     return None

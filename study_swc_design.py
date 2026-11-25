@@ -668,7 +668,16 @@ def plot_residual_distribution(df, out_dir, residual_dir, reg_ref="noreg", k_ref
     return _save(fig, out_dir, "fig_residual_distribution.png")
 
 
-def make_plots(df, out_dir: str, reg_ref: str = "noreg") -> list[str]:
+def plot_design_overview(df, out_dir, realization: int = 0, reg_ref: str = "noreg"):
+    """Probe layouts + truth SMC (t0) + truth WS, homogeneous and heterogeneous (plots/swc_design_overview.py)."""
+    from plots import swc_design_overview
+    rows = df.to_dict("records")
+    return swc_design_overview.plot_design_and_truth(
+        rows, out_dir, survey_x(), probe_positions, n_ref=REFERENCE["n"], dist_ref=REFERENCE["dist"],
+        realization=realization, ref={**REFERENCE, "reg": _ref_reg(df, reg_ref)})
+
+
+def make_plots(df, out_dir: str, reg_ref: str = "noreg", realization: int = 0) -> list[str]:
     import matplotlib
     matplotlib.use("Agg")
     ok = _ok(df)
@@ -680,7 +689,8 @@ def make_plots(df, out_dir: str, reg_ref: str = "noreg") -> list[str]:
              plot_heatmap_n_k(df, out_dir, reg_ref), plot_distribution_effect(df, out_dir, reg_ref),
              plot_regularisation_effect(df, out_dir), plot_truth_effect(df, out_dir, reg_ref),
              plot_calibrated_vs_uncalibrated(df, out_dir, reg_ref),
-             plot_residual_distribution(df, out_dir, res, reg_ref)]
+             plot_residual_distribution(df, out_dir, res, reg_ref),
+             plot_design_overview(df, out_dir, realization, reg_ref)]
     return [p for p in paths if p]
 
 
@@ -739,7 +749,7 @@ def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_r
     write_summary(rows, os.path.join(out_dir, "study_summary.csv"))
     df = load_summary(os.path.join(out_dir, "study_summary.csv"))
     write_report(df, os.path.join(out_dir, "study_report.md"), reg_ref)
-    for p in make_plots(df, out_dir, reg_ref):
+    for p in make_plots(df, out_dir, reg_ref, realization):
         print(f"[study] figure: {p}")
     return rows
 

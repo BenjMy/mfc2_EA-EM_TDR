@@ -635,6 +635,13 @@ def generate_time_lapse_dataset(
             if os.path.exists(_stale_path):
                 os.remove(_stale_path)
 
+    # Per-LAYER baseline WS truth ({layer: {param: value}}), always written: it IS the whole
+    # truth when ws_xy_variation is off (no synthetic_ws_truth_*.npy then), and lets
+    # plots/ws_distribution.load_ws_truth rebuild it from the run folder alone.
+    import json as _json
+    with open(os.path.join(output_dir, "synthetic_ws_truth_params.json"), "w", encoding="utf-8") as _f:
+        _json.dump({str(l): {k: float(v) for k, v in prm.items()} for l, prm in layer_params.items()}, _f, indent=2)
+
     if mode == "2d" and utm_x_grid is not None:
         np.save(os.path.join(output_dir, "synthetic_utm_x.npy"), utm_x_grid)
         np.save(os.path.join(output_dir, "synthetic_utm_y.npy"), utm_y_grid)
