@@ -46,6 +46,124 @@ Scenarios are defined in `ensemble_scenarios.json` (synthetic) and `ensemble_sce
 
 Tests: `pytest tests`.
 
+## Command-line recipes (real data)
+
+Copy-paste starting points, all run from the repository root. Scenario `real_L3_base` (3 layers, `a` and `m` fixed, `sigma_w` and `sigma_s` free) is used as the example; swap in any scenario of `ensemble_scenarios_real.json`. The options are explained in the sections below and in `./run_one_scenario.sh --help`.
+
+### 1. Check before you compute
+
+```bash
+./run_one_scenario.sh --list                          # scenarios available
+./run_one_scenario.sh --validate                      # is the scenario JSON consistent?
+python EA_EM_config.py --check                        # do the input data paths exist?
+python hyp1_layers_ws_freedom.py --designs L3 --free-k 4 --dry-run   # plan only, nothing runs
+```
+
+### 2. The standard workflow: calibrate, then map
+
+Calibration is run first on the probe neighbourhoods (cheap relative to a full map); the map stage then inverts all EM points, only for the ensemble members selected by the calibration.
+
+```bash
+# a) calibrate (Steps 0-5, stops before the map)
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d --stage calibrate
+
+# b) find the calibrate folder of that run (column output_dir of the run log)
+tail -n 3 mfc2_outputs/run_log.csv | cut -d, -f1,3,6,7
+
+# c) map, pointing at that folder (or at its stage_calibration.json)
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d --stage map \
+    --calibration mfc2_outputs/real_L3_base/0001_real_L3_base_calibrate
+```
+
+Check the quality gate (`status`, `quality_reasons`) in the run's `run_manifest.json` and in `pipeline_report_*.md` before mapping. If the map run prints `[WARN] CALIBRATION DRIFT`, the map no longer matches the calibration: redo step (a). `--stage map` cannot be combined with `--quick`.
+
+### 3. Free more Waxman-Smits parameters
+
+`real_L3_base` fixes `a` and `m`. To free them, do not edit the JSON by hand: the `hyp1` script generates the scenario `real_study_<design>_free<K>` (K = number of free parameters, freed in the order `sigma_s`, `m`, `sigma_w`, `a`).
+
+```bash
+python hyp1_layers_ws_freedom.py --designs L3 --free-k 4 --stage both          # 4 free, calibrate then map
+python hyp1_layers_ws_freedom.py --designs L3 --free-k 2 4 --stage calibrate   # compare 2 vs 4 free (calibration only)
+python hyp1_layers_ws_freedom.py --design L3b=0.2,0.5 --designs L3b --free-k 2 # your own layer depths (m)
+```
+
+Step 1 (the ensemble inversion) does not depend on the WS freedom, so all K of one design share a single cache and the expensive part is computed once. `--stage both` skips the map of a scenario whose calibration failed. With 4 free parameters and only about 20 probes, `a`, `m` and `sigma_s` can compensate each other: judge the result on held-out data (next recipe), not on the training RMSE.
+
+### 4. Validate on held-out data
+
+```bash
+# one run with whole probes held out
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d \
+    --stage calibrate --train-val-split by_probe
+
+# the same scenario with every split method; summary in hyp2_summary.csv
+python hyp2_train_val_split.py --base real_L3_base
+python hyp2_train_val_split.py --base real_L3_base --methods off by_probe   # only some methods
+
+# the same split on the hyp1 scenarios (anything after a bare -- goes to run_one_scenario.sh)
+python hyp1_layers_ws_freedom.py --designs L3 --free-k 2 4 -- --train-val-split by_probe
+```
+
+The flag takes two dashes and one of `alternate_sorted`, `by_probe`, `by_time_block`, `random` (`by_probe` is the only one that is independent in space). The held-out scores are the `val_rmse_pct` and `val_rsr` columns of `mfc2_outputs/run_log.csv`.
+
+### 5. Localized Waxman-Smits and the bandwidth
+
+```bash
+# let the leave-one-probe-out CV choose among your own candidates (in m)
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d --stage calibrate \
+    --ws-localized-bandwidth-sweep 3 5 8 12 20 30 40
+
+# fix the bandwidth (overrides the value stored by calibrate when used with --stage map)
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d --stage map \
+    --calibration mfc2_outputs/real_L3_base/0001_real_L3_base_calibrate --ws-localized-bandwidth 12
+
+# maps with ONE parameter set per horizon instead (the previous behaviour)
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d --stage map \
+    --calibration mfc2_outputs/real_L3_base/0001_real_L3_base_calibrate --ws-map-calibration global
+
+# the bandwidth hypothesis on its own
+python hyp3_localized_bandwidth.py --base real_L3_base --bandwidths 3 5 8 12 20 30 40
+```
+
+If the chosen bandwidth is the largest candidate of the sweep (for the MFC2 run of 2026-11-23 it was 20 m), the optimum may lie beyond it: extend the list. The stations are 20-32 m apart, so below about 20 m a sweep cannot show much.
+
+### 6. Smoke tests and diagnostics
+
+```bash
+python run_all_hypotheses.py --fast --dry-run         # plan of H1-H3
+python run_all_hypotheses.py --fast                   # quick smoke test (never a result, no maps)
+./run_one_scenario.sh -s real_single_test_probes_L3 -c ensemble_scenarios_real.json --mode 2d --quick --quick-epochs 3
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d --stage calibrate \
+    --em-footprint-diagnostic                          # McNeill depth-weighted comparison, Step 5c
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real.json --mode 2d --stage map \
+    --calibration <calibrate folder> --theta-limits percentile   # other colour scale for the theta maps
+```
+
+### 7. After the run
+
+```bash
+python study_status.py                                # STUDY_STATUS.md: what is done / failed / missing
+python plot_run_log.py --study-type real_scenarios --compare   # summary plots of a study
+python plot_run_log.py --maps                         # redraw the maps of all runs on one colour scale
+./compare_scenarios.sh --list                         # recent runs (run_id, output_dir)
+./compare_scenarios.sh --ids <run_id_A> <run_id_B> --labels A B --position 8 0 --out-dir comparison_output/A_vs_B
+```
+
+The maps are in `<run>/output_model/maps.nc` (needs `xarray` and `netcdf4`) and `theta_calc.npy`.
+
+### Common mistakes
+
+| Symptom | Cause / fix |
+|---|---|
+| `unrecognized arguments: -train-val-split by_prob` | One dash instead of two, and `by_prob` instead of `by_probe`: `--train-val-split by_probe`. |
+| Map stage asks for `--calibration` or stops at the first step | `--stage map` needs the calibrate folder (or its `stage_calibration.json`) of the same scenario. |
+| `[WARN] CALIBRATION DRIFT` | `depths0`, `cond_ranges`, epochs or the WS freedom changed since calibrate: redo `--stage calibrate`. |
+| A scenario has `a` and `m` fixed but you want them free | Use `hyp1_layers_ws_freedom.py --free-k 4` (recipe 3); `ws_fixed_params`: `true` = fixed, `false` = free. |
+| `Import openpyxl failed` | Install it in the environment: `pip install openpyxl`. |
+| Quality gate `WARN`: uncalibrated horizon | A horizon without a TDR sensor keeps the prior WS parameters (`lab_p0`); expected for H2 of `real_L3_base`. |
+| Map covers only the probe neighbourhoods | The scenario already thins with `em_subsample.mode = "probes"` (e.g. `real_single_test_probes*`): map with a scenario without it. |
+| `--stage map` with `--quick` is rejected | Not supported: run the map without `--quick`. |
+
 ## Input data paths (`EA_EM_config.py`)
 
 All input paths of the real-data branch live in `EA_EM_config.py`, grouped as a named *dataset* (`em_dir`, `tdr_dir`, `coord_file`). `mfc2` is the built-in default, so existing runs are unchanged. To use another site, add a dataset (edit `DATASETS`, or put it in `EA_EM_datasets.json` next to the file) and select it:
