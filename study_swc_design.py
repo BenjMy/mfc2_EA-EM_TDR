@@ -9,7 +9,7 @@ Synthetic 1-D transect (10 survey points, 2 m spacing).  Factors:
   n      number of SWC probe positions            1, 2, 3, 5, 10
   dist   distribution of the probe positions      spread | clustered | random
   smc    truth soil moisture (theta)              homo   | hetero
-  ws     truth Waxman-Smits parameters            homo   | hetero
+  ws     truth Waxman-Smits parameters            homo   | hetero (| heterox | heteroz, opt-in)
   k      number of FREE WS parameters             0..4  (freed: sigma_s, m, sigma_w, a;
                                                        0 = all pinned = floor set by the inverted EC)
   reg    EMagPy inversion regularisation          noreg | beta | gamma | both
@@ -22,7 +22,11 @@ Meaning of the factors
 * ws   homo   : ``ws_xy_variation = false``  (true a, m, sigma_w, sigma_s = 0.5, 3, 500, 100
                 everywhere)
         hetero: m and sigma_s vary along x (ranges of the base scenario) AND a, sigma_w
-                change below horizon 1 (``sweeps.HETERO_LAYER_PARAMS``)
+                change below horizon 1 (``sweeps.HETERO_LAYER_PARAMS``): mixed lateral + depth
+        heterox: LATERAL only: m in [2, 4] and sigma_s in [50, 200] vary along x, every layer alike
+        heteroz: DEPTH only: the same m and sigma_s ranges, ramped over the 4 horizons
+                (m 2 -> 4, sigma_s 50 -> 200), uniform along x
+        (heterox / heteroz are opt-in: ``--ws heterox heteroz``; presets still use homo / hetero)
 * reg  beta  : lateral/spatial smoothing of the EMagPy inversion (``param_grid.beta``)
         gamma: temporal smoothing (``gamma``; the synthetic data have 3 epochs)
 * dist spread   : positions evenly spread over the transect (x = 0 ... 18 m)
@@ -126,10 +130,32 @@ P0_BIAS = 0.2            # relative offset of the calibration start of free m, s
 RANDOM_SEED = 7
 
 SMC_FIELDS = {"homo": {"homogeneous": True}, "hetero": {"homogeneous": False}}
+# Truth ranges shared by the two single-direction cases below (= the generator's defaults).
+_M_RANGE, _SIGMA_S_RANGE = (2.0, 4.0), (50.0, 200.0)
+N_LAYERS = 4             # horizons of the base scenario (1d_full_depth_ref)
+
+
+def _layer_ramp(lo: float, hi: float, n: int = N_LAYERS) -> list[float]:
+    return [round(float(v), 4) for v in np.linspace(lo, hi, n)]
+
+
 WS_FIELDS = {
-    "homo": {"ws_xy_variation": False},
+    "homo": {"ws_xy_variation": False, "ws_layer_params": None},
+    # Legacy mixed case (kept so old run folders / log rows stay valid): m, sigma_s vary
+    # along x, a and sigma_w change with depth.
     "hetero": {"ws_xy_variation": True, "ws_layer_params": sweeps.HETERO_LAYER_PARAMS},
+    # Lateral only: m and sigma_s vary along x, every layer has the same truth.
+    "heterox": {"ws_xy_variation": True, "ws_xy_params": ["m", "sigma_s"],
+                "ws_xy_ranges": {"m": list(_M_RANGE), "sigma_s": list(_SIGMA_S_RANGE)},
+                "ws_layer_params": None},
+    # Depth only: the SAME parameters (m, sigma_s) over the SAME ranges, but ramped with
+    # depth (one value per horizon), uniform along x.
+    "heteroz": {"ws_xy_variation": False,
+                "ws_layer_params": {str(i): {"m": m, "sigma_s": ss} for i, (m, ss) in enumerate(
+                    zip(_layer_ramp(*_M_RANGE), _layer_ramp(*_SIGMA_S_RANGE)))}},
 }
+WS_CHOICES = tuple(WS_FIELDS)   # accepted by --ws ("hetero" stays the preset default)
+WS_LABELS = {"homo": "homo", "hetero": "hetero", "heterox": "hetero-x (lateral)", "heteroz": "hetero-z (depth)"}
 PARENT_NAME = "swcstudy_parent"
 PREFIX = "swcstudy_"
 
@@ -413,7 +439,7 @@ def write_summary(rows: list[dict], path: str) -> None:
 # --------------------------------------------------------------------------
 _DIST_COLORS = {"spread": "#1b9e77", "clustered": "#d95f02", "random": "#7570b3"}
 _REG_COLORS = {"noreg": "#555555", "beta": "#e6ab02", "gamma": "#66a61e", "both": "#e7298a"}
-_TRUTH_ORDER = [("homo", "homo"), ("homo", "hetero"), ("hetero", "homo"), ("hetero", "hetero")]
+_TRUTH_ORDER = [(smc, ws) for smc in LEVELS["smc"] for ws in ("homo", "heterox", "heteroz", "hetero")]
 
 
 def load_summary(path: str):
@@ -426,7 +452,7 @@ def load_summary(path: str):
 
 
 def _truth_label(smc: str, ws: str) -> str:
-    return f"SMC {smc} / WS {ws}"
+    return f"SMC {smc} / WS {WS_LABELS.get(ws, ws)}"
 
 
 def _truths(df) -> list[tuple[str, str]]:
@@ -817,7 +843,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n-swc", nargs="+", type=int, help=f"numbers of SWC positions (default {LEVELS['n']})")
     ap.add_argument("--dist", nargs="+", choices=LEVELS["dist"], help="probe distributions")
     ap.add_argument("--smc", nargs="+", choices=LEVELS["smc"], help="truth soil moisture")
-    ap.add_argument("--ws", nargs="+", choices=LEVELS["ws"], help="truth Waxman-Smits parameters")
+    ap.add_argument("--ws", nargs="+", choices=WS_CHOICES,
+                    help="truth Waxman-Smits parameters: homo | hetero (legacy: m, sigma_s along x + a, sigma_w with depth) "
+                         "| heterox (m, sigma_s along x only) | heteroz (m, sigma_s with depth only)")
     ap.add_argument("--free-k", nargs="+", type=int, choices=list(K_CHOICES),
                     help="numbers of free WS parameters (0 = all pinned: floor set by the inverted EC)")
     ap.add_argument("--reg", nargs="+", choices=LEVELS["reg"], help="regularisation: noreg beta gamma both")

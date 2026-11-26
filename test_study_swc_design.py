@@ -380,3 +380,41 @@ def test_k0_only_defaults_to_full_preset(tmp_path):
     assert st.main(argv) == 0
     cfg = json.loads((out / "study_scenarios.json").read_text())
     assert sum(st.parse_name(k) is not None for k in cfg) == 4
+
+
+# ------------------------------------------- WS heterogeneity: lateral vs depth
+def test_ws_cases_are_opt_in():
+    assert st.LEVELS["ws"] == ("homo", "hetero")                  # presets unchanged
+    assert {"heterox", "heteroz"} <= set(st.WS_CHOICES)
+    assert all(d.ws in ("homo", "hetero") for d in st.build_designs("full", LEVELS))
+
+
+@pytest.mark.parametrize("ws,xy,layers", [("homo", False, False), ("hetero", True, True),
+                                          ("heterox", True, False), ("heteroz", False, True)])
+def test_ws_case_fields(parent, tmp_path, ws, xy, layers):
+    d = st.Design("homo", ws, "noreg", "spread", 5, 2)
+    cfg = st.build_study_config(parent, [d])
+    path = tmp_path / "ws.json"
+    path.write_text(json.dumps(cfg))
+    sc = sl.load_scenario(d.name, config_path=str(path))
+    assert sc.ws_xy_variation is xy and bool(sc.ws_layer_params) is layers
+    assert st.parse_name(d.name) == d
+
+
+def test_heterox_is_lateral_only_and_heteroz_depth_only(parent, tmp_path):
+    x, z = st.WS_FIELDS["heterox"], st.WS_FIELDS["heteroz"]
+    assert x["ws_xy_params"] == ["m", "sigma_s"] and not x["ws_layer_params"]
+    assert not z["ws_xy_variation"] and set(z["ws_layer_params"]) == {"0", "1", "2", "3"}
+    assert len(z["ws_layer_params"]) == st.N_LAYERS == len(parent["depths0"]) + 1     # depths0 = layer bottoms (last layer is open)
+    for p, (lo, hi) in (("m", st._M_RANGE), ("sigma_s", st._SIGMA_S_RANGE)):      # same parameters, same ranges
+        vals = [z["ws_layer_params"][str(i)][p] for i in range(st.N_LAYERS)]
+        assert vals == sorted(vals) and vals[0] == lo and vals[-1] == hi
+        assert x["ws_xy_ranges"][p] == [lo, hi]
+    assert not any({"a", "sigma_w"} & set(v) for v in z["ws_layer_params"].values())     # a, sigma_w stay uniform
+
+
+def test_new_ws_cases_in_plot_order_and_labels():
+    pairs = [(s, w) for s in st.LEVELS["smc"] for w in ("homo", "heterox", "heteroz", "hetero")]
+    assert st._TRUTH_ORDER == pairs
+    assert [t for t in st._TRUTH_ORDER if t[1] in ("homo", "hetero")][:2] == [("homo", "homo"), ("homo", "hetero")]
+    assert "lateral" in st._truth_label("homo", "heterox") and "depth" in st._truth_label("homo", "heteroz")
