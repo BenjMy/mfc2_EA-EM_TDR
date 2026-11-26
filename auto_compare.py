@@ -70,7 +70,7 @@ def filter_swc(runs: "dict[str, dict]", args) -> "dict[str, dict]":
     out = {}
     for name, row in runs.items():
         d = parse_name(name)
-        if d is None:
+        if d is None or d.pin != "k":      # pin / err designs would duplicate the (n, K) entries
             continue
         if all(v is None or getattr(d, f) in v for f, v in want.items()):
             out[name] = row

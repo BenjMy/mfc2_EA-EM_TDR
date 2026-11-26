@@ -102,13 +102,14 @@ def plot_all(rows: list[dict], out_dir: str, design_dir: str | None = STUDY_DIR)
                         "" if not np.isfinite(r["rsr"]) else f"{r['rsr']:.3f}", r["rating"]])
     files.append(path)
     files.append(prl.write_provenance({r["scenario"]: r for r in table}, out_dir, "swc design study"))
+    legacy = [r for r in table if r["pin"] == "k"]      # K plots: 'known' / err designs share (n, K) with these
     ref_truth = dict(smc=ref["smc"], ws=ref["ws"], reg=ref["reg"])
-    files.append(_lines(table, "n", lambda r: r["dist"], out_dir, "swc_rmse_vs_n.png",
+    files.append(_lines(legacy, "n", lambda r: r["dist"], out_dir, "swc_rmse_vs_n.png",
                         "RMSE vs number of SWC positions", "n positions", k=ref["k"], **ref_truth))
-    files.append(_lines(table, "k", lambda r: f"smc={r['smc']} ws={r['ws']}", out_dir, "swc_rmse_vs_k.png",
+    files.append(_lines(legacy, "k", lambda r: f"smc={r['smc']} ws={r['ws']}", out_dir, "swc_rmse_vs_k.png",
                         "RMSE vs free WS parameters", "free parameters k",
                         n=ref["n"], dist=ref["dist"], reg=ref["reg"]))
-    sub = _select(table, dist=ref["dist"], **ref_truth)
+    sub = _select(legacy, dist=ref["dist"], **ref_truth)
     ns, ks = sorted({r["n"] for r in sub}), sorted({r["k"] for r in sub})
     if len(ns) >= 2 and len(ks) >= 2:
         grid = np.full((len(ns), len(ks)), np.nan)
@@ -128,7 +129,7 @@ def plot_all(rows: list[dict], out_dir: str, design_dir: str | None = STUDY_DIR)
         ax.set_title("RMSE at probes, n x k", fontsize=9)
         files.append(prl._save(fig, out_dir, "swc_heatmap_n_k.png"))
     regs = {}
-    for r in _select(table, n=ref["n"], k=ref["k"], dist=ref["dist"], smc=ref["smc"], ws=ref["ws"]):
+    for r in _select(legacy, n=ref["n"], k=ref["k"], dist=ref["dist"], smc=ref["smc"], ws=ref["ws"]):
         regs[r["reg"]] = r["rmse_pct"]
     if len(regs) >= 2:
         fig, ax = plt.subplots(figsize=(4.5, 3.5))

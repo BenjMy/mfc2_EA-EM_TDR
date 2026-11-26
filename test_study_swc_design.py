@@ -658,3 +658,24 @@ def test_free_param_errors_median_over_calibrated_horizons():
     rec = [{"scenario": "s", "calibrated": c, "m_fit": f, "m_truth": 3.0}
            for c, f in ((True, 3.3), (True, 3.9), (False, 9.0))]
     assert free_param_errors(rec, "s", ["m"]) == pytest.approx({"m": 20.0})
+
+
+def test_log_plots_ignore_pin_and_err_runs(tmp_path, monkeypatch):
+    """A 'known' run has the same (n, K) as a legacy run and must not overwrite it in the K plots."""
+    import argparse
+    import auto_compare
+    import plot_swc_study_log as pl
+    legacy = st.Design(*(st.REFERENCE[f] for f in ("smc", "ws", "reg", "dist", "n")), 3)
+    erred = st.Design(legacy.smc, legacy.ws, legacy.reg, legacy.dist, legacy.n, 3, "sw", 10)
+    runs = {d.name: {"scenario": d.name} for d in (legacy, erred)}
+    args = argparse.Namespace(smc=None, ws=None, reg=None, dist=None, n=None, k=None)
+    assert list(auto_compare.filter_swc(runs, args)) == [legacy.name]
+
+    seen = []
+    monkeypatch.setattr(pl.prl, "latest_per_scenario",
+                        lambda rows: {n: {**r, "rmse_pct": 1.0, "rsr": 0.5, "rating": ""} for n, r in runs.items()})
+    monkeypatch.setattr(pl.prl, "write_provenance", lambda *a, **k: None)
+    monkeypatch.setattr(pl.prl, "plot_rmse_vs_rsr", lambda *a, **k: None)
+    monkeypatch.setattr(pl, "_lines", lambda table, *a, **k: seen.append([r["scenario"] for r in table]))
+    pl.plot_all([], str(tmp_path), design_dir=None)
+    assert seen == [[legacy.name]] * 2
