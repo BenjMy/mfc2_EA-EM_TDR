@@ -71,6 +71,7 @@ Outputs (``--out-dir``, default comparison_output/swc_design_study/)
     study_scenarios.json   generated scenarios (each ``extends`` one parent)
     probes/*.csv           explicit probe layouts passed with --probe-xyz
     study_summary.csv      one row per run (design factors + metrics vs truth)
+    study_ws_recovery.csv  one row per (run, horizon): WS start / truth / fitted / pinned / bounds, C = a/(sw+ss)
     study_report.md        tables
     residuals/*.npz        theta_calc - theta_true per run (for the distribution plots)
     fig_*.png              comparison plots (fig_heatmap_n_vs_k_<dist>_<reg>.png: n x K heat map of the
@@ -824,6 +825,12 @@ def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_r
     write_report(df, os.path.join(out_dir, "study_report.md"), reg_ref)
     for p in make_plots(df, out_dir, reg_ref, realization):
         print(f"[study] figure: {p}")
+    try:                                    # parameter recovery (start / truth / fitted) from the run reports
+        import ws_recovery
+        rec = ws_recovery.collect({r["scenario"]: r["run_dir"] for r in rows if r.get("run_dir")})
+        print(f"[study] WS recovery: {len(rec)} rows -> {ws_recovery.write_csv(rec, os.path.join(out_dir, 'study_ws_recovery.csv'))}")
+    except Exception as e:                  # never let the extra table break the study analysis
+        print(f"[study] WS recovery table skipped: {type(e).__name__}: {e}")
     return rows
 
 
