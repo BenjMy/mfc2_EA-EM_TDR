@@ -9,11 +9,12 @@ Synthetic 1-D transect (10 survey points, 2 m spacing).  Factors:
   n      number of SWC probe positions            1, 2, 3, 5, 10
   dist   distribution of the probe positions      spread | clustered | random
   smc    truth soil moisture (theta)              homo   | hetero
-  ws     truth Waxman-Smits parameters            homo   | hetero (| heterox | heteroz, opt-in)
+  ws     truth Waxman-Smits parameters            homo   | hetero (| heterox | heteroz | soil*, opt-in)
   k      number of FREE WS parameters             0..4  (freed: sigma_s, m, sigma_w, a;
                                                        0 = all pinned = floor set by the inverted EC)
   reg    EMagPy inversion regularisation          noreg | beta | gamma | both
   pin    what is KNOWN (pinned at the truth)      k (legacy: K decides) | none | sw | sws | am | all
+  em     EM inversion method of Step 1            base (the scenario's own, ROPE) | lbfgsb
 
 Meaning of the factors
 ----------------------
@@ -28,6 +29,17 @@ Meaning of the factors
         heteroz: DEPTH only: the same m and sigma_s ranges, ramped over the 4 horizons
                 (m 2 -> 4, sigma_s 50 -> 200), uniform along x
         (heterox / heteroz are opt-in: ``--ws heterox heteroz``; presets still use homo / hetero)
+        soilhomo / soilheterox / soilheteroz: the same three cases with a SOIL-LIKE baseline
+                (a, m, sigma_w, sigma_s) = (0.8, 2, 100, 100) instead of (0.5, 3, 500, 100): m ~ the
+                saturation exponent of soils (~2), pore water 100 mS/m instead of a saline 500 (see
+                ws_param_check.py).  The m / sigma_s ranges of the lateral / depth cases scale with the
+                baseline (m 1.33-2.67, sigma_s 50-200), the calibration prior ``lab_p0`` is the baseline.
+                Their names carry the case (``..._wssoilhomo_...``), so legacy runs stay untouched.
+* em   (EM inversion method, ``--em-method``)  base: the base scenario's own method (ROPE); lbfgsb: L-BFGS-B.
+        ROPE (EMagPy default 100 samples) does not fit the data (diagnose_ec_inversion.py: ~600 % ECa misfit,
+        K = 0 floor 0.15 m3/m3), L-BFGS-B does (~5 %, floor ~0.02).  Several values make the method a factor:
+        ``--em-method base lbfgsb`` runs every design twice and the figures are written per method
+        (``em_<method>/`` sub-folders).  ``_em<method>`` is appended to the scenario name only when em != base.
 * reg  beta  : lateral/spatial smoothing of the EMagPy inversion (``param_grid.beta``)
         gamma: temporal smoothing (``gamma``; the synthetic data have 3 epochs)
 * pin  (what is known)  none: nothing pinned (= K 4)   sw: sigma_w known   sws: sigma_w, sigma_s known
@@ -79,6 +91,8 @@ Usage
     python study_swc_design.py --smc homo hetero --ws homo hetero --reg noreg --free-k 0 --n-swc 5 --dist spread
                                                                # K = 0 floor: 4 runs, nothing is fitted
     python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10
+    python study_swc_design.py --smc homo hetero --ws homo soilhomo --reg noreg --free-k 0 --n-swc 5 --dist spread \
+        --em-method lbfgsb                                     # K = 0 floor with L-BFGS-B, both truth baselines
     python study_swc_design.py --preset oat -- --em-footprint-diagnostic   # after '--' -> run_one_scenario.sh
 
 Run log: the study has its own, ``mfc2_outputs/run_log_swc_study.csv`` (``--log-file`` to change),
@@ -114,6 +128,7 @@ from dataclasses import dataclass, asdict
 
 import numpy as np
 
+import em_options
 import geometry_utils
 import scenario_loader as sl
 import sweeps
@@ -142,6 +157,7 @@ LEVELS = {
     "reg": ("noreg", "beta", "gamma", "both"),
     "pin": ("k",),                # legacy: K picks the free parameters (sigma_s, m, sigma_w, a in that order)
     "err": (0,),                  # error of the pinned values [%]; non-zero levels are opt-in (--err)
+    "em": (em_options.DEFAULT_EM,),   # EM inversion method; other levels are opt-in (--em-method)
 }
 PARAMS = ("a", "m", "sigma_w", "sigma_s")
 K_CHOICES = (0, *LEVELS["k"])   # accepted by --free-k
@@ -149,8 +165,9 @@ K_CHOICES = (0, *LEVELS["k"])   # accepted by --free-k
 PIN_KNOWN = {"none": (), "sw": ("sigma_w",), "sws": ("sigma_w", "sigma_s"), "am": ("a", "m"),
              "all": ("a", "m", "sigma_w", "sigma_s")}
 PIN_CHOICES = ("k", *PIN_KNOWN)      # accepted by --pin
-REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg", "pin": "k", "err": 0}
-FACTORS = ("smc", "ws", "reg", "dist", "n", "k", "pin", "err")
+REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg", "pin": "k", "err": 0,
+             "em": em_options.DEFAULT_EM}
+FACTORS = ("smc", "ws", "reg", "dist", "n", "k", "pin", "err", "em")
 ERR_PINS = tuple(p for p, known in PIN_KNOWN.items() if 0 < len(known) < len(PARAMS))   # pins that can carry err
 
 BETA_VALUE = 0.5         # lateral smoothing used when reg in (beta, both)
@@ -184,8 +201,38 @@ WS_FIELDS = {
                 "ws_layer_params": {str(i): {"m": m, "sigma_s": ss} for i, (m, ss) in enumerate(
                     zip(_layer_ramp(*_M_RANGE), _layer_ramp(*_SIGMA_S_RANGE)))}},
 }
+
+# Soil-like baseline (a, m, sigma_w, sigma_s): m ~ the saturation exponent of soils (~2), pore water 100 mS/m.
+# 'a' = 0.8 keeps the start of a free 'a' (1.0, see ws_freedom) 25 % off the truth.
+SOIL_WS_BASELINE = (0.8, 2.0, 100.0, 100.0)
+WS_BASELINE = {ws: GENERATOR_WS_DEFAULTS for ws in ("homo", "hetero", "heterox", "heteroz")}
+
+
+def _soil_case(kind: str, base: tuple = SOIL_WS_BASELINE) -> dict:
+    """Scenario fields of a soil-baseline case; m / sigma_s ranges scale with the baseline like the legacy ones."""
+    a, m, sw, ss = base
+    m_rng, ss_rng = (m * 2 / 3, m * 4 / 3), (ss * 0.5, ss * 2.0)
+    common = {"a": a, "sigma_w": sw}
+    if kind == "homo":
+        return {"ws_xy_variation": False,
+                "ws_layer_params": {str(i): {**common, "m": m, "sigma_s": ss} for i in range(N_LAYERS)}}
+    if kind == "heterox":
+        return {"ws_xy_variation": True, "ws_xy_params": ["m", "sigma_s"],
+                "ws_xy_ranges": {"m": [round(v, 4) for v in m_rng], "sigma_s": list(ss_rng)},
+                "ws_layer_params": {str(i): dict(common) for i in range(N_LAYERS)}}
+    if kind == "heteroz":
+        return {"ws_xy_variation": False,
+                "ws_layer_params": {str(i): {**common, "m": mv, "sigma_s": sv} for i, (mv, sv) in enumerate(
+                    zip(_layer_ramp(*m_rng), _layer_ramp(*ss_rng)))}}
+    raise ValueError(kind)
+
+
+for _kind in ("homo", "heterox", "heteroz"):
+    WS_FIELDS[f"soil{_kind}"] = _soil_case(_kind)
+    WS_BASELINE[f"soil{_kind}"] = SOIL_WS_BASELINE
 WS_CHOICES = tuple(WS_FIELDS)   # accepted by --ws ("hetero" stays the preset default)
-WS_LABELS = {"homo": "homo", "hetero": "hetero", "heterox": "hetero-x (lateral)", "heteroz": "hetero-z (depth)"}
+WS_LABELS = {"homo": "homo", "hetero": "hetero", "heterox": "hetero-x (lateral)", "heteroz": "hetero-z (depth)",
+             "soilhomo": "soil homo", "soilheterox": "soil hetero-x (lateral)", "soilheteroz": "soil hetero-z (depth)"}
 PARENT_NAME = "swcstudy_parent"
 PREFIX = "swcstudy_"
 
@@ -211,13 +258,16 @@ class Design:
     k: int
     pin: str = "k"      # 'k' = legacy (K decides what is free); else a PIN_KNOWN key and k = number of FREE parameters
     err: int = 0        # relative error of the pinned values [%] (only for ERR_PINS)
+    em: str = em_options.DEFAULT_EM   # EM inversion method tag (em_options.EM_METHODS); 'base' = the scenario's own
 
     @property
     def name(self) -> str:
         base = f"{PREFIX}smc{self.smc}_ws{self.ws}_{self.reg}_{self.dist}_n{self.n}_free{self.k}"
         if self.pin != "k":                                             # new factors: only in the name when not default
             base += f"_pin{self.pin}"
-        return base + (f"_err{err_tag(self.err)}" if self.err else "")
+        if self.err:
+            base += f"_err{err_tag(self.err)}"
+        return base + (f"_em{self.em}" if self.em != em_options.DEFAULT_EM else "")
 
 
 def err_tag(err: int) -> str:
@@ -249,7 +299,7 @@ def parse_name(name: str) -> Design | None:
         return None
     try:
         parts = name[len(PREFIX):].split("_")
-        pin, err = "k", 0
+        pin, err, em = "k", 0, em_options.DEFAULT_EM
         smc, ws, reg, dist, n, k = parts[:6]
         rest = parts[6:]
         if rest and rest[0].startswith("pin"):
@@ -260,9 +310,13 @@ def parse_name(name: str) -> Design | None:
             err = parse_err_tag(rest.pop(0)[3:])
             if err is None or pin not in ERR_PINS:
                 return None
+        if rest and rest[0].startswith("em"):
+            em = rest.pop(0)[2:]
+            if em not in em_options.EM_METHODS or em == em_options.DEFAULT_EM:
+                return None
         if rest:
             return None
-        d = Design(smc[3:], ws[2:], reg, dist, int(n[1:]), int(k[4:]), pin, err)
+        d = Design(smc[3:], ws[2:], reg, dist, int(n[1:]), int(k[4:]), pin, err, em)
         return d if pin == "k" or canonical_pin(d.k, pin) == (d.k, pin) else None
     except (ValueError, IndexError):
         return None
@@ -297,6 +351,7 @@ def survey_x(n: int = SURVEY_N, dx: float = SURVEY_DX) -> np.ndarray:
 def preset_blocks(preset: str, levels: dict) -> list[dict]:
     """A preset is a list of blocks; each block maps factor -> levels (cartesian product)."""
     ref = {f: [REFERENCE[f]] if REFERENCE[f] in levels[f] else [levels[f][-1]] for f in FACTORS}
+    ref["em"] = list(levels["em"])        # the EM method is chosen per run (--em-method): all blocks use all levels
     if preset == "full":
         return [dict(levels)]
     if preset == "oat":
@@ -327,22 +382,22 @@ def build_designs(preset: str, levels: dict, survey=None) -> list[Design]:
     seen: dict[tuple, Design] = {}
     order = {f: i for i, f in enumerate(LEVELS["dist"])}
     for block in preset_blocks(preset, levels):
-        for smc, ws, reg, dist, n, k, pin, err in itertools.product(*(block[f] for f in FACTORS)):
+        for smc, ws, reg, dist, n, k, pin, err, em in itertools.product(*(block[f] for f in FACTORS)):
             n_eff = min(int(n), len(xs))
             k, pin = canonical_pin(k, pin)
             err = int(err) if pin in ERR_PINS else 0        # nothing (known) to perturb otherwise
-            d = Design(smc, ws, reg, dist, n_eff, k, pin, err)
+            d = Design(smc, ws, reg, dist, n_eff, k, pin, err, em)
             if k == 0:
-                key = (smc, ws, reg, 0)
+                key = (smc, ws, reg, em, 0)
                 cur = seen.get(key)
                 if cur is None or (n_eff, order.get(dist, 9)) < (cur.n, order.get(cur.dist, 9)):
                     seen[key] = d
                 continue
             sig = position_signature(probe_positions(dist, n_eff, xs))
-            key = (smc, ws, reg, n_eff, k, pin, err, sig)
+            key = (smc, ws, reg, n_eff, k, pin, err, em, sig)
             # same positions under another distribution name (n = 1, n = all points): keep the first
             seen.setdefault(key, d)
-    return sorted(seen.values(), key=lambda d: (d.smc, d.ws, d.reg, d.k, d.pin, d.err, d.n, order.get(d.dist, 9)))
+    return sorted(seen.values(), key=lambda d: (d.smc, d.ws, d.reg, d.k, d.pin, d.err, d.em, d.n, order.get(d.dist, 9)))
 
 
 def reg_fields(reg: str, beta: float = BETA_VALUE, gamma: float = GAMMA_VALUE) -> dict:
@@ -372,7 +427,7 @@ def ws_truth_baseline(ws: str, n_layers: int = N_LAYERS) -> list[list[float]]:
     For the lateral cases (``ws_xy_variation``) m / sigma_s vary per point on top of this baseline, so it is
     the value 'known from sampling' at a typical point, not the per-point truth.
     """
-    base = dict(zip(PARAMS, GENERATOR_WS_DEFAULTS))
+    base = dict(zip(PARAMS, WS_BASELINE[ws]))
     layers = (WS_FIELDS[ws].get("ws_layer_params") or {})
     out = []
     for l in range(n_layers):
@@ -445,9 +500,14 @@ def build_study_config(parent_raw: dict, designs: list[Design], *, runs_dir: str
         if d.smc == "hetero" and smc_full_range:
             smc_fields["full_range_gradient"] = True
         fields = {**smc_fields, **copy.deepcopy(WS_FIELDS[d.ws]), **reg_fields(d.reg, beta, gamma)}
+        if d.em != em_options.DEFAULT_EM:                            # EM method of Step 1 (merged into the parent's param_grid)
+            fields.setdefault("param_grid", {}).update(em_options.em_param_grid(d.em))
+        ws_p0 = list(WS_BASELINE[d.ws])                              # calibration prior = baseline truth of the ws case
         if d.pin == "k":                                             # legacy: K frees sigma_s, m, sigma_w, a in turn
-            fields.update(ws_freedom(d.k, base_p0))
-            fields = biased_start(fields, base_p0, d.k, p0_bias)
+            fields.update(ws_freedom(d.k, ws_p0))
+            fields = biased_start(fields, ws_p0, d.k, p0_bias)
+            if "lab_p0" not in fields and ws_p0 != base_p0:          # non-legacy baseline: the parent's lab_p0 is not the truth
+                fields["lab_p0"] = ws_p0
         else:                                                        # what is known is pinned at the (per-layer) truth
             n_layers = len(parent.get("depths0") or []) + 1
             fields.update(ws_pinned(d.pin, ws_truth_baseline(d.ws, n_layers), p0_bias, d.err))
@@ -457,7 +517,8 @@ def build_study_config(parent_raw: dict, designs: list[Design], *, runs_dir: str
                             f"n={d.n}, K={d.k} free WS parameter(s) "
                             + (f"({', '.join(sweeps.FREE_ORDER[:d.k])})." if d.pin == "k" else
                                f"(known = pinned: {', '.join(PIN_KNOWN[d.pin])}"
-                               + (f", with {d.err:+d} % error" if d.err else "") + ").")),
+                               + (f", with {d.err:+d} % error" if d.err else "") + ").")
+                            + (f" EM method: {em_options.method_name(d.em)}." if d.em != em_options.DEFAULT_EM else "")),
             "output_dir": os.path.join(runs_dir, d.name),
             "cache_tag": d.name,
             "num_swc_positions": d.n,
@@ -567,6 +628,7 @@ def write_summary(rows: list[dict], path: str) -> None:
 _DIST_COLORS = {"spread": "#1b9e77", "clustered": "#d95f02", "random": "#7570b3"}
 _REG_COLORS = {"noreg": "#555555", "beta": "#e6ab02", "gamma": "#66a61e", "both": "#e7298a"}
 _TRUTH_ORDER = [(smc, ws) for smc in LEVELS["smc"] for ws in ("homo", "heterox", "heteroz", "hetero")]
+_TRUTH_ORDER_SOIL = [(smc, ws) for smc in LEVELS["smc"] for ws in ("soilhomo", "soilheterox", "soilheteroz")]
 
 
 def load_summary(path: str):
@@ -581,6 +643,9 @@ def load_summary(path: str):
     if "err" not in df:                                   # summaries written before the 'err' factor
         df["err"] = 0
     df["err"] = pd.to_numeric(df["err"], errors="coerce").fillna(0).astype(int)
+    if "em" not in df:                                    # summaries written before the 'em' factor
+        df["em"] = em_options.DEFAULT_EM
+    df["em"] = df["em"].fillna(em_options.DEFAULT_EM)
     return df
 
 
@@ -590,7 +655,7 @@ def _truth_label(smc: str, ws: str) -> str:
 
 def _truths(df) -> list[tuple[str, str]]:
     have = set(zip(df["smc"], df["ws"]))
-    return [t for t in _TRUTH_ORDER if t in have]
+    return [t for t in _TRUTH_ORDER + _TRUTH_ORDER_SOIL if t in have]
 
 
 def expand_degenerate(df, n_survey: int = SURVEY_N):
@@ -947,6 +1012,17 @@ def realization_from_config(cfg_path: str) -> int:
         return 0
 
 
+def em_levels(df) -> list[str]:
+    """EM methods present in a summary, 'base' first."""
+    have = list(dict.fromkeys(df["em"])) if len(df) else [em_options.DEFAULT_EM]
+    return sorted(have, key=lambda e: (e != em_options.DEFAULT_EM, e))
+
+
+def em_out_dir(out_dir: str, em: str, ems: list[str]) -> str:
+    """Figures of the only / base method stay in ``out_dir``; with several methods the others get ``em_<tag>/``."""
+    return out_dir if em == em_options.DEFAULT_EM or len(ems) == 1 else os.path.join(out_dir, f"em_{em}")
+
+
 def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_ref: str,
             log_file: str = RUN_LOG) -> list[dict]:
     """Collect the latest run of every design from the run log, write summary/report/plots."""
@@ -954,22 +1030,30 @@ def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_r
     rows = [summary_row(d, latest.get(d.name), out_dir, survey, realization) for d in designs]
     write_summary(rows, os.path.join(out_dir, "study_summary.csv"))
     df = load_summary(os.path.join(out_dir, "study_summary.csv"))
-    legacy = df[df["pin"] == "k"]       # K-based plots / tables; the 'known' designs are in study_summary.csv
-    write_report(legacy, os.path.join(out_dir, "study_report.md"), reg_ref)
-    for p in make_plots(legacy, out_dir, reg_ref, realization):
-        print(f"[study] figure: {p}")
+    ems = em_levels(df)
+    for em in ems:                          # one set of tables / figures per EM method (plots group by smc / ws / k ...)
+        sub = df[df["em"] == em]
+        odir = em_out_dir(out_dir, em, ems)
+        os.makedirs(odir, exist_ok=True)
+        legacy = sub[sub["pin"] == "k"]     # K-based plots / tables; the 'known' designs are in study_summary.csv
+        write_report(legacy, os.path.join(odir, "study_report.md"), reg_ref)
+        for p in make_plots(legacy, odir, reg_ref, realization):
+            print(f"[study] figure: {p}")
     try:                                    # parameter recovery (start / truth / fitted) from the run reports
         import ws_recovery
         rec = ws_recovery.collect({r["scenario"]: r["run_dir"] for r in rows if r.get("run_dir")})
         print(f"[study] WS recovery: {len(rec)} rows -> {ws_recovery.write_csv(rec, os.path.join(out_dir, 'study_ws_recovery.csv'))}")
         from plots.ws_recovery_fig import plot_ws_recovery
-        fig_path = plot_ws_recovery(rec, out_dir)
-        if fig_path:
-            print(f"[study] figure: {fig_path}")
         from plots.known_error_fig import plot_known_error
-        fig_path = plot_known_error(df, rec, out_dir, ERR_PINS, PIN_KNOWN, PARAMS, REFERENCE)
-        if fig_path:
-            print(f"[study] figure: {fig_path}")
+        for em in ems:
+            sub = df[df["em"] == em]
+            odir = em_out_dir(out_dir, em, ems)
+            names = set(sub["scenario"])
+            rec_em = [r for r in rec if r.get("scenario") in names]
+            for fig_path in (plot_ws_recovery(rec_em, odir),
+                             plot_known_error(sub, rec_em, odir, ERR_PINS, PIN_KNOWN, PARAMS, REFERENCE)):
+                if fig_path:
+                    print(f"[study] figure: {fig_path}")
     except Exception as e:                  # never let the extra table break the study analysis
         print(f"[study] WS recovery table skipped: {type(e).__name__}: {e}")
     return rows
@@ -993,7 +1077,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--smc", nargs="+", choices=LEVELS["smc"], help="truth soil moisture")
     ap.add_argument("--ws", nargs="+", choices=WS_CHOICES,
                     help="truth Waxman-Smits parameters: homo | hetero (legacy: m, sigma_s along x + a, sigma_w with depth) "
-                         "| heterox (m, sigma_s along x only) | heteroz (m, sigma_s with depth only)")
+                         "| heterox (m, sigma_s along x only) | heteroz (m, sigma_s with depth only) "
+                         "| soilhomo / soilheterox / soilheteroz (same cases, soil-like baseline a, m, sigma_w, sigma_s = "
+                         "0.8, 2, 100, 100 instead of 0.5, 3, 500, 100)")
     ap.add_argument("--free-k", nargs="+", type=int, choices=list(K_CHOICES),
                     help="numbers of free WS parameters (0 = all pinned: floor set by the inverted EC)")
     ap.add_argument("--reg", nargs="+", choices=LEVELS["reg"], help="regularisation: noreg beta gamma both")
@@ -1003,6 +1089,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--err", nargs="+", type=int,
                     help="error of the KNOWN (pinned) values in percent, e.g. -20 -10 10 20; 0 (the reference) is "
                          "always included. Preset 'known' only, pins sw / sws / am")
+    em_options.add_em_arg(ap, multiple=True)
     ap.add_argument("--beta", type=float, default=BETA_VALUE, help="beta used by reg beta/both")
     ap.add_argument("--gamma", type=float, default=GAMMA_VALUE, help="gamma used by reg gamma/both")
     ap.add_argument("--p0-bias", type=float, default=P0_BIAS,
@@ -1029,7 +1116,7 @@ def main(argv: list[str] | None = None) -> int:
     RANDOM_SEED = args.seed
     levels = {f: tuple(v) for f, v in LEVELS.items()}
     for f, v in (("n", args.n_swc), ("dist", args.dist), ("smc", args.smc), ("ws", args.ws),
-                 ("k", args.free_k), ("reg", args.reg), ("pin", args.pin)):
+                 ("k", args.free_k), ("reg", args.reg), ("pin", args.pin), ("em", args.em_method)):
         if v:
             levels[f] = tuple(v)
     if args.preset is None:

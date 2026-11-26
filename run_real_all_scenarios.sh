@@ -78,7 +78,7 @@
 
 set -euo pipefail
 
-REAL_CFG="ensemble_scenarios_real.json"
+REAL_CFG="${REAL_CFG:-ensemble_scenarios_real.json}"   # e.g. REAL_CFG=ensemble_scenarios_real_lbfgsb.json (python em_options.py ...)
 
 # --quick / --quick-epochs N are consumed here; whatever is left over is
 # the (optional) drop-coils override below.

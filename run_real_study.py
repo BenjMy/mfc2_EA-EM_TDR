@@ -53,6 +53,7 @@ import subprocess
 import sys
 import time
 
+import em_options
 import scenario_loader as sl
 
 # --------------------------------------------------------------------------
@@ -224,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base", default=BASE_SCENARIO, help="scenario copied as parent")
     ap.add_argument("--mode", default="2d", choices=["1d", "2d"])
     ap.add_argument("--out-dir", default=OUT_DIR)
+    em_options.add_em_arg(ap)
     ap.add_argument("--fast", action="store_true", help=f"smoke test: --quick, {FAST_EPOCHS} epochs, probe points only")
     ap.add_argument("--dry-run", action="store_true", help="write the config and print the plan, run nothing")
     ap.add_argument("--keep-going", action="store_true", help="continue with the next scenario after a failure")
@@ -249,7 +251,11 @@ def main(argv: list[str] | None = None) -> int:
     OUT_DIR = args.out_dir
     ks = args.free_k or ([1, 4] if args.fast else [1, 2, 3, 4])
     cfg = build_study_config(resolved[args.base], designs, ks, tuple(args.tdr_depths), args.fast)
-    cfg_path = os.path.join(OUT_DIR, "study_scenarios.json")
+    ftag = "study"
+    if args.em_method != em_options.DEFAULT_EM:       # EM method of Step 1: separate cache / run folders / files (em_options.py)
+        cfg = em_options.apply_to_config(cfg, args.em_method)
+        ftag = f"study_{args.em_method}"
+    cfg_path = os.path.join(OUT_DIR, f"{ftag}_scenarios.json")
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
@@ -259,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         sl.load_scenario(n, config_path=cfg_path)
 
     print(f"Study config : {cfg_path}  ({len(names)} scenarios, base '{args.base}')")
+    if args.em_method != em_options.DEFAULT_EM:
+        print(f"EM method    : {em_options.method_name(args.em_method)} (cache_tag / output_dir suffixed '_{args.em_method}')")
     print(f"TDR depths   : {args.tdr_depths} m")
     for dname, d in designs.items():
         print(f"  {dname:4s} depths0={d}:  {coverage_text(d, tuple(args.tdr_depths))}")
@@ -280,14 +288,14 @@ def main(argv: list[str] | None = None) -> int:
         row.update(scenario=n, design=design, k_free=k)
         row.setdefault("runtime_s", round(time.time() - t0))
         rows.append(row)
-        write_summary(rows, os.path.join(OUT_DIR, "study_summary.csv"))   # after every run
+        write_summary(rows, os.path.join(OUT_DIR, f"{ftag}_summary.csv"))   # after every run
         if rc != 0:
             failed.append(n)
             if not args.keep_going:
                 print(f"!!! {n} failed (exit {rc}); stopping (use --keep-going to continue)")
                 break
 
-    print(f"\nSummary: {os.path.join(OUT_DIR, 'study_summary.csv')}")
+    print(f"\nSummary: {os.path.join(OUT_DIR, f'{ftag}_summary.csv')}")
     for r in rows:
         print(f"  {r['scenario']:28s} {r.get('status', ''):10s} final_rmse={r.get('final_rmse', '')}")
     return 1 if failed else 0

@@ -29,6 +29,7 @@ import os
 import subprocess
 import time
 
+import em_options
 import scenario_loader as sl
 
 BASE_CONFIG = "ensemble_scenarios_real.json"
@@ -138,6 +139,7 @@ def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> Non
                          "both: calibrate, then map (Step 6, all EM points) for every "
                          "scenario; none: the full run")
     ap.add_argument("--out-dir", default=default_out_dir)
+    em_options.add_em_arg(ap)
     ap.add_argument("--fast", action="store_true",
                     help=f"smoke test: --quick, {FAST_EPOCHS} epochs, probe points only")
     ap.add_argument("--dry-run", action="store_true",
@@ -167,7 +169,14 @@ def execute(*, tag: str, cfg: dict, names: list[str], args: argparse.Namespace,
     summary row of that scenario. Returns a shell-style exit code (0 = all ran).
     """
     os.makedirs(args.out_dir, exist_ok=True)
-    cfg_path = os.path.join(args.out_dir, f"{tag}_scenarios.json")
+    em = getattr(args, "em_method", em_options.DEFAULT_EM)
+    ftag = tag
+    if em != em_options.DEFAULT_EM:       # EM method of Step 1 (em_options.py): same scenario names, separate cache / run folders / files
+        cfg = em_options.apply_to_config(cfg, em)
+        ftag = f"{tag}_{em}"
+        plan_lines = [*plan_lines, f"EM method: {em_options.method_name(em)} (param_grid.method; cache_tag / output_dir "
+                                   f"suffixed '_{em}'; files '{ftag}_*')"]
+    cfg_path = os.path.join(args.out_dir, f"{ftag}_scenarios.json")
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
@@ -192,7 +201,7 @@ def execute(*, tag: str, cfg: dict, names: list[str], args: argparse.Namespace,
         return 0
 
     rows, failed = [], []
-    summary_path = os.path.join(args.out_dir, f"{tag}_summary.csv")
+    summary_path = os.path.join(args.out_dir, f"{ftag}_summary.csv")
     stop = False
     for n in names:
         calibration = None

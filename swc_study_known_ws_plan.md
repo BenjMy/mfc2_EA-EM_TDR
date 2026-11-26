@@ -79,12 +79,36 @@ floor ≫ 0.03 → first diagnose the EC (Patch 2b), then continue.
 * `study_swc_design.py --analyze-only` also writes `study_ws_recovery.csv`.
 * Works on all runs you already have (no rerun).
 
-### Patch 2b - EC diagnostics (only if the K=0 floor is large)
+### Patch 2b - EC diagnostics (only if the K=0 floor is large)  -- DONE as stand-alone scripts
 
-* Needs one listing from you: `ls mfc2_outputs/swc_design_study/<run>/0001_*/output_model | head -60`
-  to find the inverted-EC array.
-* Add `ec_rmse_truth`, `ec_bias_rel` (inverted vs true EC, per layer) to `compute_metrics`.
-* Purpose: show directly how large the EC error is, before any WS step.
+* `diagnose_ec_inversion.py` (EMagPy only, ~8 min): tests the three candidate causes one at a time on
+  the study truth and reports data misfit, inverted/true EC per layer and the implied theta RMSE
+  (= the K = 0 floor seen from Step 1). `ws_param_check.py` (numpy only): EC range, floor,
+  a / sigma_w / sigma_s degeneracy and sensitivity of the truth parameters.
+  Tests: `tests/test_diagnose_ec_inversion.py`.
+* Result: see section 6 ("EC diagnosis"). The cause is `method = ROPE`.
+* `ec_rmse_truth` / `ec_bias_rel` in `compute_metrics` are NOT added (the scripts answer the question
+  outside the pipeline); add them only if you want the EC error in every study summary.
+
+### Patch 2d - EM method (`--em-method`) and soil-like truth (`--ws soil*`)
+
+* `em_options.py`: one switch for the EM inversion method, as an ordinary scenario field
+  (`param_grid.method`), no pipeline change. `base` (default) = the scenario's own method (ROPE today),
+  `lbfgsb` = L-BFGS-B. Nelder-Mead is not offered (EMagPy ignores its bounds), TNC did not fit.
+* `study_swc_design.py`: new factor `em` (`--em-method base lbfgsb`; the name gets `_em<tag>` only when
+  not base, so every existing run name / cache / log row is unchanged; figures per method in
+  `em_<tag>/` when several methods are present).
+* New truth cases `--ws soilhomo soilheterox soilheteroz`: same structure as homo / heterox / heteroz
+  with the baseline (a, m, sigma_w, sigma_s) = (0.8, 2, 100, 100) instead of (0.5, 3, 500, 100);
+  the m / sigma_s ranges scale with the baseline; `lab_p0` (calibration prior) is the baseline.
+* Hypothesis runs (`hyp1/2/3_*.py`, via `hyp_common`) and `run_real_study.py`: `--em-method lbfgsb`
+  writes `<tag>_lbfgsb_scenarios.json` / `<tag>_lbfgsb_summary.csv` with `_lbfgsb` appended to
+  `cache_tag` / `output_dir` (same scenario names).
+* Any other scenarios file (real or synthetic): `python em_options.py --config ensemble_scenarios_real.json
+  --em-method lbfgsb` writes `ensemble_scenarios_real_lbfgsb.json`; then
+  `REAL_CFG=ensemble_scenarios_real_lbfgsb.json ./run_real_all_scenarios.sh` (the only shell change: `REAL_CFG`
+  can now be set from the environment) or `./run_one_scenario.sh -c <file> -s <name>`.
+* Tests: `tests/test_em_options.py`.
 
 ### Patch 2c - Parameter-recovery figure with truth (items 4 and "truth value in the plots")
 
@@ -163,14 +187,23 @@ Run `--dry-run` first (it prints the plan and validates every scenario) and use 
 
 ## 4. Order of work and decision points
 
-1. Patch 1 and run the 4 floor runs. **Decision**: floor small or large.
+1. Patch 1 and run the 4 floor runs. **Decision**: floor small or large.  -> large (0.13-0.15)
 2. Patch 2a (+2c) on the runs you already have; this also gives the "truth" lines in the plots.
-3. If the floor is large: Patch 2b and fix/understand the EC bias before Patches 3-6.
-4. Patches 3, 4, 5, 6 in this order; run each preset before writing the next.
+3. Patch 2b / 2d: cause = ROPE. Redo the floor runs with `--em-method lbfgsb` (legacy truth, and soil truth):
+   `python study_swc_design.py --smc hetero --ws homo soilhomo --reg noreg --free-k 0 --n-swc 5 --dist spread --em-method base lbfgsb`
+   (the `base` rows are your existing ROPE runs; `--resume` skips them if their folders exist).
+   **Decision**: floor < 0.03 with L-BFGS-B -> continue; otherwise look at the top layer / fixed depths.
+4. Patches 3, 4, 5, 6 in this order (all accept `--em-method`); run each preset before writing the next.
+   Real-case and hypothesis runs: switch with `--em-method lbfgsb` (hyp1/2/3, run_real_study) or a derived
+   scenarios file (`em_options.py`).
 
 ## 5. Assumptions to confirm
 
-* Inverted-EC file name in `output_model/` (Patch 2b).
+* Inverted-EC file name in `output_model/` (Patch 2b): `ec_optimal.npy` (confirmed).
+* Soil truth values (0.8, 2, 100, 100) are my choice from one published sandy-loam case; replace them
+  (`SOIL_WS_BASELINE` in `study_swc_design.py`) with values from your site / lab data if you have them.
+* What to do with `smc = homo` (floor still 32-33 % with the soil truth): raise the homogeneous theta, or
+  keep `smc = hetero` only.
 * "Electrodes" = SWC/TDR probes (Patch 5). If you meant ERT electrodes, that is a different
   factor (EM/ERT geometry) and needs its own plan.
 * Report table titles are stable ("Step 2 - Best-ranked...", "Step 4 - Best recalibrated...").
@@ -185,7 +218,8 @@ Run `--dry-run` first (it prints the plan and validates every scenario) and use 
 | 1, 2a, 3 | done |
 | 2c | done (figure `fig_ws_recovery.png` + truth curve on the Step 2 EC-theta plots; needed a pipeline change) |
 | 4 | done (`--err`, `fig_known_error.png`) |
-| 2b | not written; now the next one (see below) |
+| 2b | done (stand-alone scripts; cause = ROPE) |
+| 2d | done (`--em-method`, soil truth cases); the 4 K = 0 floor runs have to be redone with `--em-method lbfgsb` |
 | 5, 6 | not started |
 
 Patch 4 notes: a pinned value outside the WS bounds (e.g. a = 0.40) is not clipped, its bound is
@@ -220,15 +254,57 @@ EC is overestimated in the top three layers, and the surface layer shows no rela
 With m = 3 an EC 4.8 times too high gives theta about 1.7 times too high. The ratio is not uniform,
 so a simple unit error is unlikely. This is one run.
 
-### Candidate causes (from the scenario settings, none tested)
+### EC diagnosis (2026-11-26, `diagnose_ec_inversion.py`, smc hetero / ws homo, one realization, EMagPy 1.4.6)
 
-1. `fixed_depths = false`: the interfaces can move while the truth layers stay at 0.3 / 0.6 / 1.0 m,
-   so the layer-by-layer comparison may not compare the same depth intervals.
-2. `param_grid.forwardModel = [FSlin, CS]`: the data are generated with `CS` only.
-3. `param_grid.method = [ROPE]` with `cond_ranges` 0.01-300 mS/m in every layer.
+Ensemble mean over the step-1 ensemble; misfit = RMS relative ECa error of forward(inverted);
+theta RMSE = theta from the inverted EC with the TRUE WS parameters (the K = 0 floor from Step 1 alone).
 
-Next test: change one at a time on `smchetero_wshomo` K = 0 (fixed depths; `CS` only; a gradient
-method such as `L-BFGS-B`) and compare the same per-layer table. Nothing is calibrated at K = 0.
+| variant | misfit % | theta RMSE | EC ratio inverted / true, layers 0-3 |
+|---|---|---|---|
+| baseline (as the study: ROPE, free depths, FSlin + CS) | 604 | 0.153 | 8.4, 6.6, 6.2, 2.1 |
+| fixed_depths = true | 678 | 0.158 | 10.6, 6.8, 5.5, 2.3 |
+| forwardModel CS only / FSlin only | 625 / 552 | 0.160 / 0.148 | 7.4, 6.9, 7.2, 1.7 / 7.7, 5.6, 6.0, 2.1 |
+| **method L-BFGS-B** | **5.4** | **0.022** | 1.25, 1.0, 0.82, 1.02 |
+| method Nelder-Mead / TNC | 5.5 / 195 | 0.031 / 0.068 | |
+| fixed depths + CS + L-BFGS-B | 7.8 | 0.022 | 1.4, 1.18, 1.27, 0.83 |
+| start at the truth (L-BFGS-B) | 2.5 | 0.016 | about 1 |
+
+* Cause: `method = ROPE`. With `rep = 100` random samples (EMagPy default, never set by the pipeline) it
+  does not fit the data (misfit ~600 %). Best member only: still ~440 %. `rep = 1000`: 220 %
+  (`--tests T6`, slow). Narrower bounds help only partly (0.074-0.078).
+* Not causes: fixed depths and the forward model (no effect); conventions (truth reproduces the data to
+  0.9 % = noise level; unit `ppt` only applies to quad / inph columns).
+* L-BFGS-B: top layer still 25-40 % too conductive; theta RMSE 0.022 is below 0.03 but not by much.
+  With free depths the members spread by a factor ~2 in EC (0.3 in log10) and the best-misfit member
+  (theta RMSE 0.042) is worse than the mean (0.022); fixed depths spread 0.05 and best = 0.016.
+* The pipeline's own default method is L-BFGS-B (`run_pipeline.py`); ROPE comes from the scenario files.
+  alpha / beta / gamma work with L-BFGS-B (EMagPy applies them in every `minimize` method); the schema
+  comment saying ROPE is the only optimiser that supports them is wrong for this. With L-BFGS-B the file
+  `mcmc_conductivity_pstd.npy` is not written (nothing reads it).
+* To check on a pipeline run: `ec_optimal` is the K-cluster average chosen in Step 4 by the TDR probes
+  (not by data misfit); redo the 4 K = 0 floor runs with `--em-method lbfgsb` and compare.
+
+### Waxman-Smits truth parameters (`ws_param_check.py`)
+
+* In the generator's form `EC = theta^m / a * (sigma_w + sigma_s)` only `C = a / (sigma_w + sigma_s)` and `m`
+  matter: a, sigma_w, sigma_s are exactly degenerate (same C -> identical EC). Judge recovery on C and m.
+* theta error at theta = 0.30 for a +-10 % wrong value (EC exact): m +-0.037, a +-0.010, sigma_w -+0.008,
+  sigma_s -+0.002.
+* Realism: sigma_s = 100 and F(0.44) = 5.9 are in the range of a published sandy-loam case (F 4.5,
+  sigma_s 109 mS/m, saturation exponent 1.9); sigma_w = 500 mS/m (saline) and m = 3 are on the high side.
+  Hence the soil cases: (a, m, sigma_w, sigma_s) = (0.8, 2, 100, 100); `a` = 0.8 (not 1.0) so that the
+  start of a free `a` (1.0) is 25 % off the truth.
+* Share of true EC at the 1 mS/m floor (one realization each, measured with the generator):
+
+| smc / ws | legacy truth | soil truth |
+|---|---|---|
+| homo / homo | 66.7 % (median 1.00) | 33.3 % (median 1.59) |
+| homo / heterox | 60.0 % | 31.7 % |
+| hetero / homo | 3.3 % | 1.7 % |
+| hetero / heterox | 0.0 % | 0.0 % |
+
+  The soil truth halves the floor but does NOT remove it for `smc = homo`: conclusions from `smc = homo`
+  stay compromised (decision below). `smc = hetero` is fine with either truth.
 
 ### Synthetic EC floor
 
