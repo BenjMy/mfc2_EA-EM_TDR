@@ -248,6 +248,28 @@ def test_design_and_truth_figure_finds_output_model_layout(tmp_path):
     assert os.path.getsize(path) > 2000
 
 
+def test_design_and_truth_homo_ws_json_stays_in_run_folder(tmp_path):
+    """As in the pipeline: *.npy moved to output_model/, synthetic_ws_truth_params.json left in the run folder."""
+    import shutil
+    from plots import swc_design_overview as ov
+    rows = []
+    for s in ("homo", "hetero"):
+        for w in ("homo", "hetero"):
+            flat = _fake_truth_run(tmp_path / "flat" / f"{s}_{w}", w == "hetero")
+            run = tmp_path / "runs" / f"{s}_{w}"
+            (run / "output_model").mkdir(parents=True)
+            for f in os.listdir(flat):
+                dst = run / "output_model" if f.endswith(".npy") else run
+                shutil.copy(os.path.join(flat, f), dst / f)
+            rows.append({"smc": s, "ws": w, "run_dir": str(run)})
+    d = ov.pick_run_dir(rows, "ws", "homo")
+    t = ov._load_ws(d, 0, 10)
+    assert t is not None and t.shape == (10, 3, 4) and float(np.ptp(t, axis=0).max()) == 0.0
+    assert ov._load_ws(ov.pick_run_dir(rows, "ws", "hetero"), 0, 10).shape == (10, 3, 4)
+    path = ov.plot_design_and_truth(rows, str(tmp_path / "out"), SURVEY, st.probe_positions)
+    assert os.path.getsize(path) > 2000
+
+
 def test_design_and_truth_figure_without_runs(tmp_path):
     from plots import swc_design_overview as ov          # the layout row needs no run
     path = ov.plot_design_and_truth([], str(tmp_path), SURVEY, st.probe_positions)

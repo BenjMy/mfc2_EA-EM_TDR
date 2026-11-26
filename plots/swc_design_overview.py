@@ -18,7 +18,8 @@ that, directly in ``<run_dir>/``.
     <run_dir>/synthetic_time_lapse_theta.npy   (ens, T, points, layers)
     <run_dir>/synthetic_x_coords.npy, synthetic_layer_centers.npy
     <run_dir>/synthetic_ws_truth_{a,m,sigma_w,sigma_s}.npy  (WS-hetero runs) or
-    <run_dir>/synthetic_ws_truth_params.json                (per-layer truth, always written)
+    <run_dir>/synthetic_ws_truth_params.json                (per-layer truth, always written; stays in
+                                                            the run folder, not in output_model/)
 The probe layout row needs no run. A panel without data says "no run".
 
 Output : ``<out_dir>/fig_design_and_truth.png`` (path returned).
@@ -35,7 +36,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from plots.ws_distribution import PARAMS, load_ws_truth  # noqa: E402
+from plots.ws_distribution import PARAMS, load_ws_truth, load_ws_truth_params  # noqa: E402
 
 FIG_NAME = "fig_design_and_truth.png"
 DISTS = ("spread", "clustered", "random")
@@ -102,6 +103,18 @@ def _load_run(run_dir: str | None, realization: int):
     p_c = os.path.join(run_dir, "synthetic_layer_centers.npy")
     depths = np.load(p_c) if os.path.isfile(p_c) else None
     return th, np.asarray(x, dtype=float), depths
+
+
+def _load_ws(data_dir: str, realization: int, n_points: int):
+    """Truth WS ``(points, layers, 4)`` of a run.
+
+    The pipeline moves only ``*.npy`` into ``output_model/``; ``synthetic_ws_truth_params.json``
+    (the whole truth of a homogeneous-WS run) stays in the run folder, so look there too.
+    """
+    params = load_ws_truth_params(data_dir)
+    if params is None and os.path.basename(os.path.normpath(data_dir)) == "output_model":
+        params = load_ws_truth_params(os.path.dirname(os.path.normpath(data_dir)))
+    return load_ws_truth(data_dir, realization, params, n_points)
 
 
 def _overlay_probes(ax, xs, x0, n_layers):
@@ -176,7 +189,7 @@ def plot_design_and_truth(rows: Iterable[dict], out_dir: str, survey, position_f
     for v in ("homo", "hetero"):
         d = ws_data[v]
         try:
-            loaded[v] = None if d is None else load_ws_truth(ws_runs[v], realization, None, len(d[1]))
+            loaded[v] = None if d is None else _load_ws(ws_runs[v], realization, len(d[1]))
         except (IndexError, ValueError):
             loaded[v] = None
     for r, v in enumerate(("homo", "hetero")):
