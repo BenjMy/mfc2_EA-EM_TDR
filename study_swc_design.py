@@ -74,6 +74,7 @@ Outputs (``--out-dir``, default comparison_output/swc_design_study/)
     study_ws_recovery.csv  one row per (run, horizon): WS start / truth / fitted / pinned / bounds, C = a/(sw+ss)
     study_report.md        tables
     residuals/*.npz        theta_calc - theta_true per run (for the distribution plots)
+    fig_ws_recovery.png    WS start / fitted / truth per parameter, scenario and horizon (pinned = hollow)
     fig_*.png              comparison plots (fig_heatmap_n_vs_k_<dist>_<reg>.png: n x K heat map of the
                            other distributions / regularisations, same colour scale)
 Run folders: mfc2_outputs/swc_design_study/<scenario>/<NNNN>_<scenario>/
@@ -829,6 +830,10 @@ def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_r
         import ws_recovery
         rec = ws_recovery.collect({r["scenario"]: r["run_dir"] for r in rows if r.get("run_dir")})
         print(f"[study] WS recovery: {len(rec)} rows -> {ws_recovery.write_csv(rec, os.path.join(out_dir, 'study_ws_recovery.csv'))}")
+        from plots.ws_recovery_fig import plot_ws_recovery
+        fig_path = plot_ws_recovery(rec, out_dir)
+        if fig_path:
+            print(f"[study] figure: {fig_path}")
     except Exception as e:                  # never let the extra table break the study analysis
         print(f"[study] WS recovery table skipped: {type(e).__name__}: {e}")
     return rows

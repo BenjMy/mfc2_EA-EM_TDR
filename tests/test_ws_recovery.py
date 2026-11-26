@@ -119,3 +119,36 @@ def test_cli(tmp_path):
     (run / "pipeline_report_2026.md").write_text(make_report(fixed=K2), encoding="utf-8")
     assert wr.main([str(run), "-o", str(tmp_path / "x.csv")]) == 0 and os.path.isfile(tmp_path / "x.csv")
     assert wr.main([str(tmp_path / "empty_dir_that_does_not_exist"), "-o", str(tmp_path / "y.csv")]) == 1
+
+
+# ------------------------------------------------------------------ figure
+def _rows():
+    a = wr.parse_report(make_report(fixed=K2), "swcstudy_smchomo_wshomo_noreg_spread_n5_free2")
+    b = wr.parse_report(make_report(fixed=ALL_FIXED, uncalibrated=(1,), baseline=True),
+                        "swcstudy_smchomo_wshomo_noreg_spread_n5_free0")
+    return a + b
+
+
+def test_figure_panels_and_content(tmp_path):
+    from plots import ws_recovery_fig as fr
+    fig = fr.build_figure(_rows())
+    assert fig is not None and len(fig.axes) == 5
+    m_ax = fig.axes[1]
+    # 2 scenarios x 2 horizons: one truth segment each (solid lines); bounds only on the 4 parameter panels
+    assert sum(len(l.get_xdata()) == 2 for l in m_ax.lines) == 4
+    assert len(m_ax.patches) == 2 and len(fig.axes[4].patches) == 0
+    ticks = [t.get_text() for t in fig.axes[-1].get_xticklabels()]
+    assert ticks[0].startswith("smchomo_wshomo") and not any(t.startswith("swcstudy_") for t in ticks)
+    # truth line sits at the truth value, free fit is filled, pinned fit hollow
+    assert any(l.get_ydata()[0] == 3.0 for l in m_ax.lines if len(l.get_xdata()) == 2)
+    fits = [l for l in m_ax.lines if l.get_marker() == "o"]
+    assert {l.get_markerfacecolor() == "none" for l in fits} == {True, False}
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+
+
+def test_figure_file_and_empty(tmp_path):
+    from plots import ws_recovery_fig as fr
+    assert fr.plot_ws_recovery([], str(tmp_path)) is None
+    path = fr.plot_ws_recovery(_rows(), str(tmp_path / "o"))
+    assert path and os.path.getsize(path) > 5000
