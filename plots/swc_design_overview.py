@@ -27,7 +27,9 @@ Called by study_swc_design.make_plots and plot_swc_study_log.plot_all.
 """
 from __future__ import annotations
 
+import glob
 import os
+import re
 from typing import Callable, Iterable
 
 import matplotlib
@@ -105,16 +107,45 @@ def _load_run(run_dir: str | None, realization: int):
     return th, np.asarray(x, dtype=float), depths
 
 
+_REPORT_ROW = re.compile(
+    r"Layer\s+(\d+)[^|\n]*\|\s*`?\s*([-+\d.eE]+)\s*/\s*([-+\d.eE]+)\s*/\s*([-+\d.eE]+)\s*mS/m\s*/\s*([-+\d.eE]+)\s*mS/m")
+
+
+def _ws_params_from_report(run_dir: str) -> dict | None:
+    """``{layer: {param: value}}`` read from the run's ``pipeline_report_*.md`` (None when absent).
+
+    Runs made before ``synthetic_ws_truth_params.json`` existed only have the Step 0 table
+    "Layer l - a / m / sigma_w / sigma_s" in the report. Values are rounded there (4 / 2 decimals).
+    """
+    for path in sorted(glob.glob(os.path.join(run_dir, "pipeline_report_*.md")), reverse=True):
+        if "_shell_" in os.path.basename(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        out = {int(m.group(1)): dict(zip(PARAMS, (float(m.group(i)) for i in range(2, 6))))
+               for m in _REPORT_ROW.finditer(text)}
+        if out:
+            return out
+    return None
+
+
 def _load_ws(data_dir: str, realization: int, n_points: int):
     """Truth WS ``(points, layers, 4)`` of a run.
 
     The pipeline moves only ``*.npy`` into ``output_model/``; ``synthetic_ws_truth_params.json``
-    (the whole truth of a homogeneous-WS run) stays in the run folder, so look there too.
+    (the whole truth of a homogeneous-WS run) stays in the run folder, so look there too. Runs
+    that predate that file fall back to the Step 0 table of their pipeline report.
     """
-    params = load_ws_truth_params(data_dir)
-    if params is None and os.path.basename(os.path.normpath(data_dir)) == "output_model":
-        params = load_ws_truth_params(os.path.dirname(os.path.normpath(data_dir)))
-    return load_ws_truth(data_dir, realization, params, n_points)
+    run_dir = os.path.dirname(os.path.normpath(data_dir)) \
+        if os.path.basename(os.path.normpath(data_dir)) == "output_model" else data_dir
+    params = load_ws_truth_params(data_dir) or load_ws_truth_params(run_dir)
+    t = load_ws_truth(data_dir, realization, params, n_points)
+    if t is None and params is None:
+        t = load_ws_truth(data_dir, realization, _ws_params_from_report(run_dir), n_points)
+    return t
 
 
 def _overlay_probes(ax, xs, x0, n_layers):

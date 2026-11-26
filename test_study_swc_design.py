@@ -270,6 +270,26 @@ def test_design_and_truth_homo_ws_json_stays_in_run_folder(tmp_path):
     assert os.path.getsize(path) > 2000
 
 
+def test_design_and_truth_homo_ws_from_pipeline_report(tmp_path):
+    """Runs from before synthetic_ws_truth_params.json: truth comes from the report's Step 0 table."""
+    import shutil
+    from plots import swc_design_overview as ov
+    flat = _fake_truth_run(tmp_path / "flat", hetero_ws=False)
+    run = tmp_path / "run"
+    (run / "output_model").mkdir(parents=True)
+    for f in os.listdir(flat):
+        if f.endswith(".npy"):
+            shutil.copy(os.path.join(flat, f), run / "output_model" / f)
+    lines = ["**Step 0 - Synthetic ground-truth Waxman-Smits parameters**", "", "| Key | Value |", "|-----|-------|"]
+    lines += [f"| `Layer {l} \u2014 a / m / \u03c3_w / \u03c3_s` | `0.5000 / 3.0000 / 500.00 mS/m / 100.00 mS/m` |"
+              for l in range(3)]
+    (run / "pipeline_report_20261125_111933.md").write_text("\n".join(lines), encoding="utf-8")
+    (run / "pipeline_report_shell_20261125_112028.md").write_text("no table here", encoding="utf-8")
+    t = ov._load_ws(str(run / "output_model"), 0, 10)
+    assert t.shape == (10, 3, 4) and t[0, 0, 2] == 500.0 and t[0, 0, 1] == 3.0 and float(np.ptp(t, axis=0).max()) == 0.0
+    assert ov._load_ws(str(tmp_path / "nothing"), 0, 10) is None
+
+
 def test_design_and_truth_figure_without_runs(tmp_path):
     from plots import swc_design_overview as ov          # the layout row needs no run
     path = ov.plot_design_and_truth([], str(tmp_path), SURVEY, st.probe_positions)
