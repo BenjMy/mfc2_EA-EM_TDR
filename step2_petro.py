@@ -19,12 +19,36 @@ import geometry_utils
 # ==========================================================================
 # DIAGNOSTIC PLOTTING FUNCTIONS FOR SYNTHETIC TDR DATA
 # ==========================================================================
+def _draw_ws_truth(ax, ec_line, horizons, colors, ws_truth, baseline_only: bool = False) -> None:
+    """True Waxman-Smits curve of a synthetic run (dash-dot) for the plotted horizons.
+
+    ``ws_truth`` is the Step 0 ``{layer: {a, m, sigma_w, sigma_s}}`` table (None / empty on real data:
+    nothing is drawn).  Horizons with the same truth share one curve (black when all of them do).
+    ``baseline_only``: the truth also varies along x, so the table is just the per-layer baseline.
+    """
+    names = ("a", "m", "sigma_w", "sigma_s")
+    table = {int(l): tuple(float(p[n]) for n in names) for l, p in (ws_truth or {}).items()}
+    groups: dict = {}
+    for h in horizons:
+        if h in table:
+            groups.setdefault(table[h], []).append(h)
+    for values, hzs in groups.items():
+        shared_by_all = len(groups) == 1 and len(hzs) > 1
+        label = "Truth" + (" baseline" if baseline_only else "") + " Hz " + ",".join(str(h) for h in hzs)
+        ax.plot(ec_line, EMmethod.waxman_smits_theta(ec_line, *values),
+                color="black" if shared_by_all else colors[hzs[0]], linestyle="-.", linewidth=1.8, zorder=3.5,
+                label=f"{label} (a={values[0]:.2f}, m={values[1]:.2f}, "
+                      f"\u03c3_w={values[2]:.1f}, \u03c3_s={values[3]:.1f})")
+
+
 def plot_petrophysical_calibration(
     ec_values: np.ndarray,
     theta_obs: np.ndarray,
     petro_fit: EMmethod.PetroFit,
     output_path: str = OUTPUT_ROOT + "/petro_calibration.png",
-    probe_layer_indices: np.ndarray = None  # <-- Añadimos este parámetro
+    probe_layer_indices: np.ndarray = None,  # <-- Añadimos este parámetro
+    ws_truth: dict | None = None,
+    ws_truth_baseline_only: bool = False,
 ) -> None:
     """
     Plots the cross-plot of Inverted EC vs. Synthetic TDR Water Content using
@@ -127,6 +151,9 @@ def plot_petrophysical_calibration(
                     f'Hz {hz.horizon} — UNCALIBRATED (prior only, no TDR probe)'
                 )
             )
+
+    _draw_ws_truth(ax, ec_line, [hz.horizon for hz in petro_fit.horizon_fits], colors,
+                   ws_truth, ws_truth_baseline_only)
 
     # Configuración estética
     ax.set_title("Step 2: Petrophysical Parameter Alignment (Waxman-Smits)", fontsize=12, pad=12)
@@ -1025,6 +1052,8 @@ def run_petro(
     theta_obs_std: float | Sequence[float] | None = None,
     sensor_ids: Sequence[str] | None = None,
     ws_bounds: dict | None = None,
+    ws_truth: dict | None = None,
+    ws_truth_baseline_only: bool = False,
 ) -> list[EMmethod.PetroFit]:
     """
     Run STEP 2: Calibrate petrophysical function using Option A spatial layouts.
@@ -1165,6 +1194,7 @@ def run_petro(
             theta_obs=best_fit.observed_theta,
             petro_fit=best_fit,
             output_path=os.path.join(output_dir, "petro_calibration.png"),
+            ws_truth=ws_truth, ws_truth_baseline_only=ws_truth_baseline_only,
         )
 
         if depths0 is not None:
@@ -1222,6 +1252,8 @@ def plot_petrophysical_calibration_localized_overlay(
     probe_layer_indices: Sequence[int] | None = None,
     probe_y_coords: Sequence[float] | None = None,
     output_path: str = OUTPUT_ROOT + "/petro_calibration_localized_overlay.png",
+    ws_truth: dict | None = None,
+    ws_truth_baseline_only: bool = False,
 ) -> None:
     """
     Probe-level companion to ``petro_calibration.png``: draws the single
@@ -1375,6 +1407,9 @@ def plot_petrophysical_calibration_localized_overlay(
             )
             first_local_label_used = True
 
+    _draw_ws_truth(ax, ec_line_full, [hz.horizon for hz in petro_fit.horizon_fits], colors,
+                   ws_truth, ws_truth_baseline_only)
+
     ax.set_title(
         "Step 2 (localized overlay): global fit vs. each probe's own "
         "kernel-localized fit", fontsize=11, pad=12,
@@ -1409,6 +1444,8 @@ def run_petro_localized(
     global_fit: "EMmethod.PetroFit | None" = None,
     sensor_ids: Sequence[str] | None = None,
     ws_bounds: dict | None = None,
+    ws_truth: dict | None = None,
+    ws_truth_baseline_only: bool = False,
 ) -> list["EMmethod.LocalizedPetroFit"]:
     """
     Step 2, kernel-localized variant (spatial_calibration_alternatives.md
@@ -1633,6 +1670,7 @@ def run_petro_localized(
                 probe_y_coords=probe_y_coords_routed,
                 probe_layer_indices=probe_layer_indices_routed,
                 output_path=os.path.join(output_dir, "petro_calibration_localized_overlay.png"),
+                ws_truth=ws_truth, ws_truth_baseline_only=ws_truth_baseline_only,
             )
         else:
             print(

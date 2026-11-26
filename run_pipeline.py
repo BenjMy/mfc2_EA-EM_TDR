@@ -4404,6 +4404,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
         )
 
         fits_step2 = step2.run_petro(
+            ws_truth=synthetic_geometry.get("ws_truth_params"),   # None on real data
+            ws_truth_baseline_only=bool(WS_XY_VARIATION),
             models=models_clean, sample_positions=sample_positions,
             sample_times=sample_times, theta_obs=theta_obs,
             depths0=DEPTHS0, output_dir=OUTPUT_DIR,
@@ -4627,6 +4629,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             )
             try:
                 fits_step2_localized = step2.run_petro_localized(
+                    ws_truth=synthetic_geometry.get("ws_truth_params"),   # None on real data
+                    ws_truth_baseline_only=bool(WS_XY_VARIATION),
                     models=models_clean,
                     sample_positions=sample_positions,
                     sample_times=sample_times,
