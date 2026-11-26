@@ -175,3 +175,85 @@ Run `--dry-run` first (it prints the plan and validates every scenario) and use 
   factor (EM/ERT geometry) and needs its own plan.
 * Report table titles are stable ("Step 2 - Best-ranked...", "Step 4 - Best recalibrated...").
   Old reports use the same format (checked on your K=1 / K=2 runs).
+
+## 6. Observations (2026-11-26)
+
+### Status of the patches
+
+| Patch | Status |
+|---|---|
+| 1, 2a, 3 | done |
+| 2c | done (figure `fig_ws_recovery.png` + truth curve on the Step 2 EC-theta plots; needed a pipeline change) |
+| 4 | done (`--err`, `fig_known_error.png`) |
+| 2b | not written; now the next one (see below) |
+| 5, 6 | not started |
+
+Patch 4 notes: a pinned value outside the WS bounds (e.g. a = 0.40) is not clipped, its bound is
+(value, value). `err` applies to the pins `sw`, `sws`, `am` only. `--analyze-only` needs the same
+`--preset` / `--err` as the runs.
+
+### K = 0 floor: large
+
+`smc = hetero`, noreg, spread, n = 5, all four WS parameters pinned:
+
+| WS truth | rmse_truth [m3/m3] | mae_truth | final_rmse (probes) | quality |
+|---|---|---|---|---|
+| homo | **0.132** | 0.109 | 0.123 | WARN |
+| hetero | 0.171 | 0.149 | 0.167 | OK |
+
+Decision rule of Patch 1: 0.132 is far above 0.03, so diagnose the EC before running the `known` and
+error studies. For `hetero` the pinned values are only the layer baseline; read the `homo` row.
+
+### Inverted vs true EC
+
+Run `smchetero_wshomo_..._free0`, `ec_optimal.npy` vs `synthetic_time_lapse_ec.npy[0]`, both
+(3 times, 10 points, 4 layers); medians and correlation per layer over all times and points:
+
+| layer | true median [mS/m] | inverted median [mS/m] | ratio | correlation |
+|---|---|---|---|---|
+| 0 | 5.17 | 24.74 | 4.8 | -0.05 |
+| 1 | 10.80 | 51.44 | 4.8 | +0.20 |
+| 2 | 19.02 | 71.84 | 3.8 | +0.40 |
+| 3 | 29.80 | 32.53 | 1.1 | +0.60 |
+
+EC is overestimated in the top three layers, and the surface layer shows no relation to the truth.
+With m = 3 an EC 4.8 times too high gives theta about 1.7 times too high. The ratio is not uniform,
+so a simple unit error is unlikely. This is one run.
+
+### Candidate causes (from the scenario settings, none tested)
+
+1. `fixed_depths = false`: the interfaces can move while the truth layers stay at 0.3 / 0.6 / 1.0 m,
+   so the layer-by-layer comparison may not compare the same depth intervals.
+2. `param_grid.forwardModel = [FSlin, CS]`: the data are generated with `CS` only.
+3. `param_grid.method = [ROPE]` with `cond_ranges` 0.01-300 mS/m in every layer.
+
+Next test: change one at a time on `smchetero_wshomo` K = 0 (fixed depths; `CS` only; a gradient
+method such as `L-BFGS-B`) and compare the same per-layer table. Nothing is calibrated at K = 0.
+
+### Synthetic EC floor
+
+`data_synthetic.py` has `ec_bulk = max(1.0, ec_bulk + noise)`. With the baseline truth
+(0.5, 3, 500, 100), any theta below about 0.094 is below 1 mS/m and gets raised to it.
+Share of true EC at the floor (one run sampled per truth type):
+
+| smc / ws | at 1.0 mS/m | median true EC [mS/m] |
+|---|---|---|
+| homo / homo | 66.7 % | 1.00 |
+| homo / hetero | 35.6 % | 2.50 |
+| hetero / hetero | 9.0 % | 39.67 |
+| hetero / homo | 4.0 % | 14.66 |
+
+Do not draw conclusions from `smc = homo` runs (this includes the K = 1 / K = 2 numbers of section 0)
+until the floor is removed or the homogeneous theta is kept above it. Either changes the synthetic
+truth, so those runs must be redone without `--resume`.
+
+### Practical
+
+* Inverted-EC file (section 5, first assumption): `output_model/ec_optimal.npy`.
+* A K = 0 run took about 8.5 min here, so section 3 times (4 min per run) are about half: the 17-run
+  error study (`--ws homo`) is about 2.4 h.
+* Quick test (`--fast`, smc homo, so affected by the floor): with a, m known, sigma_w stayed on its
+  upper bound 1000, and a -20 % error lowered the RMSE (0.19 -> 0.11). An error on a known value can
+  offset the EC error and look like an improvement.
+* Tests: `test_study_swc_design.py` and `test_ws_start_values.py` at the repo root expect to live in
+  `tests/`, which holds older copies. `tests/data/scenarios_golden.json` is missing.
