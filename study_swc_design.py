@@ -10,7 +10,8 @@ Synthetic 1-D transect (10 survey points, 2 m spacing).  Factors:
   dist   distribution of the probe positions      spread | clustered | random
   smc    truth soil moisture (theta)              homo   | hetero
   ws     truth Waxman-Smits parameters            homo   | hetero
-  k      number of FREE WS parameters             1..4  (freed: sigma_s, m, sigma_w, a)
+  k      number of FREE WS parameters             0..4  (freed: sigma_s, m, sigma_w, a;
+                                                       0 = all pinned = floor set by the inverted EC)
   reg    EMagPy inversion regularisation          noreg | beta | gamma | both
 
 Meaning of the factors
@@ -53,6 +54,8 @@ Usage
     python study_swc_design.py --preset oat                    # default, ~1-2 h
     python study_swc_design.py --preset main --keep-going --resume
     python study_swc_design.py --analyze-only                  # re-collect + re-plot only
+    python study_swc_design.py --smc homo hetero --ws homo hetero --reg noreg --free-k 0 --n-swc 5 --dist spread
+                                                               # K = 0 floor: 4 runs, nothing is fitted
     python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10
     python study_swc_design.py --preset oat -- --em-footprint-diagnostic   # after '--' -> run_one_scenario.sh
 
@@ -110,9 +113,10 @@ LEVELS = {
     "dist": ("spread", "clustered", "random"),
     "smc": ("homo", "hetero"),
     "ws": ("homo", "hetero"),
-    "k": (1, 2, 3, 4),
+    "k": (1, 2, 3, 4),            # preset default; K = 0 (floor) is opt-in with --free-k 0
     "reg": ("noreg", "beta", "gamma", "both"),
 }
+K_CHOICES = (0, *LEVELS["k"])   # accepted by --free-k
 REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg"}
 FACTORS = ("smc", "ws", "reg", "dist", "n", "k")
 
@@ -212,17 +216,28 @@ def preset_blocks(preset: str, levels: dict) -> list[dict]:
 
 
 def build_designs(preset: str, levels: dict, survey=None) -> list[Design]:
-    """Unique designs of a preset; designs with identical probe positions are merged."""
+    """Unique designs of a preset; designs with identical probe positions are merged.
+
+    K = 0 (every WS parameter pinned) fits nothing, so it does not depend on ``n`` nor on the
+    distribution: one K = 0 design is kept per (smc, ws, reg), the one with the smallest ``n``.
+    """
     xs = survey_x() if survey is None else np.asarray(survey, dtype=float)
     seen: dict[tuple, Design] = {}
+    order = {f: i for i, f in enumerate(LEVELS["dist"])}
     for block in preset_blocks(preset, levels):
         for smc, ws, reg, dist, n, k in itertools.product(*(block[f] for f in FACTORS)):
             n_eff = min(int(n), len(xs))
+            d = Design(smc, ws, reg, dist, n_eff, int(k))
+            if k == 0:
+                key = (smc, ws, reg, 0)
+                cur = seen.get(key)
+                if cur is None or (n_eff, order.get(dist, 9)) < (cur.n, order.get(cur.dist, 9)):
+                    seen[key] = d
+                continue
             sig = position_signature(probe_positions(dist, n_eff, xs))
             key = (smc, ws, reg, n_eff, k, sig)
             # same positions under another distribution name (n = 1, n = all points): keep the first
-            seen.setdefault(key, Design(smc, ws, reg, dist, n_eff, int(k)))
-    order = {f: i for i, f in enumerate(LEVELS["dist"])}
+            seen.setdefault(key, d)
     return sorted(seen.values(), key=lambda d: (d.smc, d.ws, d.reg, d.k, d.n, order.get(d.dist, 9)))
 
 
@@ -796,12 +811,15 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--preset", choices=["smoke", "oat", "main", "full"], default="oat")
+    ap.add_argument("--preset", choices=["smoke", "oat", "main", "full"], default=None,
+                    help="design preset (default: oat; full when only --free-k 0 is requested, so that "
+                         "every requested truth gets its floor run)")
     ap.add_argument("--n-swc", nargs="+", type=int, help=f"numbers of SWC positions (default {LEVELS['n']})")
     ap.add_argument("--dist", nargs="+", choices=LEVELS["dist"], help="probe distributions")
     ap.add_argument("--smc", nargs="+", choices=LEVELS["smc"], help="truth soil moisture")
     ap.add_argument("--ws", nargs="+", choices=LEVELS["ws"], help="truth Waxman-Smits parameters")
-    ap.add_argument("--free-k", nargs="+", type=int, choices=[1, 2, 3, 4], help="numbers of free WS parameters")
+    ap.add_argument("--free-k", nargs="+", type=int, choices=list(K_CHOICES),
+                    help="numbers of free WS parameters (0 = all pinned: floor set by the inverted EC)")
     ap.add_argument("--reg", nargs="+", choices=LEVELS["reg"], help="regularisation: noreg beta gamma both")
     ap.add_argument("--beta", type=float, default=BETA_VALUE, help="beta used by reg beta/both")
     ap.add_argument("--gamma", type=float, default=GAMMA_VALUE, help="gamma used by reg gamma/both")
@@ -832,6 +850,8 @@ def main(argv: list[str] | None = None) -> int:
                  ("k", args.free_k), ("reg", args.reg)):
         if v:
             levels[f] = tuple(v)
+    if args.preset is None:
+        args.preset = "full" if levels["k"] == (0,) else "oat"
     survey = survey_x(args.survey_n, args.survey_dx)
     designs = build_designs(args.preset, levels, survey)
     if not designs:

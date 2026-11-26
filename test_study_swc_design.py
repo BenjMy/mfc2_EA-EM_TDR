@@ -72,6 +72,39 @@ def test_restricted_levels():
     assert len(names) == len(set(names)) == 3                # n=3 and n=5 (ref) + beta at the ref n
 
 
+# ------------------------------------------------------------ K = 0 (floor)
+def test_k0_is_opt_in():
+    assert 0 not in st.LEVELS["k"] and 0 in st.K_CHOICES          # presets keep their designs
+    for preset in ("smoke", "oat", "main", "full"):
+        assert all(d.k != 0 for d in st.build_designs(preset, LEVELS))
+
+
+def test_k0_one_design_per_truth():
+    levels = {**LEVELS, "k": (0, 1)}
+    k0 = [d for d in st.build_designs("full", levels) if d.k == 0]
+    assert len(k0) == 2 * 2 * 4                                    # smc x ws x reg, whatever n / dist
+    assert {d.n for d in k0} == {1} and {d.dist for d in k0} == {"spread"}   # smallest n, first distribution
+    assert len({(d.smc, d.ws, d.reg) for d in k0}) == len(k0)
+    assert sum(d.k == 1 for d in st.build_designs("full", levels)) == sum(d.k == 1 for d in st.build_designs("full", LEVELS))   # K >= 1 untouched
+
+
+def test_k0_floor_runs_of_the_plan():
+    levels = {**LEVELS, "k": (0,), "n": (5,), "dist": ("spread",), "reg": ("noreg",)}
+    names = {d.name for d in st.build_designs("full", levels)}
+    assert len(names) == 4 and all(n.endswith("_spread_n5_free0") for n in names)
+
+
+def test_k0_scenario_pins_everything(parent, tmp_path):
+    d = st.Design("hetero", "homo", "noreg", "spread", 5, 0)
+    cfg = st.build_study_config(parent, [d], p0_bias=0.2)
+    assert "lab_p0" not in cfg[d.name]                             # nothing is free: no biased start
+    path = tmp_path / "k0.json"
+    path.write_text(json.dumps(cfg))
+    sc = sl.load_scenario(d.name, config_path=str(path))
+    assert all(sc.ws_fixed_params.values()) and len(sc.ws_fixed_params) == 4
+    assert st.parse_name(d.name) == d
+
+
 def test_name_roundtrip():
     for d in st.build_designs("main", LEVELS):
         assert st.parse_name(d.name) == d
@@ -338,3 +371,12 @@ def test_heatmap_variants_no_results(tmp_path):
     df = _fake_summary(tmp_path)
     df["rmse_truth"] = np.nan
     assert st.plot_heatmap_variants(df, str(tmp_path)) == []
+
+
+def test_k0_only_defaults_to_full_preset(tmp_path):
+    out = tmp_path / "o"
+    argv = ["--smc", "homo", "hetero", "--ws", "homo", "hetero", "--reg", "noreg", "--free-k", "0",
+            "--n-swc", "5", "--dist", "spread", "--dry-run", "--out-dir", str(out), "--runs-dir", str(tmp_path / "r")]
+    assert st.main(argv) == 0
+    cfg = json.loads((out / "study_scenarios.json").read_text())
+    assert sum(st.parse_name(k) is not None for k in cfg) == 4
