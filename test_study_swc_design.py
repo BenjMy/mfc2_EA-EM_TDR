@@ -231,6 +231,23 @@ def test_design_and_truth_figure(tmp_path):
     assert os.path.basename(path) == "fig_design_and_truth.png" and os.path.getsize(path) > 2000
 
 
+def test_design_and_truth_figure_finds_output_model_layout(tmp_path):
+    """Real runs keep synthetic_*.npy in <run>/output_model/, not in <run> itself."""
+    import shutil
+    from plots import swc_design_overview as ov
+    rows = []
+    for s in ("homo", "hetero"):
+        for w in ("homo", "hetero"):
+            flat = _fake_truth_run(tmp_path / "flat" / f"{s}_{w}", w == "hetero")
+            run = tmp_path / "runs" / f"{s}_{w}"
+            shutil.copytree(flat, run / "output_model")
+            rows.append({"smc": s, "ws": w, "run_dir": str(run)})
+    assert all(ov.pick_run_dir(rows, "smc", v) is not None for v in ("homo", "hetero"))
+    assert ov.pick_run_dir(rows, "ws", "hetero").endswith("output_model")
+    path = ov.plot_design_and_truth(rows, str(tmp_path / "out"), SURVEY, st.probe_positions)
+    assert os.path.getsize(path) > 2000
+
+
 def test_design_and_truth_figure_without_runs(tmp_path):
     from plots import swc_design_overview as ov          # the layout row needs no run
     path = ov.plot_design_and_truth([], str(tmp_path), SURVEY, st.probe_positions)

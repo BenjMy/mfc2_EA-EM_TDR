@@ -13,6 +13,8 @@ Rows
 The probes of the reference distribution are overlaid on rows 2-4.
 
 Inputs: one finished run folder per truth (the truth does not depend on n, k, dist or reg).
+Files are looked up in ``<run_dir>/output_model/`` (where the pipeline writes them) or, failing
+that, directly in ``<run_dir>/``.
     <run_dir>/synthetic_time_lapse_theta.npy   (ens, T, points, layers)
     <run_dir>/synthetic_x_coords.npy, synthetic_layer_centers.npy
     <run_dir>/synthetic_ws_truth_{a,m,sigma_w,sigma_s}.npy  (WS-hetero runs) or
@@ -40,22 +42,33 @@ DISTS = ("spread", "clustered", "random")
 _PLABEL = {"a": "a [-]", "m": "m [-]", "sigma_w": "σw [mS/m]", "sigma_s": "σs [mS/m]"}
 
 
+def _data_dir(d: str) -> str | None:
+    """Folder that holds ``synthetic_*.npy``: the run's ``output_model/`` (real runs) or the folder itself."""
+    for cand in (os.path.join(d, "output_model"), d):
+        if os.path.isfile(os.path.join(cand, "synthetic_time_lapse_theta.npy")):
+            return cand
+    return None
+
+
 def pick_run_dir(rows: Iterable[dict], key: str, value: str, ref: dict | None = None) -> str | None:
-    """Folder of a finished run whose ``key`` (smc / ws) is ``value``; prefers the reference design.
+    """Data folder of a finished run whose ``key`` (smc / ws) is ``value``; prefers the reference design.
 
     ``rows`` are dicts with ``key`` and ``run_dir`` (or ``output_dir``) and, optionally, the other
-    study factors. A run counts when its ``synthetic_time_lapse_theta.npy`` exists.
+    study factors. A run counts when ``synthetic_time_lapse_theta.npy`` exists in the run folder
+    or in its ``output_model/`` subfolder; the returned path is the folder that holds it.
     """
     ref = ref or {}
     best, best_score = None, -1
     for r in rows:
         d = r.get("run_dir") or r.get("output_dir") or ""
-        if r.get(key) != value or not isinstance(d, str) or not os.path.isfile(
-                os.path.join(d, "synthetic_time_lapse_theta.npy")):
+        if r.get(key) != value or not isinstance(d, str) or not d:
+            continue
+        dd = _data_dir(d)
+        if dd is None:
             continue
         score = sum(1 for k, v in ref.items() if k in r and r[k] == v)
         if score > best_score:
-            best, best_score = d, score
+            best, best_score = dd, score
     return best
 
 
