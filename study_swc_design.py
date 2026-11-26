@@ -13,6 +13,7 @@ Synthetic 1-D transect (10 survey points, 2 m spacing).  Factors:
   k      number of FREE WS parameters             0..4  (freed: sigma_s, m, sigma_w, a;
                                                        0 = all pinned = floor set by the inverted EC)
   reg    EMagPy inversion regularisation          noreg | beta | gamma | both
+  pin    what is KNOWN (pinned at the truth)      k (legacy: K decides) | none | sw | sws | am | all
 
 Meaning of the factors
 ----------------------
@@ -29,6 +30,11 @@ Meaning of the factors
         (heterox / heteroz are opt-in: ``--ws heterox heteroz``; presets still use homo / hetero)
 * reg  beta  : lateral/spatial smoothing of the EMagPy inversion (``param_grid.beta``)
         gamma: temporal smoothing (``gamma``; the synthetic data have 3 epochs)
+* pin  (what is known)  none: nothing pinned (= K 4)   sw: sigma_w known   sws: sigma_w, sigma_s known
+        am: a, m known   all: everything known (= K 0).  Known = pinned at the truth (per layer: the layer
+        baseline of the ws case); the free parameters start at truth x (1 + --p0-bias), 'a' at 1.0 with
+        bounds [0.2, 5].  ``none`` / ``all`` ARE the legacy K = 4 / K = 0 designs (same names, same runs);
+        the others get ``_pin<name>`` appended to the scenario name (K = number of free parameters).
 * dist spread   : positions evenly spread over the transect (x = 0 ... 18 m)
         clustered: the n first survey points (x = 0, 2, 4, ...), all at one end
         random   : x = 0 plus n-1 random survey points (seeded)
@@ -47,6 +53,7 @@ Design presets (``--preset``; levels can be restricted with --n-swc, --dist, ...
          spread, n = 5, K = 4)                                              (~16 runs)
   main   truth(4) x K(4) x n(5)  +  distribution at n = 5  +  reg at n = 5  (~160 runs)
   full   full factorial                                                      (~900 runs)
+  known  what is known x truths at the reference n / dist / reg / smc        (10 runs)
 
 A synthetic run always repeats Step 1 (the ensemble cache is real-data only), so every
 run costs a full pipeline run (~3-5 min; ``--fast`` = ``--quick`` ~ 3 min on one core).
@@ -58,6 +65,8 @@ Usage
     python study_swc_design.py --preset oat                    # default, ~1-2 h
     python study_swc_design.py --preset main --keep-going --resume
     python study_swc_design.py --analyze-only                  # re-collect + re-plot only
+    python study_swc_design.py --preset known --ws homo        # what is known: none | sw | sws | am | all  (5 runs)
+    python study_swc_design.py --pin sw sws am --ws homo       # same, restricted
     python study_swc_design.py --smc homo hetero --ws homo hetero --reg noreg --free-k 0 --n-swc 5 --dist spread
                                                                # K = 0 floor: 4 runs, nothing is fitted
     python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10
@@ -121,10 +130,16 @@ LEVELS = {
     "ws": ("homo", "hetero"),
     "k": (1, 2, 3, 4),            # preset default; K = 0 (floor) is opt-in with --free-k 0
     "reg": ("noreg", "beta", "gamma", "both"),
+    "pin": ("k",),                # legacy: K picks the free parameters (sigma_s, m, sigma_w, a in that order)
 }
+PARAMS = ("a", "m", "sigma_w", "sigma_s")
 K_CHOICES = (0, *LEVELS["k"])   # accepted by --free-k
-REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg"}
-FACTORS = ("smc", "ws", "reg", "dist", "n", "k")
+# "What is known": the pinned (known) WS parameters, the others are free.  'k' = legacy behaviour.
+PIN_KNOWN = {"none": (), "sw": ("sigma_w",), "sws": ("sigma_w", "sigma_s"), "am": ("a", "m"),
+             "all": ("a", "m", "sigma_w", "sigma_s")}
+PIN_CHOICES = ("k", *PIN_KNOWN)      # accepted by --pin
+REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg", "pin": "k"}
+FACTORS = ("smc", "ws", "reg", "dist", "n", "k", "pin")
 
 BETA_VALUE = 0.5         # lateral smoothing used when reg in (beta, both)
 GAMMA_VALUE = 5.0        # temporal smoothing used when reg in (gamma, both)
@@ -135,6 +150,7 @@ SMC_FIELDS = {"homo": {"homogeneous": True}, "hetero": {"homogeneous": False}}
 # Truth ranges shared by the two single-direction cases below (= the generator's defaults).
 _M_RANGE, _SIGMA_S_RANGE = (2.0, 4.0), (50.0, 200.0)
 N_LAYERS = 4             # horizons of the base scenario (1d_full_depth_ref)
+GENERATOR_WS_DEFAULTS = (0.5, 3.0, 500.0, 100.0)    # data_synthetic._WS_DEFAULTS (a, m, sigma_w, sigma_s), every layer
 
 
 def _layer_ramp(lo: float, hi: float, n: int = N_LAYERS) -> list[float]:
@@ -181,10 +197,23 @@ class Design:
     dist: str
     n: int
     k: int
+    pin: str = "k"      # 'k' = legacy (K decides what is free); else a PIN_KNOWN key and k = number of FREE parameters
 
     @property
     def name(self) -> str:
-        return f"{PREFIX}smc{self.smc}_ws{self.ws}_{self.reg}_{self.dist}_n{self.n}_free{self.k}"
+        base = f"{PREFIX}smc{self.smc}_ws{self.ws}_{self.reg}_{self.dist}_n{self.n}_free{self.k}"
+        return base if self.pin == "k" else f"{base}_pin{self.pin}"     # new factor: only in the name when not default
+
+
+def canonical_pin(k: int, pin: str) -> tuple[int, str]:
+    """(k, pin) of a design.  ``pin != 'k'``: K = number of free parameters; 'none' (all free) and 'all' (all
+    pinned) ARE the legacy K = 4 / K = 0 designs, so they take those names (and reuse old runs)."""
+    if pin == "k":
+        return int(k), "k"
+    if pin not in PIN_KNOWN:
+        raise ValueError(f"unknown pin {pin!r}; choose from {PIN_CHOICES}")
+    k_eff = len(PARAMS) - len(PIN_KNOWN[pin])
+    return k_eff, ("k" if pin in ("none", "all") else pin)
 
 
 def parse_name(name: str) -> Design | None:
@@ -192,8 +221,15 @@ def parse_name(name: str) -> Design | None:
     if not name.startswith(PREFIX):
         return None
     try:
-        smc, ws, reg, dist, n, k = name[len(PREFIX):].split("_")
-        return Design(smc[3:], ws[2:], reg, dist, int(n[1:]), int(k[4:]))
+        parts = name[len(PREFIX):].split("_")
+        pin = "k"
+        if len(parts) == 7:
+            if not parts[6].startswith("pin") or parts[6][3:] not in PIN_KNOWN:
+                return None
+            pin = parts[6][3:]
+        smc, ws, reg, dist, n, k = parts[:6]
+        d = Design(smc[3:], ws[2:], reg, dist, int(n[1:]), int(k[4:]), pin)
+        return d if canonical_pin(d.k, d.pin) == (d.k, d.pin) and (pin == "k" or d.k == len(PARAMS) - len(PIN_KNOWN[pin])) else None
     except (ValueError, IndexError):
         return None
 
@@ -236,6 +272,10 @@ def preset_blocks(preset: str, levels: dict) -> list[dict]:
         return [{**ref, **free, "n": list(levels["n"])},
                 {**ref, **free, "dist": list(levels["dist"])},
                 {**ref, **free, "reg": list(levels["reg"])}]
+    if preset == "known":
+        # what is known x truths, at the reference n / distribution / regularisation / smc
+        pins = [p for p in levels["pin"] if p != "k"] or [p for p in PIN_CHOICES if p != "k"]
+        return [{**ref, "ws": list(levels["ws"]), "pin": pins}]
     if preset == "smoke":
         two = lambda f: [levels[f][0], levels[f][-1]] if len(levels[f]) > 1 else list(levels[f])
         return [{**ref, "smc": two("smc"), "ws": ["hetero" if "hetero" in levels["ws"] else levels["ws"][0]],
@@ -253,9 +293,10 @@ def build_designs(preset: str, levels: dict, survey=None) -> list[Design]:
     seen: dict[tuple, Design] = {}
     order = {f: i for i, f in enumerate(LEVELS["dist"])}
     for block in preset_blocks(preset, levels):
-        for smc, ws, reg, dist, n, k in itertools.product(*(block[f] for f in FACTORS)):
+        for smc, ws, reg, dist, n, k, pin in itertools.product(*(block[f] for f in FACTORS)):
             n_eff = min(int(n), len(xs))
-            d = Design(smc, ws, reg, dist, n_eff, int(k))
+            k, pin = canonical_pin(k, pin)
+            d = Design(smc, ws, reg, dist, n_eff, k, pin)
             if k == 0:
                 key = (smc, ws, reg, 0)
                 cur = seen.get(key)
@@ -263,10 +304,10 @@ def build_designs(preset: str, levels: dict, survey=None) -> list[Design]:
                     seen[key] = d
                 continue
             sig = position_signature(probe_positions(dist, n_eff, xs))
-            key = (smc, ws, reg, n_eff, k, sig)
+            key = (smc, ws, reg, n_eff, k, pin, sig)
             # same positions under another distribution name (n = 1, n = all points): keep the first
             seen.setdefault(key, d)
-    return sorted(seen.values(), key=lambda d: (d.smc, d.ws, d.reg, d.k, d.n, order.get(d.dist, 9)))
+    return sorted(seen.values(), key=lambda d: (d.smc, d.ws, d.reg, d.k, d.pin, d.n, order.get(d.dist, 9)))
 
 
 def reg_fields(reg: str, beta: float = BETA_VALUE, gamma: float = GAMMA_VALUE) -> dict:
@@ -288,6 +329,44 @@ def biased_start(fields: dict, base_p0: list, k: int, bias: float) -> dict:
         if p != "a":
             p0[idx[p]] = round(float(p0[idx[p]]) * (1.0 + bias), 6)
     return {**fields, "lab_p0": p0}
+
+
+def ws_truth_baseline(ws: str, n_layers: int = N_LAYERS) -> list[list[float]]:
+    """Per-layer baseline truth [a, m, sigma_w, sigma_s] of a ``ws`` case (generator defaults + the layer overrides).
+
+    For the lateral cases (``ws_xy_variation``) m / sigma_s vary per point on top of this baseline, so it is
+    the value 'known from sampling' at a typical point, not the per-point truth.
+    """
+    base = dict(zip(PARAMS, GENERATOR_WS_DEFAULTS))
+    layers = (WS_FIELDS[ws].get("ws_layer_params") or {})
+    out = []
+    for l in range(n_layers):
+        p = {**base, **layers.get(str(l), {})}
+        out.append([float(p[q]) for q in PARAMS])
+    return out
+
+
+def ws_pinned(pin: str, truth_layers: list[list[float]], bias: float = P0_BIAS) -> dict:
+    """Scenario fields for a 'what is known' design: the PIN_KNOWN[pin] parameters are pinned at their
+    (per-layer) truth; the others are free and start at truth x (1 + bias).
+
+    Same rule as ``ws_freedom`` when ``a`` is free: it starts at 1.0 with bounds [0.2, 5] (the truth 0.5 sits
+    on the default lower bound and L-BFGS-B would clip every member to it).
+    """
+    known = set(PIN_KNOWN[pin])
+    fields: dict = {"ws_fixed_params": {p: p in known for p in PARAMS}}
+    p0 = []
+    for row in truth_layers:
+        r = list(row)
+        for i, q in enumerate(PARAMS):
+            if q in known:
+                continue
+            r[i] = 1.0 if q == "a" else round(r[i] * (1.0 + bias), 6)
+        p0.append(r)
+    fields["lab_p0"] = p0[0] if all(r == p0[0] for r in p0) else p0      # flat unless the layers differ
+    if "a" not in known:
+        fields["ws_bounds"] = {"a": [0.2, 5.0]}
+    return fields
 
 
 def probe_depths(parent: dict) -> list[float]:
@@ -325,14 +404,19 @@ def build_study_config(parent_raw: dict, designs: list[Design], *, runs_dir: str
         smc_fields = dict(SMC_FIELDS[d.smc])
         if d.smc == "hetero" and smc_full_range:
             smc_fields["full_range_gradient"] = True
-        fields = {**smc_fields, **copy.deepcopy(WS_FIELDS[d.ws]), **reg_fields(d.reg, beta, gamma),
-                  **ws_freedom(d.k, base_p0)}
-        fields = biased_start(fields, base_p0, d.k, p0_bias)
+        fields = {**smc_fields, **copy.deepcopy(WS_FIELDS[d.ws]), **reg_fields(d.reg, beta, gamma)}
+        if d.pin == "k":                                             # legacy: K frees sigma_s, m, sigma_w, a in turn
+            fields.update(ws_freedom(d.k, base_p0))
+            fields = biased_start(fields, base_p0, d.k, p0_bias)
+        else:                                                        # what is known is pinned at the (per-layer) truth
+            n_layers = len(parent.get("depths0") or []) + 1
+            fields.update(ws_pinned(d.pin, ws_truth_baseline(d.ws, n_layers), p0_bias))
         cfg[d.name] = {
             "extends": PARENT_NAME,
             "description": (f"SWC design study: smc={d.smc}, ws={d.ws}, reg={d.reg}, probes={d.dist} "
                             f"n={d.n}, K={d.k} free WS parameter(s) "
-                            f"({', '.join(sweeps.FREE_ORDER[:d.k])})."),
+                            + (f"({', '.join(sweeps.FREE_ORDER[:d.k])})." if d.pin == "k" else
+                               f"(known = pinned: {', '.join(PIN_KNOWN[d.pin])}).")),
             "output_dir": os.path.join(runs_dir, d.name),
             "cache_tag": d.name,
             "num_swc_positions": d.n,
@@ -450,6 +534,9 @@ def load_summary(path: str):
     for c in ("n", "k", "n_probes"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df["rmse_truth"] = pd.to_numeric(df["rmse_truth"], errors="coerce")
+    if "pin" not in df:                                   # summaries written before the 'pin' factor
+        df["pin"] = "k"
+    df["pin"] = df["pin"].fillna("k")
     return df
 
 
@@ -823,8 +910,9 @@ def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_r
     rows = [summary_row(d, latest.get(d.name), out_dir, survey, realization) for d in designs]
     write_summary(rows, os.path.join(out_dir, "study_summary.csv"))
     df = load_summary(os.path.join(out_dir, "study_summary.csv"))
-    write_report(df, os.path.join(out_dir, "study_report.md"), reg_ref)
-    for p in make_plots(df, out_dir, reg_ref, realization):
+    legacy = df[df["pin"] == "k"]       # K-based plots / tables; the 'known' designs are in study_summary.csv
+    write_report(legacy, os.path.join(out_dir, "study_report.md"), reg_ref)
+    for p in make_plots(legacy, out_dir, reg_ref, realization):
         print(f"[study] figure: {p}")
     try:                                    # parameter recovery (start / truth / fitted) from the run reports
         import ws_recovery
@@ -849,9 +937,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--preset", choices=["smoke", "oat", "main", "full"], default=None,
+    ap.add_argument("--preset", choices=["smoke", "oat", "main", "full", "known"], default=None,
                     help="design preset (default: oat; full when only --free-k 0 is requested, so that "
-                         "every requested truth gets its floor run)")
+                         "every requested truth gets its floor run; known when --pin is given)")
     ap.add_argument("--n-swc", nargs="+", type=int, help=f"numbers of SWC positions (default {LEVELS['n']})")
     ap.add_argument("--dist", nargs="+", choices=LEVELS["dist"], help="probe distributions")
     ap.add_argument("--smc", nargs="+", choices=LEVELS["smc"], help="truth soil moisture")
@@ -861,6 +949,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--free-k", nargs="+", type=int, choices=list(K_CHOICES),
                     help="numbers of free WS parameters (0 = all pinned: floor set by the inverted EC)")
     ap.add_argument("--reg", nargs="+", choices=LEVELS["reg"], help="regularisation: noreg beta gamma both")
+    ap.add_argument("--pin", nargs="+", choices=PIN_CHOICES,
+                    help="what is KNOWN (pinned at the truth), the others are free: none | sw (sigma_w) | sws (sigma_w, "
+                         "sigma_s) | am (a, m) | all; 'k' (default) = legacy, K decides. none / all are the K = 4 / K = 0 runs")
     ap.add_argument("--beta", type=float, default=BETA_VALUE, help="beta used by reg beta/both")
     ap.add_argument("--gamma", type=float, default=GAMMA_VALUE, help="gamma used by reg gamma/both")
     ap.add_argument("--p0-bias", type=float, default=P0_BIAS,
@@ -887,11 +978,11 @@ def main(argv: list[str] | None = None) -> int:
     RANDOM_SEED = args.seed
     levels = {f: tuple(v) for f, v in LEVELS.items()}
     for f, v in (("n", args.n_swc), ("dist", args.dist), ("smc", args.smc), ("ws", args.ws),
-                 ("k", args.free_k), ("reg", args.reg)):
+                 ("k", args.free_k), ("reg", args.reg), ("pin", args.pin)):
         if v:
             levels[f] = tuple(v)
     if args.preset is None:
-        args.preset = "full" if levels["k"] == (0,) else "oat"
+        args.preset = "known" if args.pin else "full" if levels["k"] == (0,) else "oat"
     survey = survey_x(args.survey_n, args.survey_dx)
     designs = build_designs(args.preset, levels, survey)
     if not designs:

@@ -418,3 +418,104 @@ def test_new_ws_cases_in_plot_order_and_labels():
     assert st._TRUTH_ORDER == pairs
     assert [t for t in st._TRUTH_ORDER if t[1] in ("homo", "hetero")][:2] == [("homo", "homo"), ("homo", "hetero")]
     assert "lateral" in st._truth_label("homo", "heterox") and "depth" in st._truth_label("homo", "heteroz")
+
+
+# ------------------------------------------------ pin: what is known (Patch 3)
+def test_pin_default_keeps_old_names():
+    d = st.Design("hetero", "homo", "noreg", "spread", 5, 2)
+    assert d.pin == "k" and d.name == "swcstudy_smchetero_wshomo_noreg_spread_n5_free2"
+    assert "pin" not in d.name
+    assert st.Design("hetero", "homo", "noreg", "spread", 5, 3, "sw").name.endswith("_free3_pinsw")
+
+
+def test_pin_name_roundtrip_and_rejects_garbage():
+    for pin in ("sw", "sws", "am"):
+        k, p = st.canonical_pin(0, pin)
+        d = st.Design("homo", "homo", "noreg", "spread", 5, k, p)
+        assert st.parse_name(d.name) == d
+    assert st.parse_name("swcstudy_smchomo_wshomo_noreg_spread_n5_free2_pinbogus") is None
+    assert st.parse_name("swcstudy_smchomo_wshomo_noreg_spread_n5_free1_pinsw") is None      # sw => K = 3, not 1
+
+
+def test_none_and_all_are_the_legacy_k4_k0():
+    assert st.canonical_pin(2, "none") == (4, "k") and st.canonical_pin(3, "all") == (0, "k")
+    assert st.canonical_pin(2, "sws") == (2, "sws") and st.canonical_pin(0, "sw") == (3, "sw")
+    assert st.canonical_pin(3, "k") == (3, "k")
+    with pytest.raises(ValueError):
+        st.canonical_pin(1, "nope")
+
+
+def test_known_preset():
+    ds = st.build_designs("known", LEVELS)
+    assert len(ds) == 10                                       # 5 pins x 2 truths (ws homo / hetero)
+    assert {(d.smc, d.n, d.dist, d.reg) for d in ds} == {("hetero", 5, "spread", "noreg")}
+    one = [d for d in ds if d.ws == "homo"]
+    assert sorted((d.k, d.pin) for d in one) == [(0, "k"), (2, "am"), (2, "sws"), (3, "sw"), (4, "k")]
+    assert {d.name for d in one} >= {"swcstudy_smchetero_wshomo_noreg_spread_n5_free4",    # reuses the legacy runs
+                                     "swcstudy_smchetero_wshomo_noreg_spread_n5_free0"}
+
+
+def test_presets_unchanged_by_pin():
+    assert all(d.pin == "k" for p in ("smoke", "oat", "main", "full") for d in st.build_designs(p, LEVELS))
+
+
+def test_ws_pinned_homo():
+    truth = st.ws_truth_baseline("homo")
+    assert truth == [[0.5, 3.0, 500.0, 100.0]] * st.N_LAYERS
+    f = st.ws_pinned("sws", truth, bias=0.2)                   # sigma_w, sigma_s known; a, m free
+    assert f["ws_fixed_params"] == {"a": False, "m": False, "sigma_w": True, "sigma_s": True}
+    assert f["lab_p0"] == pytest.approx([1.0, 3.6, 500.0, 100.0]) and f["ws_bounds"] == {"a": [0.2, 5.0]}
+    f = st.ws_pinned("am", truth, bias=0.2)                    # a, m known; sigma_w, sigma_s free
+    assert f["ws_fixed_params"] == {"a": True, "m": True, "sigma_w": False, "sigma_s": False}
+    assert f["lab_p0"] == pytest.approx([0.5, 3.0, 600.0, 120.0]) and "ws_bounds" not in f
+    f = st.ws_pinned("sw", truth, bias=0.0)
+    assert f["lab_p0"] == pytest.approx([1.0, 3.0, 500.0, 100.0])      # unbiased start, 'a' still at 1.0
+
+
+def test_ws_pinned_per_layer_baseline_for_layered_truths():
+    truth = st.ws_truth_baseline("hetero")                     # legacy: a = 0.35, sigma_w = 700 in layers 2-3
+    assert truth[0][0] == 0.5 and truth[2] == [0.35, 3.0, 700.0, 100.0]
+    f = st.ws_pinned("sw", truth, bias=0.2)
+    assert [row[2] for row in f["lab_p0"]] == [500.0, 500.0, 700.0, 700.0]       # known sigma_w, per layer
+    assert all(row[0] == 1.0 for row in f["lab_p0"])                             # a free -> starts at 1.0
+    z = st.ws_truth_baseline("heteroz")                        # m, sigma_s ramp with depth
+    assert [r[1] for r in z] == st._layer_ramp(*st._M_RANGE)
+    f = st.ws_pinned("am", z, bias=0.0)
+    assert [r[1] for r in f["lab_p0"]] == st._layer_ramp(*st._M_RANGE)           # known m = the layer truth
+
+
+@pytest.mark.parametrize("ws", ["homo", "hetero", "heterox", "heteroz"])
+@pytest.mark.parametrize("pin", ["sw", "sws", "am"])
+def test_pin_scenarios_load(parent, tmp_path, ws, pin):
+    k, p = st.canonical_pin(0, pin)
+    d = st.Design("hetero", ws, "noreg", "spread", 5, k, p)
+    cfg = st.build_study_config(parent, [d], p0_bias=0.2)
+    path = tmp_path / "pin.json"
+    path.write_text(json.dumps(cfg))
+    sc = sl.load_scenario(d.name, config_path=str(path))
+    known = set(st.PIN_KNOWN[pin])
+    assert {q for q, fixed in sc.ws_fixed_params.items() if fixed} == known
+    assert len([q for q, fixed in sc.ws_fixed_params.items() if not fixed]) == k
+    assert "known = pinned" in cfg[d.name]["description"]
+
+
+def test_legacy_fields_unchanged_by_pin_code(parent):
+    d = st.Design("hetero", "homo", "noreg", "spread", 5, 3)
+    f = st.build_study_config(parent, [d], p0_bias=0.2)[d.name]
+    assert f["lab_p0"] == pytest.approx([0.5, 3.6, 600.0, 120.0])           # same as test_start_bias
+
+
+def test_pin_cli_defaults_to_known_preset(tmp_path):
+    out = tmp_path / "o"
+    argv = ["--ws", "homo", "--pin", "sw", "sws", "am", "--dry-run", "--out-dir", str(out), "--runs-dir", str(tmp_path / "r")]
+    assert st.main(argv) == 0
+    cfg = json.loads((out / "study_scenarios.json").read_text())
+    names = sorted(k for k in cfg if st.parse_name(k))
+    assert len(names) == 3 and all("_pin" in n for n in names)
+
+
+def test_load_summary_without_pin_column(tmp_path):
+    import pandas as pd
+    p = tmp_path / "old.csv"
+    pd.DataFrame({"scenario": ["x"], "n": [5], "k": [2], "n_probes": [5], "rmse_truth": [0.1]}).to_csv(p, index=False)
+    assert st.load_summary(str(p))["pin"].tolist() == ["k"]
