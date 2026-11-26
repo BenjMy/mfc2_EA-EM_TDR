@@ -35,6 +35,12 @@ Meaning of the factors
         baseline of the ws case); the free parameters start at truth x (1 + --p0-bias), 'a' at 1.0 with
         bounds [0.2, 5].  ``none`` / ``all`` ARE the legacy K = 4 / K = 0 designs (same names, same runs);
         the others get ``_pin<name>`` appended to the scenario name (K = number of free parameters).
+* err  (error on the known values, ``--err``, in percent)  every pinned value = truth x (1 + err/100), e.g.
+        a 10 % too high sigma_w from sampling.  0 (default) = pinned at the truth.  Only the pins sw / sws / am
+        carry it (none pins nothing; all = K 0 stays exact).  The free parameters still start at truth x
+        (1 + --p0-bias).  A pinned value is not clipped by the WS bounds (its bound is (value, value)), so
+        e.g. a known a = 0.40 below the default lower bound 0.5 is used as is; the pipeline only warns.
+        ``_errp10`` / ``_errm20`` is appended to the scenario name only when err != 0.
 * dist spread   : positions evenly spread over the transect (x = 0 ... 18 m)
         clustered: the n first survey points (x = 0, 2, 4, ...), all at one end
         random   : x = 0 plus n-1 random survey points (seeded)
@@ -53,7 +59,8 @@ Design presets (``--preset``; levels can be restricted with --n-swc, --dist, ...
          spread, n = 5, K = 4)                                              (~16 runs)
   main   truth(4) x K(4) x n(5)  +  distribution at n = 5  +  reg at n = 5  (~160 runs)
   full   full factorial                                                      (~900 runs)
-  known  what is known x truths at the reference n / dist / reg / smc        (10 runs)
+  known  what is known x truths at the reference n / dist / reg / smc        (10 runs;
+         34 with --err -20 -10 10 20)
 
 A synthetic run always repeats Step 1 (the ensemble cache is real-data only), so every
 run costs a full pipeline run (~3-5 min; ``--fast`` = ``--quick`` ~ 3 min on one core).
@@ -67,6 +74,8 @@ Usage
     python study_swc_design.py --analyze-only                  # re-collect + re-plot only
     python study_swc_design.py --preset known --ws homo        # what is known: none | sw | sws | am | all  (5 runs)
     python study_swc_design.py --pin sw sws am --ws homo       # same, restricted
+    python study_swc_design.py --preset known --err -20 -10 10 20 --resume --keep-going
+                                                               # + error on the known values: 34 runs (17 with --ws homo)
     python study_swc_design.py --smc homo hetero --ws homo hetero --reg noreg --free-k 0 --n-swc 5 --dist spread
                                                                # K = 0 floor: 4 runs, nothing is fitted
     python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10
@@ -84,6 +93,7 @@ Outputs (``--out-dir``, default comparison_output/swc_design_study/)
     study_report.md        tables
     residuals/*.npz        theta_calc - theta_true per run (for the distribution plots)
     fig_ws_recovery.png    WS start / fitted / truth per parameter, scenario and horizon (pinned = hollow)
+    fig_known_error.png    RMSE and fitted-vs-truth error of the free parameters against err (runs with --err)
     fig_*.png              comparison plots (fig_heatmap_n_vs_k_<dist>_<reg>.png: n x K heat map of the
                            other distributions / regularisations, same colour scale)
 Run folders: mfc2_outputs/swc_design_study/<scenario>/<NNNN>_<scenario>/
@@ -131,6 +141,7 @@ LEVELS = {
     "k": (1, 2, 3, 4),            # preset default; K = 0 (floor) is opt-in with --free-k 0
     "reg": ("noreg", "beta", "gamma", "both"),
     "pin": ("k",),                # legacy: K picks the free parameters (sigma_s, m, sigma_w, a in that order)
+    "err": (0,),                  # error of the pinned values [%]; non-zero levels are opt-in (--err)
 }
 PARAMS = ("a", "m", "sigma_w", "sigma_s")
 K_CHOICES = (0, *LEVELS["k"])   # accepted by --free-k
@@ -138,8 +149,9 @@ K_CHOICES = (0, *LEVELS["k"])   # accepted by --free-k
 PIN_KNOWN = {"none": (), "sw": ("sigma_w",), "sws": ("sigma_w", "sigma_s"), "am": ("a", "m"),
              "all": ("a", "m", "sigma_w", "sigma_s")}
 PIN_CHOICES = ("k", *PIN_KNOWN)      # accepted by --pin
-REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg", "pin": "k"}
-FACTORS = ("smc", "ws", "reg", "dist", "n", "k", "pin")
+REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg", "pin": "k", "err": 0}
+FACTORS = ("smc", "ws", "reg", "dist", "n", "k", "pin", "err")
+ERR_PINS = tuple(p for p, known in PIN_KNOWN.items() if 0 < len(known) < len(PARAMS))   # pins that can carry err
 
 BETA_VALUE = 0.5         # lateral smoothing used when reg in (beta, both)
 GAMMA_VALUE = 5.0        # temporal smoothing used when reg in (gamma, both)
@@ -198,11 +210,26 @@ class Design:
     n: int
     k: int
     pin: str = "k"      # 'k' = legacy (K decides what is free); else a PIN_KNOWN key and k = number of FREE parameters
+    err: int = 0        # relative error of the pinned values [%] (only for ERR_PINS)
 
     @property
     def name(self) -> str:
         base = f"{PREFIX}smc{self.smc}_ws{self.ws}_{self.reg}_{self.dist}_n{self.n}_free{self.k}"
-        return base if self.pin == "k" else f"{base}_pin{self.pin}"     # new factor: only in the name when not default
+        if self.pin != "k":                                             # new factors: only in the name when not default
+            base += f"_pin{self.pin}"
+        return base + (f"_err{err_tag(self.err)}" if self.err else "")
+
+
+def err_tag(err: int) -> str:
+    """10 -> 'p10', -20 -> 'm20' (no sign characters in scenario / folder names)."""
+    return f"{'p' if err > 0 else 'm'}{abs(int(err))}"
+
+
+def parse_err_tag(tag: str) -> int | None:
+    """Inverse of ``err_tag`` for a non-zero error (None when ``tag`` is not one)."""
+    if len(tag) < 2 or tag[0] not in "pm" or not tag[1:].isdigit() or not 0 < int(tag[1:]) < 100:
+        return None
+    return int(tag[1:]) if tag[0] == "p" else -int(tag[1:])
 
 
 def canonical_pin(k: int, pin: str) -> tuple[int, str]:
@@ -222,14 +249,21 @@ def parse_name(name: str) -> Design | None:
         return None
     try:
         parts = name[len(PREFIX):].split("_")
-        pin = "k"
-        if len(parts) == 7:
-            if not parts[6].startswith("pin") or parts[6][3:] not in PIN_KNOWN:
-                return None
-            pin = parts[6][3:]
+        pin, err = "k", 0
         smc, ws, reg, dist, n, k = parts[:6]
-        d = Design(smc[3:], ws[2:], reg, dist, int(n[1:]), int(k[4:]), pin)
-        return d if canonical_pin(d.k, d.pin) == (d.k, d.pin) and (pin == "k" or d.k == len(PARAMS) - len(PIN_KNOWN[pin])) else None
+        rest = parts[6:]
+        if rest and rest[0].startswith("pin"):
+            pin = rest.pop(0)[3:]
+            if pin not in PIN_KNOWN:
+                return None
+        if rest and rest[0].startswith("err"):
+            err = parse_err_tag(rest.pop(0)[3:])
+            if err is None or pin not in ERR_PINS:
+                return None
+        if rest:
+            return None
+        d = Design(smc[3:], ws[2:], reg, dist, int(n[1:]), int(k[4:]), pin, err)
+        return d if pin == "k" or canonical_pin(d.k, pin) == (d.k, pin) else None
     except (ValueError, IndexError):
         return None
 
@@ -275,7 +309,7 @@ def preset_blocks(preset: str, levels: dict) -> list[dict]:
     if preset == "known":
         # what is known x truths, at the reference n / distribution / regularisation / smc
         pins = [p for p in levels["pin"] if p != "k"] or [p for p in PIN_CHOICES if p != "k"]
-        return [{**ref, "ws": list(levels["ws"]), "pin": pins}]
+        return [{**ref, "ws": list(levels["ws"]), "pin": pins, "err": list(levels["err"])}]
     if preset == "smoke":
         two = lambda f: [levels[f][0], levels[f][-1]] if len(levels[f]) > 1 else list(levels[f])
         return [{**ref, "smc": two("smc"), "ws": ["hetero" if "hetero" in levels["ws"] else levels["ws"][0]],
@@ -293,10 +327,11 @@ def build_designs(preset: str, levels: dict, survey=None) -> list[Design]:
     seen: dict[tuple, Design] = {}
     order = {f: i for i, f in enumerate(LEVELS["dist"])}
     for block in preset_blocks(preset, levels):
-        for smc, ws, reg, dist, n, k, pin in itertools.product(*(block[f] for f in FACTORS)):
+        for smc, ws, reg, dist, n, k, pin, err in itertools.product(*(block[f] for f in FACTORS)):
             n_eff = min(int(n), len(xs))
             k, pin = canonical_pin(k, pin)
-            d = Design(smc, ws, reg, dist, n_eff, k, pin)
+            err = int(err) if pin in ERR_PINS else 0        # nothing (known) to perturb otherwise
+            d = Design(smc, ws, reg, dist, n_eff, k, pin, err)
             if k == 0:
                 key = (smc, ws, reg, 0)
                 cur = seen.get(key)
@@ -304,10 +339,10 @@ def build_designs(preset: str, levels: dict, survey=None) -> list[Design]:
                     seen[key] = d
                 continue
             sig = position_signature(probe_positions(dist, n_eff, xs))
-            key = (smc, ws, reg, n_eff, k, pin, sig)
+            key = (smc, ws, reg, n_eff, k, pin, err, sig)
             # same positions under another distribution name (n = 1, n = all points): keep the first
             seen.setdefault(key, d)
-    return sorted(seen.values(), key=lambda d: (d.smc, d.ws, d.reg, d.k, d.pin, d.n, order.get(d.dist, 9)))
+    return sorted(seen.values(), key=lambda d: (d.smc, d.ws, d.reg, d.k, d.pin, d.err, d.n, order.get(d.dist, 9)))
 
 
 def reg_fields(reg: str, beta: float = BETA_VALUE, gamma: float = GAMMA_VALUE) -> dict:
@@ -346,12 +381,15 @@ def ws_truth_baseline(ws: str, n_layers: int = N_LAYERS) -> list[list[float]]:
     return out
 
 
-def ws_pinned(pin: str, truth_layers: list[list[float]], bias: float = P0_BIAS) -> dict:
+def ws_pinned(pin: str, truth_layers: list[list[float]], bias: float = P0_BIAS, err: int = 0) -> dict:
     """Scenario fields for a 'what is known' design: the PIN_KNOWN[pin] parameters are pinned at their
-    (per-layer) truth; the others are free and start at truth x (1 + bias).
+    (per-layer) truth x (1 + err/100); the others are free and start at truth x (1 + bias).
 
     Same rule as ``ws_freedom`` when ``a`` is free: it starts at 1.0 with bounds [0.2, 5] (the truth 0.5 sits
     on the default lower bound and L-BFGS-B would clip every member to it).
+
+    A pinned value needs no bounds entry, even outside the defaults: the calibration gives it the degenerate
+    bound (value, value).
     """
     known = set(PIN_KNOWN[pin])
     fields: dict = {"ws_fixed_params": {p: p in known for p in PARAMS}}
@@ -360,6 +398,8 @@ def ws_pinned(pin: str, truth_layers: list[list[float]], bias: float = P0_BIAS) 
         r = list(row)
         for i, q in enumerate(PARAMS):
             if q in known:
+                if err:
+                    r[i] = round(r[i] * (1.0 + err / 100.0), 6)
                 continue
             r[i] = 1.0 if q == "a" else round(r[i] * (1.0 + bias), 6)
         p0.append(r)
@@ -410,13 +450,14 @@ def build_study_config(parent_raw: dict, designs: list[Design], *, runs_dir: str
             fields = biased_start(fields, base_p0, d.k, p0_bias)
         else:                                                        # what is known is pinned at the (per-layer) truth
             n_layers = len(parent.get("depths0") or []) + 1
-            fields.update(ws_pinned(d.pin, ws_truth_baseline(d.ws, n_layers), p0_bias))
+            fields.update(ws_pinned(d.pin, ws_truth_baseline(d.ws, n_layers), p0_bias, d.err))
         cfg[d.name] = {
             "extends": PARENT_NAME,
             "description": (f"SWC design study: smc={d.smc}, ws={d.ws}, reg={d.reg}, probes={d.dist} "
                             f"n={d.n}, K={d.k} free WS parameter(s) "
                             + (f"({', '.join(sweeps.FREE_ORDER[:d.k])})." if d.pin == "k" else
-                               f"(known = pinned: {', '.join(PIN_KNOWN[d.pin])}).")),
+                               f"(known = pinned: {', '.join(PIN_KNOWN[d.pin])}"
+                               + (f", with {d.err:+d} % error" if d.err else "") + ").")),
             "output_dir": os.path.join(runs_dir, d.name),
             "cache_tag": d.name,
             "num_swc_positions": d.n,
@@ -537,6 +578,9 @@ def load_summary(path: str):
     if "pin" not in df:                                   # summaries written before the 'pin' factor
         df["pin"] = "k"
     df["pin"] = df["pin"].fillna("k")
+    if "err" not in df:                                   # summaries written before the 'err' factor
+        df["err"] = 0
+    df["err"] = pd.to_numeric(df["err"], errors="coerce").fillna(0).astype(int)
     return df
 
 
@@ -922,6 +966,10 @@ def analyze(designs: list[Design], out_dir: str, survey, realization: int, reg_r
         fig_path = plot_ws_recovery(rec, out_dir)
         if fig_path:
             print(f"[study] figure: {fig_path}")
+        from plots.known_error_fig import plot_known_error
+        fig_path = plot_known_error(df, rec, out_dir, ERR_PINS, PIN_KNOWN, PARAMS, REFERENCE)
+        if fig_path:
+            print(f"[study] figure: {fig_path}")
     except Exception as e:                  # never let the extra table break the study analysis
         print(f"[study] WS recovery table skipped: {type(e).__name__}: {e}")
     return rows
@@ -952,6 +1000,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pin", nargs="+", choices=PIN_CHOICES,
                     help="what is KNOWN (pinned at the truth), the others are free: none | sw (sigma_w) | sws (sigma_w, "
                          "sigma_s) | am (a, m) | all; 'k' (default) = legacy, K decides. none / all are the K = 4 / K = 0 runs")
+    ap.add_argument("--err", nargs="+", type=int,
+                    help="error of the KNOWN (pinned) values in percent, e.g. -20 -10 10 20; 0 (the reference) is "
+                         "always included. Preset 'known' only, pins sw / sws / am")
     ap.add_argument("--beta", type=float, default=BETA_VALUE, help="beta used by reg beta/both")
     ap.add_argument("--gamma", type=float, default=GAMMA_VALUE, help="gamma used by reg gamma/both")
     ap.add_argument("--p0-bias", type=float, default=P0_BIAS,
@@ -982,7 +1033,17 @@ def main(argv: list[str] | None = None) -> int:
         if v:
             levels[f] = tuple(v)
     if args.preset is None:
-        args.preset = "known" if args.pin else "full" if levels["k"] == (0,) else "oat"
+        args.preset = "known" if args.pin or args.err else "full" if levels["k"] == (0,) else "oat"
+    if args.err:
+        bad = [e for e in args.err if abs(e) >= 100]
+        if bad:
+            ap.error(f"--err is in percent, between -99 and 99 (got {bad})")
+        if any(args.err):
+            if args.preset != "known":
+                ap.error(f"--err needs --preset known (got --preset {args.preset})")
+            if args.pin and not set(args.pin) & set(ERR_PINS):
+                ap.error(f"--err has no effect with --pin {' '.join(args.pin)}; use one of {' '.join(ERR_PINS)}")
+        levels["err"] = tuple(dict.fromkeys([0, *args.err]))
     survey = survey_x(args.survey_n, args.survey_dx)
     designs = build_designs(args.preset, levels, survey)
     if not designs:

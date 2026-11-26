@@ -519,3 +519,142 @@ def test_load_summary_without_pin_column(tmp_path):
     p = tmp_path / "old.csv"
     pd.DataFrame({"scenario": ["x"], "n": [5], "k": [2], "n_probes": [5], "rmse_truth": [0.1]}).to_csv(p, index=False)
     assert st.load_summary(str(p))["pin"].tolist() == ["k"]
+
+
+# ------------------------------------- err: error on the known values (Patch 4)
+def test_err_default_keeps_old_names():
+    assert st.LEVELS["err"] == (0,)
+    assert st.Design("homo", "homo", "noreg", "spread", 5, 3, "sw").name.endswith("_free3_pinsw")
+    assert st.Design("homo", "homo", "noreg", "spread", 5, 3, "sw", 10).name.endswith("_free3_pinsw_errp10")
+    assert st.Design("homo", "homo", "noreg", "spread", 5, 2, "am", -20).name.endswith("_free2_pinam_errm20")
+    assert all(d.err == 0 for p in ("smoke", "oat", "main", "full", "known") for d in st.build_designs(p, LEVELS))
+
+
+@pytest.mark.parametrize("pin", ["sw", "sws", "am"])
+@pytest.mark.parametrize("err", [-20, -10, 0, 10, 20])
+def test_err_name_roundtrip(pin, err):
+    k, p = st.canonical_pin(0, pin)
+    d = st.Design("homo", "homo", "noreg", "spread", 5, k, p, err)
+    assert st.parse_name(d.name) == d
+
+
+@pytest.mark.parametrize("suffix", [
+    "free3_pinsw_errx10", "free3_pinsw_errp0", "free3_pinsw_errp", "free3_pinsw_errp100",
+    "free2_errp10",                        # legacy K design: err needs a pin
+    "free4_pinnone_errp10", "free0_pinall_errp10", "free3_pinsw_errp10_extra", "free3_errp10_pinsw"])
+def test_err_name_rejects_garbage(suffix):
+    assert st.parse_name(f"swcstudy_smchomo_wshomo_noreg_spread_n5_{suffix}") is None
+
+
+def test_known_preset_with_err_has_34_runs():
+    ds = st.build_designs("known", {**LEVELS, "err": (0, -20, -10, 10, 20)})
+    assert len(ds) == 34 == len({d.name for d in ds})          # plan, section 3: 10 + 3 pins x 4 errors x 2 truths
+    assert all(d.pin in st.ERR_PINS for d in ds if d.err)
+    assert {d.name for d in st.build_designs("known", LEVELS)} <= {d.name for d in ds}      # --resume reuses them
+
+
+def test_ws_pinned_err_moves_only_the_known_values():
+    truth = st.ws_truth_baseline("homo")
+    f = st.ws_pinned("sws", truth, bias=0.2, err=10)
+    assert f["lab_p0"] == pytest.approx([1.0, 3.6, 550.0, 110.0])        # free a, m start as without error
+    f = st.ws_pinned("am", truth, bias=0.2, err=-20)
+    assert f["lab_p0"] == pytest.approx([0.4, 2.4, 600.0, 120.0])        # a below the default lower bound 0.5
+    layered = st.ws_pinned("sw", st.ws_truth_baseline("hetero"), bias=0.2, err=-10)
+    assert [r[2] for r in layered["lab_p0"]] == pytest.approx([450.0, 450.0, 630.0, 630.0])
+    assert st.ws_pinned("sws", truth, 0.2, 0) == st.ws_pinned("sws", truth, 0.2)
+
+
+def test_err_scenario_loads_and_pinned_value_is_not_clipped(parent, tmp_path):
+    """The study relies on the calibration keeping a pinned value that is outside the WS bounds."""
+    import em_methodology as em
+    d = st.Design("hetero", "homo", "noreg", "spread", 5, 2, "am", -20)
+    cfg = st.build_study_config(parent, [d])
+    path = tmp_path / "err.json"
+    path.write_text(json.dumps(cfg))
+    sc = sl.load_scenario(d.name, config_path=str(path))
+    assert sc.lab_p0 == pytest.approx([0.4, 2.4, 600.0, 120.0])
+    assert "-20 % error" in cfg[d.name]["description"]
+    n_layers = len(sc.depths0) + 1
+    theta = np.linspace(0.1, 0.35, 8)
+    models = np.tile((theta ** 3.0 / 0.5 * 600.0)[None, :, None], (1, 1, n_layers))   # (ensemble, points, layers)
+    fits = em.calibrate_petrophysical_relationship(
+        models, sample_positions=list(range(8)), sample_times=[0] * 8, theta_obs=theta, depths0=sc.depths0,
+        lab_p0=np.asarray(sc.lab_p0), probe_layer_indices=[0] * 8, fixed_params=sc.ws_fixed_params,
+        ws_bounds=sc.ws_bounds)
+    hz = fits[0].horizon_fits[0]
+    assert hz.is_calibrated and (hz.a, hz.m) == pytest.approx((0.4, 2.4))
+
+
+def test_err_cli(tmp_path):
+    out = tmp_path / "o"
+    base = ["--dry-run", "--out-dir", str(out), "--runs-dir", str(tmp_path / "r")]
+    assert st.main(["--ws", "homo", "--err", "-20", "-10", "10", "20", *base]) == 0       # -> preset known
+    cfg = json.loads((out / "study_scenarios.json").read_text())
+    ds = [st.parse_name(k) for k in cfg if st.parse_name(k)]
+    assert len(ds) == 17 and sorted({d.err for d in ds}) == [-20, -10, 0, 10, 20]
+    assert st.main(["--ws", "homo", "--pin", "sw", "--err", "10", *base]) == 0
+    names = [k for k in json.loads((out / "study_scenarios.json").read_text()) if st.parse_name(k)]
+    assert sorted(st.parse_name(n).err for n in names) == [0, 10]                          # 0 is always added
+
+
+@pytest.mark.parametrize("args", [["--preset", "oat", "--err", "10"], ["--pin", "all", "none", "--err", "10"],
+                                  ["--err", "100"], ["--err", "-120"]])
+def test_err_cli_guard(tmp_path, args, capsys):
+    with pytest.raises(SystemExit) as e:
+        st.main([*args, "--dry-run", "--out-dir", str(tmp_path / "o"), "--runs-dir", str(tmp_path / "r")])
+    assert e.value.code == 2 and "--err" in capsys.readouterr().err
+
+
+def test_load_summary_without_err_column(tmp_path):
+    import pandas as pd
+    p = tmp_path / "old.csv"
+    pd.DataFrame({"scenario": ["x"], "n": [5], "k": [2], "n_probes": [5], "rmse_truth": [0.1]}).to_csv(p, index=False)
+    assert st.load_summary(str(p))["err"].tolist() == [0]
+
+
+def _fake_known_error(ws=("homo",), errs=(-20, -10, 0, 10, 20)):
+    """Made-up summary + recovery rows (layout tests only)."""
+    import pandas as pd
+    ds = st.build_designs("known", {**LEVELS, "ws": ws, "err": errs})
+    rows, rec = [], []
+    for d in ds:
+        rows.append({"scenario": d.name, **{f: getattr(d, f) for f in st.FACTORS},
+                     "rmse_truth": 0.02 + 0.001 * abs(d.err)})
+        for hz in (0, 1):
+            r = {"scenario": d.name, "horizon": hz, "calibrated": True, "truth_baseline_only": d.ws != "homo"}
+            for p, t in zip(st.PARAMS, st.GENERATOR_WS_DEFAULTS):
+                r[f"{p}_truth"], r[f"{p}_fit"] = t, t * (1.0 - 0.004 * d.err)
+            rec.append(r)
+    return pd.DataFrame(rows), rec
+
+
+def _known_error_figure(df, rec):
+    from plots.known_error_fig import build_figure
+    return build_figure(df, rec, st.ERR_PINS, st.PIN_KNOWN, st.PARAMS, st.REFERENCE)
+
+
+def test_known_error_figure():
+    import matplotlib.pyplot as plt
+    fig = _known_error_figure(*_fake_known_error())
+    assert len(fig.axes) == 2                                  # one truth column: RMSE + free parameters
+    top, bot = fig.axes
+    assert len(top.lines) == 3 and list(top.lines[0].get_xdata()) == [-20, -10, 0, 10, 20]
+    assert len(bot.lines) == 3 + 2 + 2 + 1                     # sw: a, m, sigma_s; sws: a, m; am: sw, ss; + zero line
+    plt.close(fig)
+    fig = _known_error_figure(*_fake_known_error(ws=("homo", "hetero")))
+    assert len(fig.axes) == 4
+    plt.close(fig)
+
+
+def test_known_error_figure_needs_a_perturbed_run(tmp_path):
+    assert _known_error_figure(*_fake_known_error(errs=(0,))) is None
+    df, rec = _fake_known_error()
+    df["rmse_truth"] = np.nan
+    assert _known_error_figure(df, rec) is None
+
+
+def test_free_param_errors_median_over_calibrated_horizons():
+    from plots.known_error_fig import free_param_errors
+    rec = [{"scenario": "s", "calibrated": c, "m_fit": f, "m_truth": 3.0}
+           for c, f in ((True, 3.3), (True, 3.9), (False, 9.0))]
+    assert free_param_errors(rec, "s", ["m"]) == pytest.approx({"m": 20.0})
