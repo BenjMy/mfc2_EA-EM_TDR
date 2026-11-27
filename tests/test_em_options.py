@@ -233,3 +233,106 @@ def test_real_study_dry_run_with_em_method(tmp_path):
     assert names
     for n in names:
         assert sl.load_scenario(n, config_path=path).param_grid["method"] == ["L-BFGS-B"]
+
+
+# ----------------------------------------------------------------------------- lbfgsbfix preset
+def test_lbfgsbfix_sets_method_and_fixed_depths_only_on_complete_entries():
+    sc = {"param_grid": {"method": ["ROPE"]}, "fixed_depths": False, "cache_tag": "x"}
+    eo.apply_em_method(sc, "lbfgsbfix")
+    assert sc["param_grid"]["method"] == ["L-BFGS-B"] and sc["fixed_depths"] is True
+    assert sc["cache_tag"] == "x_lbfgsbfix"
+    child = {"extends": "p", "cache_tag": "c"}                        # inherits both from its (changed) parent
+    eo.apply_em_method(child, "lbfgsbfix")
+    assert "fixed_depths" not in child and "param_grid" not in child
+    plain = {"param_grid": {"method": ["ROPE"]}, "fixed_depths": False}
+    eo.apply_em_method(plain, "lbfgsb")                               # the plain preset leaves the depths alone
+    assert plain["fixed_depths"] is False
+    assert eo.em_fixed_depths("lbfgsb") is None and eo.em_fixed_depths("lbfgsbfix") is True
+
+
+def test_lbfgsbfix_derived_real_config_keeps_fixed_depths_scenarios_fixed(tmp_path):
+    out = str(tmp_path / "d.json")
+    eo.main(["--config", os.path.join(ROOT, "ensemble_scenarios_real.json"), "--em-method", "lbfgsbfix", "--out", out])
+    with open(out, encoding="utf-8") as f:
+        b = json.load(f)
+    assert b["real_single_depth_free"]["fixed_depths"] is True          # the only free-depth real scenario is fixed now
+    assert b["real_single_base"]["fixed_depths"] is True
+
+
+def test_study_lbfgsbfix_scenarios_have_fixed_depths_and_roundtrip(tmp_path):
+    d = st.Design("homo", "homo", "noreg", "spread", 5, 0, "k", 0, "lbfgsbfix")
+    assert d.name.endswith("_emlbfgsbfix") and st.parse_name(d.name) == d
+    cfg, path = _study_cfg(tmp_path, "--ws", "homo", "--em-method", "lbfgsb", "lbfgsbfix")
+    fix = [n for n in cfg if n.endswith("_emlbfgsbfix")]
+    plain = [n for n in cfg if n.endswith("_emlbfgsb")]
+    assert fix and plain
+    def all_fixed(name):
+        fd = sl.load_scenario(name, config_path=path).fixed_depths
+        return all(fd) if isinstance(fd, (list, tuple)) else bool(fd)
+
+    for n in fix:
+        assert sl.load_scenario(n, config_path=path).param_grid["method"] == ["L-BFGS-B"] and all_fixed(n)
+    for n in plain:
+        assert not all_fixed(n)                                          # plain lbfgsb keeps the scenario's free depths
+
+
+# ----------------------------------------------------------------------------- njobs rule
+@pytest.mark.parametrize("tasks,cpu,expect", [(4, 16, 4), (3, 8, 2), (8, 8, 1), (40, 8, 1), (1, 1, 1)])
+def test_auto_njobs_fills_idle_cores_only(tasks, cpu, expect):
+    n, why = eo.resolve_em_njobs("auto", n_tasks=tasks, methods=["L-BFGS-B"], betas=[0.0], cpu_count=cpu)
+    assert n == expect and isinstance(why, str) and why
+
+
+def test_njobs_always_one_for_random_samplers_and_lateral_smoothing():
+    assert eo.resolve_em_njobs("auto", n_tasks=2, methods=["ROPE"], betas=[0.0], cpu_count=16)[0] == 1
+    assert eo.resolve_em_njobs(8, n_tasks=2, methods=["L-BFGS-B", "ROPE"], betas=[0.0], cpu_count=16)[0] == 1
+    assert eo.resolve_em_njobs("auto", n_tasks=2, methods=["L-BFGS-B"], betas=[0.0, 0.5], cpu_count=16)[0] == 1
+
+
+def test_explicit_njobs_and_parser():
+    assert eo.resolve_em_njobs(3, n_tasks=100, methods=["L-BFGS-B"], betas=[0], cpu_count=8)[0] == 3
+    assert eo.parse_em_njobs("auto") == "auto" and eo.parse_em_njobs("4") == 4
+    import argparse
+    for bad in ("0", "-2", "many"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            eo.parse_em_njobs(bad)
+    with pytest.raises(ValueError):
+        eo.resolve_em_njobs(0, n_tasks=1, methods=["L-BFGS-B"], betas=[0], cpu_count=4)
+
+
+def test_run_pipeline_exposes_em_njobs_flag():
+    import subprocess
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "run_pipeline.py"), "--help"],
+                       capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0 and "--em-njobs" in r.stdout
+
+
+def _real_emagpy():
+    try:
+        import emagpy
+        return hasattr(emagpy.Problem, "invert")      # tests/conftest.py stubs emagpy when it is not installed
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _real_emagpy(), reason="needs the real emagpy")
+def test_njobs_does_not_change_a_deterministic_inversion(tmp_path):
+    import io
+    import contextlib
+    import numpy as np
+    import data_synthetic as ds
+    from emagpy import Problem
+    gen = str(tmp_path / "gen")
+    with contextlib.redirect_stdout(io.StringIO()):
+        np.random.seed(0)
+        ds.generate_time_lapse_dataset(output_dir=gen, mode="1d", depths0=[0.3, 0.6, 1.0], homogeneous=False)
+        csvs, _, _ = ds.export_eca_surveys_to_csv(output_dir=gen, eca_noise_level=0.01)
+    out = {}
+    for nj in (1, 2):
+        k = Problem()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            k.createSurvey(csvs[0], unit="ppt")
+            k.setInit(depths0=[0.3, 0.6, 1.0], conds0=[20] * 4, fixedDepths=[True] * 3)
+            k.invert(forwardModel="CS", method="L-BFGS-B", alpha=0.1, bnds=[(0.01, 300.0)] * 4, njobs=nj)
+        out[nj] = np.asarray(k.models[0])
+    np.testing.assert_allclose(out[1], out[2], rtol=1e-9, atol=1e-9)

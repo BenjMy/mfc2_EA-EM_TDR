@@ -59,6 +59,7 @@ from tqdm import tqdm
 import EA_EM_config as cfgpaths  # central input-data paths (datasets)
 
 import em_methodology as EMmethod
+import em_options
 import em_subsample
 import geometry_utils
 import localized_mapping as lmap
@@ -1556,7 +1557,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          quick: bool = False,
          quick_epochs: int | None = None,
          stage: str = "full",
-         calibration: str | None = None):
+         calibration: str | None = None,
+         em_njobs="auto"):
     """
     Run the full EA-EM pipeline.
 
@@ -2900,6 +2902,14 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 print(f"[QUICK] {len(tasks)} Step-1 tasks "
                       f"({len(combinations)} grid combo(s) x {len(cond_sets)} starting "
                       f"combo(s) x {len(files_to_process)} epoch(s)).")
+            # Point-level parallelism inside each task (EMagPy ``njobs``): only when there are fewer tasks than
+            # cores (typically --stage map) and the method is deterministic; see em_options.resolve_em_njobs.
+            _njobs, _njobs_why = em_options.resolve_em_njobs(
+                em_njobs, n_tasks=len(tasks), methods=[c[3] for c in combo_list], betas=[c[1] for c in combo_list])
+            if _njobs > 1:
+                for _t in tasks:
+                    _t[5]["njobs"] = _njobs
+            print(f"[INFO] EM inversion njobs per task: {_njobs} ({_njobs_why}).")
             print(f"[INFO] Dispatched {len(tasks)} tasks to parallel pool...")
 
             unordered_results = []
@@ -5489,6 +5499,14 @@ if __name__ == "__main__":
              "overwritten).",
     )
     parser.add_argument(
+        "--em-njobs", type=em_options.parse_em_njobs, default="auto", metavar="{auto,N}",
+        help="Step 1: cores used INSIDE each EM inversion task (EMagPy njobs, splits the points). 'auto' "
+             "(default): cpu_count // n_tasks when there are fewer tasks than cores (typically --stage map: "
+             "K members x epochs), else 1. Always 1 for random samplers (ROPE/MCMC: seeds would change) and "
+             "with lateral smoothing (beta != 0). For a deterministic method (e.g. L-BFGS-B) the results do "
+             "not depend on it. Pass 1 to disable.",
+    )
+    parser.add_argument(
         "--stage", choices=list(stage_split.STAGES), default="full",
         help="Real data only. 'full' (default): one run does everything. 'calibrate': "
              "EM points restricted to the probe neighbourhoods, FULL ensemble, Steps 0-5, "
@@ -5686,7 +5704,7 @@ if __name__ == "__main__":
              k_selection=args.k_selection,
              em_footprint_diagnostic=args.em_footprint_diagnostic,
              quick=args.quick, quick_epochs=args.quick_epochs,
-             stage=args.stage, calibration=args.calibration)
+             stage=args.stage, calibration=args.calibration, em_njobs=args.em_njobs)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

@@ -90,6 +90,34 @@ floor ≫ 0.03 → first diagnose the EC (Patch 2b), then continue.
 * `ec_rmse_truth` / `ec_bias_rel` in `compute_metrics` are NOT added (the scripts answer the question
   outside the pipeline); add them only if you want the EC error in every study summary.
 
+### Patch 2e - speed (`lbfgsbfix`, `--em-njobs`) and README  -- DONE
+
+* Measured (one core, 60 points, 4 layers, ms per point and member): ROPE fixed 26 (CS) / 153 (FSlin);
+  **L-BFGS-B fixed 6.6 / 106**; ROPE free 39 / 165; **L-BFGS-B free 78 / 1149**. 2 layers (`real_single_*`):
+  ROPE fixed 17.7 / 86, L-BFGS-B fixed 3.4 / 26. So L-BFGS-B is faster than ROPE only with FIXED depths
+  (x4 CS, x1.4 FSlin; 2 layers x5 / x3) and 2-7 x SLOWER with free depths. FSlin is ~16 x CS.
+* The real scenarios are already fixed-depth (all but `*_depth_free`) -> `--em-method lbfgsb` shortens real
+  runs; the synthetic study scenario has FREE depths -> a plain `--em-method lbfgsb` makes the study 4-7 x
+  slower. New preset `--em-method lbfgsbfix` = L-BFGS-B + `fixed_depths: true` (interfaces at the truth layers,
+  which removes the depth question from the WS study on purpose). In the pipeline (quick, FSlin): ~1.4 s per
+  Step-1 task vs ~11 s with free depths.
+* `--em-njobs {auto,N}` (run_pipeline.py, default auto): EMagPy `njobs` inside each Step-1 task, i.e. points
+  split across cores when tasks < cores (typically `--stage map`: K x epochs). Always 1 for ROPE/MCMC (seeds)
+  and beta != 0. Verified: `ec_optimal.npy` and `theta_calc.npy` of a quick run are identical (max diff 0.0)
+  for `--em-njobs 1` and `2`; the speed-up itself is NOT measured (sandbox has one core).
+* Metrics: all study truth metrics (`compute_metrics`) use `theta_calc.npy` = the optimal model (WS transform of
+  the optimal K stack with its WS fit, `step4_select.py`); `final_rmse` / `cv_mean` are against the TDR
+  observations. `diagnose_ec_inversion.py` is a Step-1-only proxy (ensemble mean / best, true WS).
+* Fixed a leftover of 2d: the old root-level `test_diagnose_ec_inversion.py` is removed (the copy in `tests/`
+  stays).
+* README: recipe 2b, study section (em, soil, K = 0 command, metrics note), `--stage map` note, common mistakes,
+  new section "EM inversion method and speed".
+* Not done / ideas: a vectorised closed-form solver for CS with fixed depths (CS is linear in the conductivities,
+  so a regularised least-squares for all points at once would be ~100 x faster than 6.6 ms/point); it must
+  reproduce EMagPy's objective (alpha smoothing, bounds) exactly, so it needs its own validation. 16 starting
+  combinations x 6 grid members for a deterministic method are mostly redundant: test how many starts L-BFGS-B
+  needs (calibrate stage only).
+
 ### Patch 2d - EM method (`--em-method`) and soil-like truth (`--ws soil*`)
 
 * `em_options.py`: one switch for the EM inversion method, as an ordinary scenario field
@@ -190,7 +218,7 @@ Run `--dry-run` first (it prints the plan and validates every scenario) and use 
 1. Patch 1 and run the 4 floor runs. **Decision**: floor small or large.  -> large (0.13-0.15)
 2. Patch 2a (+2c) on the runs you already have; this also gives the "truth" lines in the plots.
 3. Patch 2b / 2d: cause = ROPE. Redo the floor runs with `--em-method lbfgsb` (legacy truth, and soil truth):
-   `python study_swc_design.py --smc hetero --ws homo soilhomo --reg noreg --free-k 0 --n-swc 5 --dist spread --em-method base lbfgsb`
+   `python study_swc_design.py --smc hetero --ws homo soilhomo --reg noreg --free-k 0 --n-swc 5 --dist spread --em-method base lbfgsbfix`
    (the `base` rows are your existing ROPE runs; `--resume` skips them if their folders exist).
    **Decision**: floor < 0.03 with L-BFGS-B -> continue; otherwise look at the top layer / fixed depths.
 4. Patches 3, 4, 5, 6 in this order (all accept `--em-method`); run each preset before writing the next.
@@ -219,7 +247,8 @@ Run `--dry-run` first (it prints the plan and validates every scenario) and use 
 | 2c | done (figure `fig_ws_recovery.png` + truth curve on the Step 2 EC-theta plots; needed a pipeline change) |
 | 4 | done (`--err`, `fig_known_error.png`) |
 | 2b | done (stand-alone scripts; cause = ROPE) |
-| 2d | done (`--em-method`, soil truth cases); the 4 K = 0 floor runs have to be redone with `--em-method lbfgsb` |
+| 2d | done (`--em-method`, soil truth cases); the 4 K = 0 floor runs have to be redone with `--em-method lbfgsbfix` (fast) or `lbfgsb` |
+| 2e | done (speed measurements, `lbfgsbfix`, `--em-njobs`, README) |
 | 5, 6 | not started |
 
 Patch 4 notes: a pinned value outside the WS bounds (e.g. a = 0.40) is not clipped, its bound is
@@ -267,6 +296,7 @@ theta RMSE = theta from the inverted EC with the TRUE WS parameters (the K = 0 f
 | **method L-BFGS-B** | **5.4** | **0.022** | 1.25, 1.0, 0.82, 1.02 |
 | method Nelder-Mead / TNC | 5.5 / 195 | 0.031 / 0.068 | |
 | fixed depths + CS + L-BFGS-B | 7.8 | 0.022 | 1.4, 1.18, 1.27, 0.83 |
+| = preset `lbfgsbfix` (fixed depths, FSlin + CS, L-BFGS-B) | 8.4 | 0.022 | 1.4, 1.21, 1.31, 0.86 |
 | start at the truth (L-BFGS-B) | 2.5 | 0.016 | about 1 |
 
 * Cause: `method = ROPE`. With `rep = 100` random samples (EMagPy default, never set by the pipeline) it

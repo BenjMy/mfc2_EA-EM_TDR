@@ -77,6 +77,21 @@ tail -n 3 mfc2_outputs/run_log.csv | cut -d, -f1,3,6,7
 
 Check the quality gate (`status`, `quality_reasons`) in the run's `run_manifest.json` and in `pipeline_report_*.md` before mapping. If the map run prints `[WARN] CALIBRATION DRIFT`, the map no longer matches the calibration: redo step (a). `--stage map` cannot be combined with `--quick`.
 
+### 2b. Faster inversion: EM method and cores (`em_options.py`, `--em-njobs`)
+
+The scenarios invert with `method = ROPE` (EMagPy default, 100 random samples per point). L-BFGS-B fits the data (ROPE does not, see the section "EM inversion method and speed") and, **with fixed depths** (all `real_*` scenarios except `*_depth_free`), is also faster. Switch with a derived scenarios file; use the SAME file for calibrate and map (the map looks the calibrated members up by method and stops if they are missing):
+
+```bash
+python em_options.py --config ensemble_scenarios_real.json --em-method lbfgsb      # -> ensemble_scenarios_real_lbfgsb.json
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real_lbfgsb.json --mode 2d --stage calibrate
+./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real_lbfgsb.json --mode 2d --stage map \
+    --calibration mfc2_outputs/real_L3_base_lbfgsb/0001_real_L3_base_calibrate
+REAL_CFG=ensemble_scenarios_real_lbfgsb.json ./run_real_all_scenarios.sh            # the fixed batch, same switch
+python hyp1_layers_ws_freedom.py --designs L3 --free-k 4 --em-method lbfgsb         # hyp1/2/3 and run_real_study.py take it too
+```
+
+`--em-method` is `base` (default: the scenario's own method, ROPE, so all old runs and caches stay valid), `lbfgsb`, or `lbfgsbfix` (L-BFGS-B and `fixed_depths: true`). The derived scenarios get `_lbfgsb` appended to `cache_tag` and `output_dir`, so ROPE and L-BFGS-B runs never share a cache or folder. `--em-njobs {auto,N}` (all runs, default `auto`) splits the points of one Step-1 task across cores when there are fewer tasks than cores, typically `--stage map` (K members x epochs); it stays 1 for ROPE (reproducible seeds) and with `beta != 0`, and does not change the result of a deterministic method.
+
 ### 3. Free more Waxman-Smits parameters
 
 `real_L3_base` fixes `a` and `m`. To free them, do not edit the JSON by hand: the `hyp1` script generates the scenario `real_study_<design>_free<K>` (K = number of free parameters, freed in the order `sigma_s`, `m`, `sigma_w`, `a`).
@@ -163,6 +178,8 @@ The maps are in `<run>/output_model/maps.nc` (needs `xarray` and `netcdf4`) and 
 | Quality gate `WARN`: uncalibrated horizon | A horizon without a TDR sensor keeps the prior WS parameters (`lab_p0`); expected for H2 of `real_L3_base`. |
 | Map covers only the probe neighbourhoods | The scenario already thins with `em_subsample.mode = "probes"` (e.g. `real_single_test_probes*`): map with a scenario without it. |
 | `--stage map` with `--quick` is rejected | Not supported: run the map without `--quick`. |
+| Map stops: calibrated member(s) not in this scenario's parameter grid | The map uses another scenarios file / EM method than the calibration (e.g. ROPE vs `..._lbfgsb.json`): use the same one for both stages. |
+| L-BFGS-B is slower than ROPE | Free depths (`fixed_depths: false`): L-BFGS-B is 2-7 x slower than ROPE there. Use fixed depths (`--em-method lbfgsbfix`). |
 
 ## Input data paths (`EA_EM_config.py`)
 
@@ -210,7 +227,7 @@ run_real_all_scenarios.sh        fixed batch of run_one_scenario.sh calls (paper
 | `hyp1_layers_ws_freedom.py` | **H1**: how many layers can the real TDR sensors support (they sit at 0.15 and 0.30 m), and how many Waxman-Smits parameters (sigma_s, m, sigma_w, a) can be freed? Layer designs `L2`/`L3`/`L4` (or `--design NAME=d1,d2`) x K free parameters. Prints which horizons have no sensor before running. | Generated `real_study_<design>_free<K>`. |
 | `hyp2_train_val_split.py` | **H2**: the default run fits and selects K on all TDR data, so its RMSE is in-sample. Runs the same scenario with each split (`off`, `alternate_sorted`, `by_probe`, `by_time_block`, `random`) and reports the held-out RMSE. | Generated `real_tv_<method>` (from `--base`). |
 | `hyp3_localized_bandwidth.py` | **H3**: does letting WS parameters vary in space (kernel-localized fit) beat one set per horizon, and at which bandwidth? Runs one scenario with your candidate list (`--bandwidths`), chosen by leave-one-probe-out CV. | Generated `real_bw_sweep` (from `--base`). |
-| `hyp_common.py` | Not run directly: the shared engine of the three `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--config --base --mode --stage --out-dir --fast --dry-run --keep-going`, and forwards anything after a bare `--` to `run_one_scenario.sh`. | None (it generates nothing itself). |
+| `hyp_common.py` | Not run directly: the shared engine of the three `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--config --base --mode --stage --out-dir --em-method --fast --dry-run --keep-going`, and forwards anything after a bare `--` to `run_one_scenario.sh`. | None (it generates nothing itself). |
 | `run_all_hypotheses.py` | All of the above with their shared options (`--config --base --mode --stage --fast --dry-run --keep-going`); `--only 1 3` picks some, `--list` shows them. | Whatever the three scripts generate. |
 | `run_real_all_scenarios.sh` | The fixed paper batch: `real_single_*` / `real_multi_*` (forward model `_base` / `_fslin` / `_cs`, fixed vs free interfaces `_depth_free`, WS freedom `_ws_*`), then `--beta`, `--gamma` and bandwidth sweeps and (commented out) `--train-val-split`. It starts with `--list` and `--validate`. Does not generate anything. | The existing `real_single_*` (2 layers) and `real_multi_*` (4 layers). |
 
@@ -310,7 +327,7 @@ Results: `comparison_output/1d_surface_vs_full_free{K}/` and `comparison_output/
 
 ## Number / distribution of SWC probes study (1-D synthetic)
 
-`study_swc_design.py` generates the scenarios, runs them, scores `theta_calc` against the synthetic truth and draws the comparison figures. Factors: number of SWC positions `n` (1, 2, 3, 5, 10), their distribution (`spread` / `clustered` / `random`), truth soil moisture (`smc` homo / hetero), truth Waxman-Smits parameters (`ws` homo / hetero), number of free WS parameters `K` (1-4) and the EMagPy regularisation (`noreg` / `beta` / `gamma` / `both`).
+`study_swc_design.py` generates the scenarios, runs them, scores `theta_calc` against the synthetic truth and draws the comparison figures. Factors: number of SWC positions `n` (1, 2, 3, 5, 10), their distribution (`spread` / `clustered` / `random`), truth soil moisture (`smc` homo / hetero), truth Waxman-Smits parameters (`ws` homo / hetero), number of free WS parameters `K` (0-4; 0 = all four known), the EMagPy regularisation (`noreg` / `beta` / `gamma` / `both`), what is known (`pin`) with an error on it (`err`), and the EM inversion method (`em`: `base` = ROPE / `lbfgsb` / `lbfgsbfix`, see "EM inversion method and speed"). `ws` also has the opt-in lateral / depth cases `heterox` / `heteroz` and their soil-like versions `soilhomo` / `soilheterox` / `soilheteroz` (baseline a, m, sigma_w, sigma_s = 0.8, 2, 100, 100 instead of 0.5, 3, 500, 100).
 
 ```bash
 python study_swc_design.py --dry-run                      # write + validate the scenarios, print the commands
@@ -319,6 +336,9 @@ python study_swc_design.py --preset oat                   # one factor at a time
 python study_swc_design.py --preset main --keep-going --resume   # truth x K x n, + distribution and reg at n = 5 (160 runs)
 python study_swc_design.py --analyze-only                 # redo summary + figures from the run log
 python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10   # any subset of the levels
+# K = 0 floor (nothing calibrated), legacy and soil truth, ROPE (existing runs) vs L-BFGS-B with fixed depths
+python study_swc_design.py --smc hetero --ws homo soilhomo --reg noreg --free-k 0 --n-swc 5 --dist spread \
+    --em-method base lbfgsbfix --resume --keep-going
 ```
 
 Presets: `smoke` 8, `oat` 15, `main` 160, `full` 704 runs. A synthetic run always repeats Step 1 (the ensemble cache is real-data only), so each run costs a full pipeline run (3-5 min; `--fast` passes `--quick`, a smoke test and never a result).
@@ -340,7 +360,9 @@ Outputs in `comparison_output/swc_design_study/`: `study_summary.csv` (RMSE / MA
 | `fig_error_at_vs_away_from_probes.png` | error at probe positions vs elsewhere, vs n |
 | `fig_residual_distribution.png` | distribution of theta_calc - theta_true by n |
 
-Tests: `pytest tests/test_study_swc_design.py`.
+The truth metrics (`rmse_truth`, `mae_truth`, `bias_truth`, `r2_truth`, per layer, near / far from probes) compare `theta_calc.npy` with the true theta. `theta_calc` is the output of the OPTIMAL model: the Waxman-Smits transform of the optimal averaged EC stack (the K selected in Step 4/5) with the WS fit of that stack (`step4_select.py`). `final_rmse` and `cv_mean` in the run log are against the TDR observations, not the truth. (Do not confuse `free<K>` = number of free WS parameters with the stack depth K = number of ensemble members averaged.) The stand-alone `diagnose_ec_inversion.py` is different on purpose: it looks at Step 1 only (ensemble mean / best member, true WS parameters).
+
+Tests: `pytest tests/test_study_swc_design.py` (the copy in `tests/` is older than `test_study_swc_design.py` at the repo root; copy the root file into `tests/` to run the current one).
 
 ## Truth-vs-optimal 1:1 validation (synthetic runs)
 
@@ -348,6 +370,29 @@ Tests: `pytest tests/test_study_swc_design.py`.
 python plot_validation_1to1.py --ids <surface_run_id> <full_run_id> \
     --labels surface full --out-dir comparison_output/validation
 ```
+
+## EM inversion method and speed
+
+Why: the scenarios' `param_grid.method = ["ROPE"]` (EMagPy default `rep = 100` random samples per point, never set by the pipeline) does not fit the data. On the synthetic study truth (`diagnose_ec_inversion.py`, one realization): ECa misfit about 600 %, inverted EC 2-8 x too high, K = 0 floor (all four WS parameters known) theta RMSE 0.15 m3/m3; with L-BFGS-B misfit about 5 % and floor about 0.02. Fixed depths and the forward model (CS / FSlin) made no difference to that bias. The pipeline's own default method is L-BFGS-B (when `param_grid.method` is absent); ROPE comes from the scenario files, which are not edited: `--em-method` (study, hyp1/2/3, `run_real_study.py`) or `python em_options.py --config <file> --em-method lbfgsb` switch it. alpha / beta / gamma smoothing work with L-BFGS-B too.
+
+Time (one core, 60 points, 4 layers, ms per point and ensemble member):
+
+| | CS | FSlin |
+|---|---|---|
+| ROPE, fixed depths (real scenarios today) | 26 | 153 |
+| **L-BFGS-B, fixed depths** | **6.6** | **106** |
+| ROPE, free depths | 39 | 165 |
+| L-BFGS-B, free depths | 78 | 1149 |
+
+So L-BFGS-B only saves time with fixed depths (CS x4, FSlin x1.4; with the 2-layer `real_single_*` setup x5 / x3). With free depths it is slower (CS x2, FSlin x7). The forward model is the other big lever: FSlin costs about 16 x CS, so a map whose selected members use FSlin is far more expensive than one that uses CS. Mapping time is (K selected members) x (epochs) x (EM points) x (cost per point): the calibrate stage already prunes the ensemble to K, `em_subsample` (grid thinning) shortens test maps, and `--em-njobs` uses idle cores. In a `--quick` synthetic pipeline run (FSlin only, 10 points per task) Step 1 took about 1.4 s per task with `lbfgsbfix` against about 11 s with free-depth L-BFGS-B. These are timings from a one-core sandbox, not from your real data: measure a map on your machine before relying on the ratios.
+
+```bash
+python diagnose_ec_inversion.py                   # ~8 min: tests fixed_depths / forwardModel / method one at a time
+python diagnose_ec_inversion.py --tests T0 T3     # controls + method only (T6 = slow ROPE with more samples)
+python ws_param_check.py                          # EC range, floor, a/sigma_w/sigma_s degeneracy, sensitivity (numpy only)
+```
+
+`ws_param_check.py`: in the generator's form `EC = theta^m / a * (sigma_w + sigma_s)` only `C = a / (sigma_w + sigma_s)` and `m` matter, so a, sigma_w and sigma_s cannot be told apart (judge recovery on C and m). Tests: `pytest tests/test_em_options.py tests/test_diagnose_ec_inversion.py`.
 
 ## Main plots
 
@@ -461,7 +506,7 @@ Calibration only needs the probe-matched points; the maps need all points.
 
 Use a scenario with no `em_subsample` (e.g. `real_single_base`) for both stages: `--stage calibrate` restricts the EM points to the probe neighbourhoods itself (radius 5 m unless the scenario sets `em_subsample.mode = "probes"` with its own radius), and `--stage map` then uses all points. A scenario that already thins with `mode = "probes"` (e.g. `real_single_test_probes`) would map only the probe neighbourhoods.
 
-Each stage has its own run folder suffix and cache file. `--stage map` checks that depths0 / cond_ranges / epochs match the calibration before inverting anything, re-fits Steps 2-5 on the selected members and reports the drift against the calibration (`[WARN] CALIBRATION DRIFT` means: redo calibrate). `--stage map` cannot be combined with `--quick`.
+Each stage has its own run folder suffix and cache file. Use the same scenarios file (same `param_grid.method`, `fixed_depths`) for both stages: the map looks the calibrated members up by method and stops if they are missing. The map stage has only K members x epochs Step-1 tasks, so with `--em-njobs auto` (default) the points of each task are split across the idle cores when the method is deterministic (see "EM inversion method and speed"). `--stage map` checks that depths0 / cond_ranges / epochs match the calibration before inverting anything, re-fits Steps 2-5 on the selected members and reports the drift against the calibration (`[WARN] CALIBRATION DRIFT` means: redo calibrate). `--stage map` cannot be combined with `--quick`.
 
 **How `ws_localized_bandwidth_sweep` fits in.** The leave-one-probe-out CV only reads probe-matched points, so it runs in `--stage calibrate` only (on the full ensemble, against its rank-1 member). The chosen bandwidth is stored in `stage_calibration.json` (`localized_bandwidth`, `bandwidth_from_sweep`). In `--stage map` the sweep is skipped (logged as `[STAGE] map: ws_localized_bandwidth_sweep skipped`) and the stored bandwidth is reused as a fixed `ws_localized_bandwidth` for the kernel-localized fit, which is then evaluated at every map point (the kernel only needs probe data + target coordinates, so thinning the EM points does not change the fit, only where it is evaluated). Passing `--ws-localized-bandwidth C` to the map run overrides the stored value; the sweep list on the map CLI/scenario is ignored. The localized fit now feeds the maps (next section); it still does not feed Steps 2-5 (ensemble ranking, K, the reported RMSE).
 

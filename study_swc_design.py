@@ -14,7 +14,7 @@ Synthetic 1-D transect (10 survey points, 2 m spacing).  Factors:
                                                        0 = all pinned = floor set by the inverted EC)
   reg    EMagPy inversion regularisation          noreg | beta | gamma | both
   pin    what is KNOWN (pinned at the truth)      k (legacy: K decides) | none | sw | sws | am | all
-  em     EM inversion method of Step 1            base (the scenario's own, ROPE) | lbfgsb
+  em     EM inversion method of Step 1            base (the scenario's own, ROPE) | lbfgsb | lbfgsbfix
 
 Meaning of the factors
 ----------------------
@@ -35,7 +35,10 @@ Meaning of the factors
                 ws_param_check.py).  The m / sigma_s ranges of the lateral / depth cases scale with the
                 baseline (m 1.33-2.67, sigma_s 50-200), the calibration prior ``lab_p0`` is the baseline.
                 Their names carry the case (``..._wssoilhomo_...``), so legacy runs stay untouched.
-* em   (EM inversion method, ``--em-method``)  base: the base scenario's own method (ROPE); lbfgsb: L-BFGS-B.
+* em   (EM inversion method, ``--em-method``)  base: the base scenario's own method (ROPE); lbfgsb: L-BFGS-B;
+        lbfgsbfix: L-BFGS-B with fixed depths (interfaces at depths0 = the truth layers) -- much faster than
+        lbfgsb here, because the study scenario has free depths and L-BFGS-B is 2-7 x SLOWER than ROPE then
+        (em_options.py: speed table).
         ROPE (EMagPy default 100 samples) does not fit the data (diagnose_ec_inversion.py: ~600 % ECa misfit,
         K = 0 floor 0.15 m3/m3), L-BFGS-B does (~5 %, floor ~0.02).  Several values make the method a factor:
         ``--em-method base lbfgsb`` runs every design twice and the figures are written per method
@@ -502,6 +505,8 @@ def build_study_config(parent_raw: dict, designs: list[Design], *, runs_dir: str
         fields = {**smc_fields, **copy.deepcopy(WS_FIELDS[d.ws]), **reg_fields(d.reg, beta, gamma)}
         if d.em != em_options.DEFAULT_EM:                            # EM method of Step 1 (merged into the parent's param_grid)
             fields.setdefault("param_grid", {}).update(em_options.em_param_grid(d.em))
+            if em_options.em_fixed_depths(d.em) is not None:
+                fields["fixed_depths"] = em_options.em_fixed_depths(d.em)
         ws_p0 = list(WS_BASELINE[d.ws])                              # calibration prior = baseline truth of the ws case
         if d.pin == "k":                                             # legacy: K frees sigma_s, m, sigma_w, a in turn
             fields.update(ws_freedom(d.k, ws_p0))

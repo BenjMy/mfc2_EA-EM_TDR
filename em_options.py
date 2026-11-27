@@ -30,6 +30,19 @@ With a non-base method the derived scenarios get ``_<em>`` appended to ``cache_t
 folder.  (The pipeline's cache fingerprint also contains ``param_grid``, so a stale cache is never
 reused silently either way.)
 
+Speed (measured, one core, 60 points, 4 layers; ms per point and member)
+-----------------------------------------------------------------------
+                         CS      FSlin
+    ROPE   fixed depths  26      153      (the study / real scenarios today, rep = 100)
+    L-BFGS-B fixed       6.6     106      <- faster than ROPE (CS x4, FSlin x1.4; 2 layers: x5 / x3)
+    ROPE   free depths   39      165
+    L-BFGS-B free        78      1149     <- SLOWER than ROPE (CS x2, FSlin x7)
+So L-BFGS-B only saves time with FIXED depths (all ``real_*`` scenarios except ``*_depth_free``); the
+synthetic study scenario has free depths: use ``lbfgsbfix`` there (same truth layers, 7 x fewer free
+parameters, accurate).  The forward model is the other big lever: FSlin costs ~16 x CS.  ``--em-njobs``
+(see ``resolve_em_njobs``) splits the points of one Step-1 task across cores when there are fewer tasks
+than cores (typically the ``map`` stage: K members x epochs).
+
 Notes
 -----
 * alpha / beta / gamma smoothing work with L-BFGS-B too (EMagPy puts them in the objective of every
@@ -49,10 +62,18 @@ import json
 import os
 import sys
 
-# tag (used in names / folders / --em-method) -> EMagPy method string; None = keep the scenario's own
-EM_METHODS: dict[str, str | None] = {"base": None, "lbfgsb": "L-BFGS-B"}
-EM_CHOICES = tuple(EM_METHODS)
+# tag (used in names / folders / --em-method) -> scenario fields it sets.  'base' = keep the scenario's own.
+#   method        EMagPy ``param_grid.method``
+#   fixed_depths  scenario ``fixed_depths`` (interfaces fixed at depths0); omitted = keep the scenario's own
+EM_PRESETS: dict[str, dict] = {
+    "base": {},
+    "lbfgsb": {"method": "L-BFGS-B"},
+    "lbfgsbfix": {"method": "L-BFGS-B", "fixed_depths": True},
+}
+EM_METHODS: dict[str, str | None] = {tag: p.get("method") for tag, p in EM_PRESETS.items()}
+EM_CHOICES = tuple(EM_PRESETS)
 DEFAULT_EM = "base"
+MCMC_FAMILY = frozenset({"MCMC", "ROPE", "DREAM", "SCEUA"})   # random samplers (same set as run_pipeline.py)
 
 _PATH_KEYS = ("cache_tag", "output_dir")
 
@@ -66,6 +87,11 @@ def check_em(em: str) -> str:
 def method_name(em: str) -> str | None:
     """EMagPy method string of ``em`` (None for 'base')."""
     return EM_METHODS[check_em(em)]
+
+
+def em_fixed_depths(em: str) -> bool | None:
+    """``fixed_depths`` value forced by ``em`` (None = keep the scenario's own)."""
+    return EM_PRESETS[check_em(em)].get("fixed_depths")
 
 
 def em_param_grid(em: str) -> dict:
@@ -86,8 +112,12 @@ def apply_em_method(scenario: dict, em: str, *, tag_paths: bool = True) -> dict:
     if method is None:
         return scenario
     pg = scenario.get("param_grid")
-    if isinstance(pg, dict) and "method" in pg:
+    own_method = isinstance(pg, dict) and "method" in pg
+    if own_method:
         pg["method"] = [method]
+    fixed = em_fixed_depths(em)
+    if fixed is not None and (own_method or "fixed_depths" in scenario):
+        scenario["fixed_depths"] = fixed
     if tag_paths:
         for key in _PATH_KEYS:
             val = scenario.get(key)
@@ -116,11 +146,55 @@ def apply_to_config(cfg: dict, em: str, *, tag_paths: bool = True) -> dict:
 def add_em_arg(ap: argparse.ArgumentParser, *, multiple: bool = False) -> None:
     """``--em-method``: one value, or several for the study's factor (``multiple``)."""
     help_ = ("EM inversion method of every generated scenario: base (default) = the scenario's own, "
-             "currently ROPE | lbfgsb = L-BFGS-B (fits the data; see em_options.py)")
+             "currently ROPE | lbfgsb = L-BFGS-B (fits the data; faster than ROPE only with fixed depths) | "
+             "lbfgsbfix = L-BFGS-B with fixed depths (see em_options.py)")
     if multiple:
         ap.add_argument("--em-method", nargs="+", choices=EM_CHOICES, default=None, help=help_)
     else:
         ap.add_argument("--em-method", choices=EM_CHOICES, default=DEFAULT_EM, help=help_)
+
+
+def resolve_em_njobs(setting, *, n_tasks: int, methods, betas, cpu_count: int | None = None) -> tuple[int, str]:
+    """``njobs`` for EMagPy's ``invert`` in every Step-1 task, and why.
+
+    EMagPy can split the POINTS of one inversion across cores (joblib).  Step 1 already runs one task per
+    (member x epoch) in a process pool, so more parallelism only helps when there are fewer tasks than
+    cores (typically ``--stage map``: K members x epochs).  Rules:
+
+    * random samplers (ROPE / MCMC / DREAM / SCEUA) -> 1: the pipeline seeds every task, a split would
+      change the random streams (results no longer reproducible);
+    * lateral smoothing (any beta != 0) -> 1: EMagPy cannot split the points then;
+    * ``setting`` an int >= 1 -> that value; ``"auto"`` -> ``cpu_count // n_tasks`` when n_tasks < cpu_count,
+      else 1 (the pool is already full).  For a deterministic method the results do not depend on it.
+    """
+    cpu = max(1, int(cpu_count if cpu_count is not None else (os.cpu_count() or 1)))
+    meth = {str(m) for m in methods}
+    if meth & MCMC_FAMILY:
+        return 1, f"random sampler(s) {sorted(meth & MCMC_FAMILY)}: kept serial (reproducible seeding)"
+    if any(float(b) != 0.0 for b in betas):
+        return 1, "lateral smoothing (beta != 0): EMagPy cannot split the points"
+    if setting in (None, "auto"):
+        if n_tasks >= cpu:
+            return 1, f"{n_tasks} tasks >= {cpu} cores: the process pool is already full"
+        n = max(1, cpu // max(1, n_tasks))
+        return n, f"auto: {n_tasks} task(s) on {cpu} cores -> {n} job(s) per task"
+    n = int(setting)
+    if n < 1:
+        raise ValueError(f"--em-njobs must be 'auto' or an integer >= 1, got {setting!r}")
+    return n, f"explicit --em-njobs {n}"
+
+
+def parse_em_njobs(text) -> str | int:
+    """CLI value: 'auto' or an integer >= 1."""
+    if str(text).lower() == "auto":
+        return "auto"
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--em-njobs must be 'auto' or an integer >= 1, got {text!r}")
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"--em-njobs must be 'auto' or an integer >= 1, got {text!r}")
+    return n
 
 
 def derived_path(config_path: str, em: str) -> str:
@@ -144,8 +218,10 @@ def main(argv=None) -> int:
         json.dump(out_cfg, f, indent=2)
     n = sum(1 for k, v in out_cfg.items() if not k.startswith("_") and isinstance(v, dict)
             and isinstance(v.get("param_grid"), dict) and "method" in v["param_grid"])
-    print(f"wrote {out_path}: {n} scenario(s) with method = {method_name(args.em_method)}, "
-          f"cache_tag / output_dir suffixed '_{args.em_method}'")
+    fd = em_fixed_depths(args.em_method)
+    print(f"wrote {out_path}: {n} scenario(s) with method = {method_name(args.em_method)}"
+          + (f", fixed_depths = {fd}" if fd is not None else "")
+          + f", cache_tag / output_dir suffixed '_{args.em_method}'")
     return 0
 
 

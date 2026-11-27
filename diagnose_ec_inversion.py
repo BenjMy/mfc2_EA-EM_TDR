@@ -124,6 +124,8 @@ TESTS = {
     "T5": [
         ("T5  fixed + CS + L-BFGS-B", _v(fixed_depths=True, forward_models=("CS",),
                                         methods=("L-BFGS-B",))),
+        ("T5c = em_options preset lbfgsbfix (fixed + FSlin/CS + L-BFGS-B)",
+         _v(fixed_depths=True, methods=("L-BFGS-B",))),
         ("T5b fixed + CS + L-BFGS-B, bounds 0.5-100",
          _v(fixed_depths=True, forward_models=("CS",), methods=("L-BFGS-B",),
             bounds=(0.5, 100.0))),
