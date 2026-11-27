@@ -40,7 +40,7 @@ Three kinds of input go through the same pipeline. Short copy-paste version: [`R
 | **synthetic mirror** | `mfc2_synthetic/mfc2_real_synthetic_mirror.json` | A synthetic twin of the field deployment (same 7 EM dates and point-count asymmetry, same TDR depths, known truth), written as files by `generate_synthetic_real_mirror.py` and read by the real-data loader. |
 | **in-process synthetic** | `ensemble_scenarios.json` | Synthetic scenarios generated inside the run (`2d`, `1d_surface_tdr`, ...). |
 
-The hypothesis scripts (`run_all_hypotheses.py`, `hyp1_*`, `hyp2_*`, `hyp3_*`) choose between the first two with one switch, **`--data real`** (default) or **`--data synthetic`**. It sets `--config` and `--base`, and synthetic results go to `mfc2_outputs/hypotheses_synthetic/` so they never overwrite the real ones (`--config <mirror json>` without `--data` is detected as synthetic). The plan printed by `--dry-run` has a `DATA:` line with the EM / TDR / coordinate paths and says `REAL FIELD DATA` or `SYNTHETIC MIRROR`.
+The hypothesis scripts (`run_all_hypotheses.py`, `hyp1_*` to `hyp5_*`) choose between the first two with one switch, **`--data real`** (default) or **`--data synthetic`**. It sets `--config` and `--base`, and synthetic results go to `mfc2_outputs/hypotheses_synthetic/` so they never overwrite the real ones (`--config <mirror json>` without `--data` is detected as synthetic). The plan printed by `--dry-run` has a `DATA:` line with the EM / TDR / coordinate paths and says `REAL FIELD DATA` or `SYNTHETIC MIRROR`.
 
 Caveat: the mirror is read through the real-data loader (`"data_source": "real"` in its JSON), so the banner of `run_one_scenario.sh` says `REAL DATA` for it as well. In that launcher, check the `EM=` path (`./data/EMI_MFC2/` = real, `mfc2_synthetic/EMI_MFC2_synthetic` = mirror).
 
@@ -54,7 +54,7 @@ Caveat: the mirror is read through the real-data loader (`"data_source": "real"`
 ./run_one_scenario.sh --mode 2d -s real_single_base -c ensemble_scenarios_real.json   # real data (paths set in the JSON)
 ./run_one_scenario.sh --mode 2d -s mfc2_real_synthetic_mirror \
     -c mfc2_synthetic/mfc2_real_synthetic_mirror.json     # synthetic mirror of the real data (known truth)
-python run_all_hypotheses.py --data real --fast --dry-run        # the three hypothesis tests on the real data, plan only
+python run_all_hypotheses.py --data real --fast --dry-run        # the default hypothesis tests (H1-H3) on the real data, plan only
 python run_all_hypotheses.py --data synthetic --fast --dry-run   # the same on the synthetic mirror
 ./run_one_scenario.sh --help                          # all options
 ```
@@ -98,11 +98,13 @@ Check the quality gate (`status`, `quality_reasons`) in the run's `run_manifest.
 
 Step 1 (the EM inversion) is the long part. Two switches speed it up, and one line tells you how long it will take.
 
+**Presets.** `smoke`, `oat`, `main`, `full` keep the legacy `hetero` truth (old run names and caches stay valid); `known` (what is known x truths at n = 5, spread, noreg, smc hetero) defaults to `homo`, `heterox`, `heteroz` when `--ws` is not given. With no `--preset` the study picks `known` if `--pin` or `--err` is given, `full` if K = 0 is the only K, else `oat`.
+
 **Solver, `--em-method`.** The default is now **L-BFGS-B** everywhere (the scenario files carry it; ROPE did not fit the data, see "EM inversion method and speed"). L-BFGS-B is faster than ROPE only with **fixed depths**, so the synthetic SWC study defaults to `lbfgsbfix` (L-BFGS-B with the interfaces fixed at the truth) while the real-data scripts keep each scenario's own depth mode (all `real_*` scenarios are fixed-depth except `*_depth_free`).
 
 | Value | Method | Depths | Default of |
 |---|---|---|---|
-| `lbfgsb` | L-BFGS-B | the scenario's own | hyp1/2/3, `run_all_hypotheses.py`, `run_real_study.py`, `generate_synthetic_real_mirror.py` |
+| `lbfgsb` | L-BFGS-B | the scenario's own | hyp1/2/3/5, `run_all_hypotheses.py`, `run_real_study.py`, `generate_synthetic_real_mirror.py` |
 | `lbfgsbfix` | L-BFGS-B | fixed (at the scenario's `depths0`) | `study_swc_design.py` |
 | `rope` | ROPE (random sampler, optional, the old behaviour) | the scenario's own | none |
 | `base` | untouched: whatever the scenario file says (L-BFGS-B now) | untouched | none (no name / cache suffix) |
@@ -113,6 +115,8 @@ Step 1 (the EM inversion) is the long part. Two switches speed it up, and one li
 |---|---|---|
 | one scenario / `--stage calibrate` / `--stage map` | edit nothing (file is L-BFGS-B); `-c <derived file>` for `rope` | `./run_one_scenario.sh ... --em-njobs 8` |
 | `hyp1/2/3`, `run_real_study.py`, `run_all_hypotheses.py` | `--em-method lbfgsb` (default) \| `rope` \| `base` | `... -- --em-njobs 8` |
+| `hyp4_solver_type.py` | `--solvers rope lbfgsb` (no `--em-method`: the solver is the factor) | `... -- --em-njobs 8` |
+| `hyp5_layer_depths.py` | `--em-method lbfgsb` (default) \| `rope` \| `base` (not `lbfgsbfix`: it forces fixed depths) | `... -- --em-njobs 8` |
 | `study_swc_design.py` | `--em-method lbfgsbfix` (default) \| `lbfgsb` \| `rope` \| several (a factor) | `... -- --em-njobs 8` |
 
 ```bash
@@ -256,7 +260,9 @@ The launchers form three levels. Each level only calls the one below it, and onl
 run_all_hypotheses.py            ONE entry point: runs the hypothesis scripts below in turn
  |-- hyp1_layers_ws_freedom.py      H1  how many layers / how many free WS parameters
  |-- hyp2_train_val_split.py        H2  is the calibration good on held-out data
- `-- hyp3_localized_bandwidth.py    H3  does a localized WS calibration help, which bandwidth
+ |-- hyp3_localized_bandwidth.py    H3  does a localized WS calibration help, which bandwidth
+ |-- hyp4_solver_type.py            H4  ROPE or L-BFGS-B for the EM inversion, everything else equal
+ `-- hyp5_layer_depths.py           H5  layer interface depths fixed at depths0 or inverted
        (each generates its scenarios with hyp_common.py, then calls the level below)
 run_one_scenario.sh              ONE run of ONE scenario  ->  run_pipeline.py
 run_real_all_scenarios.sh        fixed batch of run_one_scenario.sh calls (paper comparisons)
@@ -268,17 +274,22 @@ run_real_all_scenarios.sh        fixed batch of run_one_scenario.sh calls (paper
 | `hyp1_layers_ws_freedom.py` | **H1**: how many layers can the real TDR sensors support (they sit at 0.15 and 0.30 m), and how many Waxman-Smits parameters (sigma_s, m, sigma_w, a) can be freed? Layer designs `L2`/`L3`/`L4` (or `--design NAME=d1,d2`) x K free parameters. Prints which horizons have no sensor before running. | Generated `real_study_<design>_free<K>`. |
 | `hyp2_train_val_split.py` | **H2**: the default run fits and selects K on all TDR data, so its RMSE is in-sample. Runs the same scenario with each split (`off`, `alternate_sorted`, `by_probe`, `by_time_block`, `random`) and reports the held-out RMSE. | Generated `real_tv_<method>` (from `--base`). |
 | `hyp3_localized_bandwidth.py` | **H3**: does letting WS parameters vary in space (kernel-localized fit) beat one set per horizon, and at which bandwidth? Runs one scenario with your candidate list (`--bandwidths`), chosen by leave-one-probe-out CV. | Generated `real_bw_sweep` (from `--base`). |
-| `hyp_common.py` | Not run directly: the shared engine of the three `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--data --config --base --mode --stage --out-dir --em-method --fast --dry-run --keep-going` (hyp2 / hyp3 and `run_all_hypotheses.py` also `--no-k0`), and forwards anything after a bare `--` (e.g. `--em-njobs 8`) to `run_one_scenario.sh`. | None (it generates nothing itself). |
-| `run_all_hypotheses.py` | All of the above with their shared options (`--data --config --base --mode --stage --fast --dry-run --keep-going`); `--only 1 3` picks some, `--list` shows them. | Whatever the three scripts generate. |
+| `hyp4_solver_type.py` | **H4**: does the EM solver alone change the calibration? ROPE (random sampler) against L-BFGS-B with everything else identical (`--solvers rope lbfgsb`). Each solver has its own Step 1 cache and a K = 0 reference. No `--em-method` (the solver is the factor). | Generated `real_solver_<solver>`, `real_solver_k0_<solver>`. |
+| `hyp5_layer_depths.py` | **H5**: do the layer interfaces have to be inverted? Same scenario with `fixed_depths` true or false (`--depth-modes fixed free`), each with its own cache and K = 0 reference. `--em-method` accepts `lbfgsb` (default), `rope`, `base`; `lbfgsbfix` is refused because it forces fixed depths. L-BFGS-B with free depths is 2-7 x slower. | Generated `real_depth_<mode>`, `real_depth_k0_<mode>`. |
+| `hyp_common.py` | Not run directly: the shared engine of the `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--data --config --base --mode --stage --out-dir --em-method --fast --dry-run --keep-going` (hyp2-hyp5 and `run_all_hypotheses.py` also `--no-k0`; hyp4 has no `--em-method`, hyp5 not `lbfgsbfix`), and forwards anything after a bare `--` (e.g. `--em-njobs 8`) to `run_one_scenario.sh`. | None (it generates nothing itself). |
+| `run_all_hypotheses.py` | The hypothesis scripts with their shared options (`--data --config --base --mode --stage --fast --dry-run --keep-going`); `--only 1 3` picks some, `--list` shows them. The default set is H1-H3; **H4 and H5 only with `--only 4 5`** (ROPE and free depths are slow). `--em-method` is forwarded only where the script accepts it. | Whatever the scripts generate. |
 | `run_real_all_scenarios.sh` | The fixed paper batch: `real_single_*` / `real_multi_*` (forward model `_base` / `_fslin` / `_cs`, fixed vs free interfaces `_depth_free`, WS freedom `_ws_*`), then `--beta`, `--gamma` and bandwidth sweeps and (commented out) `--train-val-split`. It starts with `--list` and `--validate`. Does not generate anything. | The existing `real_single_*` (2 layers) and `real_multi_*` (4 layers). |
 
-The hypothesis scripts run `--stage calibrate` by default (probe neighbourhoods only, Steps 0-5), because all three are about the calibration quality; `--stage none` does the full run; `--stage both` runs, for every scenario, `--stage calibrate` and then `--stage map --calibration <that calibrate run folder>` (Step 6 on all EM points, inverting only the K selected members). If a calibrate run fails its map is skipped; with `--fast` the map is skipped too, because `--stage map` cannot be combined with `--quick`. The summary CSV has a `stage` column (one row per scenario and stage). `both` maps every scenario, which is expensive for exploratory variants you will discard (e.g. `L3`/`L4` horizons without a sensor): use `calibrate` to compare, then `both` on the chosen scenario. Each writes `<out-dir>/<hyp>_scenarios.json` (the generated scenarios; your JSON is not edited) and `<out-dir>/<hyp>_summary.csv` (final RMSE, CV score, ensemble size, runtime per scenario), under `mfc2_outputs/hypotheses/<hypothesis>/`. Step 1, the expensive ensemble inversion, is shared between the variants of one hypothesis. To add a hypothesis, copy `hyp3_localized_bandwidth.py`, change its question and scenario generator and register it in `run_all_hypotheses.py`. None of this has been run on the real data yet (see `run_paper_real.md`, a cheapest-first check that the dataset works with the pipeline).
+The hypothesis scripts run `--stage calibrate` by default (probe neighbourhoods only, Steps 0-5), because they are all about the calibration quality; `--stage none` does the full run; `--stage both` runs, for every scenario, `--stage calibrate` and then `--stage map --calibration <that calibrate run folder>` (Step 6 on all EM points, inverting only the K selected members). If a calibrate run fails its map is skipped; with `--fast` the map is skipped too, because `--stage map` cannot be combined with `--quick`. The summary CSV has a `stage` column (one row per scenario and stage). `both` maps every scenario, which is expensive for exploratory variants you will discard (e.g. `L3`/`L4` horizons without a sensor): use `calibrate` to compare, then `both` on the chosen scenario. Each writes `<out-dir>/<hyp>_scenarios.json` (the generated scenarios; your JSON is not edited) and `<out-dir>/<hyp>_summary.csv` (final RMSE, CV score, ensemble size, runtime per scenario), under `mfc2_outputs/hypotheses/<hypothesis>/`. Step 1, the expensive ensemble inversion, is shared between the variants of one hypothesis. To add a hypothesis, copy `hyp3_localized_bandwidth.py`, change its question and scenario generator and register it in `run_all_hypotheses.py`. None of this has been run on the real data yet (see `run_paper_real.md`, a cheapest-first check that the dataset works with the pipeline).
 
 ```bash
 python run_all_hypotheses.py --list                      # the hypotheses, nothing run
-python run_all_hypotheses.py --fast --dry-run            # plan of all three
-python run_all_hypotheses.py --fast                      # smoke test of all three (not a result)
+python run_all_hypotheses.py --fast --dry-run            # plan of the default set (H1-H3)
+python run_all_hypotheses.py --fast                      # smoke test of the default set (not a result)
 python run_all_hypotheses.py --only 2 3 --base real_L3_base    # H2 and H3 on the 3-layer scenario
+python run_all_hypotheses.py --only 4 5 --fast --dry-run       # solver test and layer-depth test (not in the default set)
+python hyp4_solver_type.py --solvers rope lbfgsb --stage calibrate   # ROPE against L-BFGS-B
+python hyp5_layer_depths.py --depth-modes fixed free                  # fixed against inverted interfaces
 python hyp1_layers_ws_freedom.py --designs L3 --free-k 1 2     # one hypothesis, its own options
 python run_all_hypotheses.py --stage both --dry-run      # plan: calibrate, then map, for every scenario
 python run_all_hypotheses.py --only 3 --stage both       # H3: calibrate then map
@@ -320,7 +331,7 @@ python run_all_hypotheses.py --only 2 3 --base real_L3_base        # H2 and H3 w
 | `run_real_PAPER.sh` | `run_real_all_scenarios.sh` |
 | `run_synthetic_PAPER.sh` | `run_synthetic_all_scenarios.sh` |
 | `run_real_study.py` | `hyp1_layers_ws_freedom.py` |
-| (new) | `hyp2_train_val_split.py`, `hyp3_localized_bandwidth.py`, `hyp_common.py` (shared engine), `run_all_hypotheses.py` |
+| (new) | `hyp2_train_val_split.py`, `hyp3_localized_bandwidth.py`, `hyp4_solver_type.py`, `hyp5_layer_depths.py`, `hyp_common.py` (shared engine), `run_all_hypotheses.py` |
 
 `run_pipeline.py` (the Python pipeline that `run_one_scenario.sh` calls) keeps its name.
 
@@ -357,7 +368,7 @@ python run_all_hypotheses.py --data synthetic --no-k0            # skip the K = 
 python generate_synthetic_real_mirror.py ... --em-method lbfgsb   # solver written into the generated scenario
 ```
 
-Every hypothesis includes the **K = 0 floor** (all four WS parameters pinned at `lab_p0`, nothing calibrated), the score a calibrated variant has to beat: hyp1 runs `--free-k 0 1 2 3 4` by default (`0 1 4` with `--fast`); hyp2 (`real_tv_k0`) and hyp3 (`real_bw_k0`) add one extra scenario that shares the Step 1 cache of the hypothesis, so it costs Steps 2-6 only. `--no-k0` drops it.
+Every hypothesis includes the **K = 0 floor** (all four WS parameters pinned at `lab_p0`, nothing calibrated), the score a calibrated variant has to beat: hyp1 runs `--free-k 0 1 2 3 4` by default (`0 1 4` with `--fast`); hyp2 (`real_tv_k0`), hyp3 (`real_bw_k0`), hyp4 (`real_solver_k0_<solver>`) and hyp5 (`real_depth_k0_<mode>`) add one extra scenario that shares the Step 1 cache of the hypothesis, so it costs Steps 2-6 only. `--no-k0` drops it.
 
 - `--standin-stations N` is **not the real station layout**: a jittered grid inside the footprint of all dense EM epochs. Pass `--coord-csv SOILNET_MFC2_coordinates_sensors.csv` instead to use the real one (the two options exclude each other).
 - `--depths0` sets the layer interfaces of the truth and the scenario. The default (`0.3 0.6 1.0`, 4 layers) has two layers the 15/30 cm TDR cannot see (the run warns about uncovered horizons); `--depths0 0.225` is the simple design.
@@ -389,7 +400,7 @@ Results: `comparison_output/1d_surface_vs_full_free{K}/` and `comparison_output/
 
 ## Number / distribution of SWC probes study (1-D synthetic)
 
-`study_swc_design.py` generates the scenarios, runs them, scores `theta_calc` against the synthetic truth and draws the comparison figures. Factors: number of SWC positions `n` (1, 2, 3, 5, 10), their distribution (`spread` / `clustered` / `random`), truth soil moisture (`smc` homo / hetero), truth Waxman-Smits parameters (`ws` homo / hetero), number of free WS parameters `K` (0-4, **K = 0 included by default**; 0 = all four known, the floor), the EMagPy regularisation (`noreg` / `beta` / `gamma` / `both`), what is known (`pin`) with an error on it (`err`), and the EM inversion method (`em`: `lbfgsbfix` by default / `lbfgsb` / `rope` / `base`, see 2b and "EM inversion method and speed"). `ws` also has the opt-in lateral / depth cases `heterox` / `heteroz` and their soil-like versions `soilhomo` / `soilheterox` / `soilheteroz` (baseline a, m, sigma_w, sigma_s = 0.8, 2, 100, 100 instead of 0.5, 3, 500, 100).
+`study_swc_design.py` generates the scenarios, runs them, scores `theta_calc` against the synthetic truth and draws the comparison figures. Factors: number of SWC positions `n` (1, 2, 3, 5, 10), their distribution (`spread` / `clustered` / `random`), truth soil moisture (`smc` homo / hetero), truth Waxman-Smits parameters (`ws` homo / hetero), number of free WS parameters `K` (0-4, **K = 0 included by default**; 0 = all four known, the floor), the EMagPy regularisation (`noreg` / `beta` / `gamma` / `both`), what is known (`pin`) with an error on it (`err`), and the EM inversion method (`em`: `lbfgsbfix` by default / `lbfgsb` / `rope` / `base`, see 2b and "EM inversion method and speed"). `ws` has `homo`, the legacy `hetero` (m and sigma_s along x AND a and sigma_w with depth, mixed) and the separate cases `heterox` (lateral only: m, sigma_s along x) and `heteroz` (depth only: same ranges over the horizons), plus the soil-like versions `soilhomo` / `soilheterox` / `soilheteroz` (baseline a, m, sigma_w, sigma_s = 0.8, 2, 100, 100 instead of 0.5, 3, 500, 100).
 
 ```bash
 python study_swc_design.py --dry-run                      # write + validate the scenarios, print the commands
@@ -397,6 +408,11 @@ python study_swc_design.py --preset smoke --fast          # smoke test of the wh
 python study_swc_design.py --preset oat                   # one factor at a time around the reference (16 runs)
 python study_swc_design.py --preset main --keep-going --resume   # truth x K x n, + distribution and reg at n = 5 (176 runs)
 python study_swc_design.py --analyze-only                 # redo summary + figures from the run log
+# what is known (pin) x truths; truths default to homo, heterox, heteroz (15 runs; --ws hetero = legacy mix)
+python study_swc_design.py --preset known --dry-run
+python study_swc_design.py --preset known --resume --keep-going
+python study_swc_design.py --preset known --ws heterox heteroz --resume --keep-going      # only lateral and depth cases
+python study_swc_design.py --preset known --err -20 -10 10 20 --resume --keep-going       # + error on the known values (51 runs)
 python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10   # any subset of the levels
 # K = 0 floor only, legacy and soil truth (solver: lbfgsbfix, the default)
 python study_swc_design.py --smc hetero --ws homo soilhomo --reg noreg --free-k 0 --n-swc 5 --dist spread \
