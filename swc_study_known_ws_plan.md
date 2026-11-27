@@ -1,46 +1,19 @@
 # SWC study: does knowing some WS parameters help retrieve the others?
 
-Commit as me as author
-also I dont like the fact that for the WS heteregeneous case some parameters varies with depth other varies with lateral distance. Create both cases. 
-
 Plan for extending `study_swc_design.py` (branch `feat/localized-ws-maps`).
 Each step below is one patch (`git am`), small, tested, and independent of the later ones.
 
 
-# TODO (to organize)
-I need to somehow match the plot type between the truth and optimal SMC plots (same for WS params and for RMSE ...). Maybe using a imshow? Prepare a plan in the .md file to do this. Same number of pixels, share axis, plot side by side 
+# TODO (status 2026-11-27)
 
-also create a new hyp file that test only the type of solver (rope, against lbfgsb)
-and another one with fixed/or free layers depths
-
-add all this as todo tasks swc_study_known_ws_plan
-
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/common_points_footprint.png
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_01_1_ALENTO_040820.png
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_02_2_ALENTO_291020.png
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_03_3_ALENTO_151220.png
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_04_4_ALENTO_050221.png
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_05_5_ALENTO_300421.png
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_06_6_ALENTO_050821.png
-[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_07_7_ALENTO_161221.png
-[DIAG][WARN] filterRepeated() failed for '1_ALENTO_040820.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
-[DIAG][WARN] No coils detected for '1_ALENTO_040820.csv' — skipping emagpy show().
-[DIAG][WARN] filterRepeated() failed for '2_ALENTO_291020.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
-[DIAG][WARN] No coils detected for '2_ALENTO_291020.csv' — skipping emagpy show().
-[DIAG][WARN] filterRepeated() failed for '3_ALENTO_151220.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
-[DIAG][WARN] No coils detected for '3_ALENTO_151220.csv' — skipping emagpy show().
-[DIAG][WARN] filterRepeated() failed for '4_ALENTO_050221.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
-[DIAG][WARN] No coils detected for '4_ALENTO_050221.csv' — skipping emagpy show().
-[DIAG][WARN] filterRepeated() failed for '5_ALENTO_300421.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
-[DIAG][WARN] No coils detected for '5_ALENTO_300421.csv' — skipping emagpy show().
-[DIAG][WARN] filterRepeated() failed for '6_ALENTO_050821.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
-[DIAG][WARN] No coils detected for '6_ALENTO_050821.csv' — skipping emagpy show().
-[DIAG][WARN] filterRepeated() failed for '7_ALENTO_161221.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
-[DIAG][WARN] No coils detected for '7_ALENTO_161221.csv' — skipping emagpy show().
-[DIAG][WARN] eca_map_temporal_median failed: Unable to allocate 169. GiB for an array with shape (106342, 106342, 2) and data type float64
-[DIAG] Done — 8 figures written to 'mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics'
-
-
+| # | Request | Status |
+|---|---|---|
+| T1 | Commit as BenjMy (author), patches for `git am` | done: every patch of this batch carries the author of the repo history |
+| T2 | WS heterogeneous truth: parameters varying with depth and with lateral distance must be separate cases | done before this batch (patch 2d): `--ws heterox` (m, sigma_s along x only) and `--ws heteroz` (same ranges, depth only), soil versions `soilheterox` / `soilheteroz`; tests in `test_study_swc_design.py`. The legacy `hetero` (m, sigma_s along x AND a, sigma_w with depth) is kept, because presets must keep their designs (section 1). **Open decision** in 7a. |
+| T3 | Same plot type for truth and optimal SMC / WS / RMSE (imshow, same pixels, shared axes, side by side) | plan written (7b), not implemented |
+| T4 | New hyp file: solver type only (ROPE against L-BFGS-B) | done: `hyp4_solver_type.py` (7c) |
+| T5 | New hyp file: fixed or free layer depths | done: `hyp5_layer_depths.py` (7d) |
+| T6 | Add all of this as todo tasks in this file | this table and section 7 |
 
 ## 0. Why the current study cannot show the message
 
@@ -459,3 +432,78 @@ truth, so those runs must be redone without `--resume`.
   offset the EC error and look like an improvement.
 * Tests: `test_study_swc_design.py` and `test_ws_start_values.py` at the repo root expect to live in
   `tests/`, which holds older copies. `tests/data/scenarios_golden.json` is missing.
+
+## 7. Batch of 2026-11-27 (T1-T6)
+
+### 7a - Heterogeneous WS truth: lateral and depth cases (T2)
+
+* Already available: `heterox` (lateral only), `heteroz` (depth only), `soilheterox`, `soilheteroz`
+  (`WS_FIELDS` in `study_swc_design.py`). Nothing was changed for T2 in this batch.
+* **Open decision**: the presets (`smoke`, `oat`, `main`, `full`) and `REFERENCE` still use the legacy `hetero`
+  (mixed). Switching them to `heterox` and `heteroz` changes the designs and names of every preset run, which
+  section 1 forbids for the existing presets. Proposal: a NEW preset `known` (Patch 3) built on `heterox` and
+  `heteroz` only, and `hetero` kept for old runs. Confirm before Patch 3.
+* To do (small): `--ws hetero` prints a one-line note in `--dry-run` saying it mixes lateral and depth variation and
+  naming `heterox` / `heteroz`.
+
+### 7b - Same plot type for truth and optimal maps (T3), plan only
+
+Today: the truth maps (`plots/synthetic_truth.py`: `fig_xy`, `fig_xz`, `fig_ws_params`) are `imshow` on the regular
+truth grid (`origin="lower"`, `extent`, `vmin` / `vmax` per figure). The optimal maps of the pipeline (Step 6,
+`steps/step6_plots.py`, `maps_export.py`, `replot_maps.py`) are one dot per EM point (scatter) on the survey
+points. The two cannot be compared by eye: different marks, different pixel size, different colour limits.
+
+Target: for each quantity Q in {theta (SMC), a, m, sigma_w, sigma_s, error = optimal - truth, RMSE}, one figure
+with the truth and the optimal map side by side, per layer (rows) and epoch (columns of a second figure):
+
+1. **One grid.** Interpolate the optimal values to the truth grid (nx, ny of `ground_truth`) with
+   `scipy.interpolate.griddata` (linear, nearest fill) and mask the cells farther than a survey-point distance
+   threshold (same rule as the XY coverage fade: `xy coverage fade`, count threshold capped by the point
+   density). Same number of pixels, same `extent`, same `origin`.
+2. **imshow for both.** `ax.imshow(grid, origin="lower", extent=ext, interpolation="nearest")`; no scatter.
+3. **Shared axes and colour scale.** `sharex=True, sharey=True`; one `vmin` / `vmax` per row (union of truth and
+   optimal, rounded; the WS ranges come from the scenario bounds); one colourbar per row. The difference panel
+   (optimal - truth) uses a symmetric diverging scale.
+4. **RMSE map.** Per-cell RMSE over epochs on the same grid, same colour scale as the other RMSE panels of the
+   study; probe positions drawn as markers on every panel (`read_stations`).
+5. **Where.** New `plots/truth_vs_optimal.py` with pure helpers (`to_truth_grid`, `shared_limits`,
+   `side_by_side`) and a stand-alone entry `plot_truth_vs_optimal.py --run <run folder>`; called from
+   `step6_plots.py` and from `study_swc_design.py --analyze-only` (`fig_truth_vs_optimal_*.png`).
+6. **Tests** (`tests/test_truth_vs_optimal.py`): the two images have the same shape and extent; a constant field
+   gives a constant grid; limits are shared; cells beyond the distance threshold are masked.
+7. Old scatter figures stay (`replot_maps.py` still reads `maps.nc`); the new figures are added, not replaced.
+
+### 7c - `hyp4_solver_type.py`: ROPE against L-BFGS-B (T4), done
+
+* One parent (copy of the base scenario) and one child per solver; the children differ only by `param_grid.method`
+  (`["ROPE"]` or `["L-BFGS-B"]`) and carry their own Step 1 cache and run folder.
+* A K = 0 reference per solver (`real_solver_k0_<solver>`, all four WS parameters pinned) shares that solver's
+  Step 1 cache. The name is `k0_<solver>` and not `<name>_k0` because run-log rows are matched by name prefix.
+* No `--em-method` option (the solver is the factor); `--solvers rope lbfgsb`, `--no-k0`, `--data synthetic`,
+  `--stage`, `--fast`, `--dry-run` as in the other hyp scripts.
+* Registered as hypothesis 4 in `run_all_hypotheses.py` (only with `--only 4`, ROPE is slow); `run_log.py` maps
+  `real_solver_*` to the study type `hyp4_solver_type`.
+* Tests: `tests/test_hyp4_hyp5.py`. Not run on data here (no field data, no EMagPy in the sandbox): run
+  `python hyp4_solver_type.py --fast` first.
+* To do: add both hyps to `study_status.py` (not done: it needs the listing of expected scenarios per study).
+
+### 7d - `hyp5_layer_depths.py`: fixed or free layer depths (T5), done
+
+* Children differ only by `fixed_depths` (`true` / `false`); own cache per mode; K = 0 reference per mode
+  (`real_depth_k0_<mode>`).
+* `--em-method` accepts `lbfgsb` (default), `rope`, `base`; `lbfgsbfix` is refused because it forces
+  `fixed_depths = true` and would cancel the factor. (`em_options.add_em_arg(choices=...)`,
+  `hyp_common.add_common_args(em_choices=...)`.)
+* The plan prints a note that L-BFGS-B with free depths is 2-7 x slower (section 2e).
+* Registered as hypothesis 5 in `run_all_hypotheses.py` (`--only 5`); study type `hyp5_layer_depths`.
+* Idea not done: a third mode with depths free only for the top interface, and the same test on the synthetic
+  mirror to see which mode recovers the true interfaces (`--data synthetic`).
+
+### 7e - Notes on this batch
+
+* `run_all_hypotheses.py`: default set is still 1-3; `--em-method` is forwarded only to scripts that accept the
+  value (hyp4 has none, hyp5 skips `lbfgsbfix`).
+* Sandbox test run: 483 passed; 3 failures / errors that need a real EMagPy (`test_run_pipeline_exposes_em_njobs_flag`,
+  `test_truth_reproduces_generated_eca`, `test_map_is_scatter_one_dot_per_point`; the stub has no `forward`). They
+  fail the same way without this batch. `tests/data/scenarios_golden.json` had to be generated first
+  (`python tests/make_scenario_golden.py`).
