@@ -51,8 +51,11 @@ def scenario_name(method: str) -> str:
     return f"real_tv_{method}"
 
 
+K0_NAME = "real_tv_k0"
+
+
 def build_config(base_raw: dict, methods: list[str], out_dir: str, base: str,
-                 fast: bool = False) -> dict:
+                 fast: bool = False, with_k0: bool = True) -> dict:
     parent = hc.make_parent(
         base_raw, cache_tag=f"hyp2_{base}", out_dir=out_dir, fast=fast,
         description="Parent of the train/validation hypothesis (see hyp2_train_val_split.py).")
@@ -66,6 +69,9 @@ def build_config(base_raw: dict, methods: list[str], out_dir: str, base: str,
             "output_dir": os.path.join(out_dir, "runs"),   # one shared Step 1 cache
             "cache_tag": f"hyp2_{base}",
         }
+    if with_k0:
+        cfg[K0_NAME] = hc.k0_child("real_tv_parent", base=base, out_dir=out_dir, cache_tag=f"hyp2_{base}",
+                                   what="the train/validation hypothesis")
     return cfg
 
 
@@ -75,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--methods", nargs="+", default=list(METHODS), choices=list(METHODS),
                     help=f"split methods to run (default: all of {list(METHODS)})")
+    hc.add_k0_arg(ap)
     hc.add_common_args(ap, default_out_dir=OUT_DIR)
     args = ap.parse_args(argv)
 
@@ -82,10 +89,14 @@ def main(argv: list[str] | None = None) -> int:
         base_raw = hc.resolve_base(args.config, args.base)
     except KeyError as exc:
         ap.error(str(exc))
-    cfg = build_config(base_raw, args.methods, args.out_dir, args.base, args.fast)
+    cfg = build_config(base_raw, args.methods, args.out_dir, args.base, args.fast, not args.no_k0)
     names = [scenario_name(m) for m in args.methods]
     plan = [f"  {m:17s} {METHODS[m]}" for m in args.methods]
     info = {scenario_name(m): {"split": m} for m in args.methods}
+    if not args.no_k0:
+        names.append(K0_NAME)
+        plan.append(f"  {'K = 0':17s} reference: all WS parameters pinned (nothing calibrated)")
+        info[K0_NAME] = {"split": "K0"}
     return hc.execute(tag=TAG, cfg=cfg, names=names, args=args, extra=extra,
                       plan_lines=plan, row_info=info, extra_columns=SUMMARY_COLUMNS)
 

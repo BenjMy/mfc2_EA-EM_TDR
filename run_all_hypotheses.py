@@ -45,10 +45,13 @@ HYPOTHESES = {
 def forwarded_args(args: argparse.Namespace, module, out_root: str) -> list[str]:
     """argv for one hypothesis script, built from the shared options."""
     out = ["--config", args.config, "--base", args.base, "--mode", args.mode,
-           "--stage", args.stage, "--out-dir", os.path.join(out_root, os.path.basename(module.OUT_DIR))]
+           "--stage", args.stage, "--em-method", args.em_method,
+           "--out-dir", os.path.join(out_root, os.path.basename(module.OUT_DIR))]
     for flag in ("fast", "dry_run", "keep_going"):
         if getattr(args, flag):
             out.append("--" + flag.replace("_", "-"))
+    if args.no_k0 and hasattr(module, "K0_NAME"):       # hyp2 / hyp3 carry a K = 0 reference run (hyp1 uses --free-k)
+        out.append("--no-k0")
     return out
 
 
@@ -62,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip", nargs="+", choices=list(HYPOTHESES), default=[], metavar="N")
     ap.add_argument("--out-root", default=hc.OUT_ROOT,
                     help="parent folder of the per-hypothesis output folders")
+    hc.add_k0_arg(ap)
     hc.add_common_args(ap, default_out_dir=hc.OUT_ROOT)
     ap.set_defaults(out_dir=None)
     args = ap.parse_args(argv)

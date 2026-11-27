@@ -81,6 +81,29 @@ def make_parent(base_raw: dict, *, cache_tag: str, out_dir: str, description: st
     return parent
 
 
+WS_PARAMS = ("a", "m", "sigma_w", "sigma_s")
+
+
+def k0_child(parent_name: str, *, base: str, out_dir: str, cache_tag: str, what: str) -> dict:
+    """K = 0 reference of a hypothesis: all four WS parameters pinned at ``lab_p0``, nothing calibrated.
+
+    It extends the same parent and shares the hypothesis' Step 1 cache (``cache_tag`` / run folder), so it costs
+    only Steps 2-6: it is the floor that every calibrated variant has to beat.
+    """
+    return {"extends": parent_name,
+            "description": f"K = 0 reference of {what}: all WS parameters pinned at lab_p0 (nothing calibrated); "
+                           f"otherwise = {base}.",
+            "ws_fixed_params": {p: True for p in WS_PARAMS},
+            "output_dir": os.path.join(out_dir, "runs"),
+            "cache_tag": cache_tag}
+
+
+def add_k0_arg(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("--no-k0", action="store_true",
+                    help="skip the K = 0 reference run (all four WS parameters pinned, nothing calibrated; it shares "
+                         "the Step 1 cache of the hypothesis, so it is cheap)")
+
+
 def stages_to_run(stage: str, fast: bool = False) -> list[str]:
     """The ``run_one_scenario.sh --stage`` values executed for one scenario.
 

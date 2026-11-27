@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="add or override a layer design (interface depths in m)")
     ap.add_argument("--free-k", nargs="+", type=int, default=None,
                     help="numbers of free WS parameters (0-4, order sigma_s, m, sigma_w, a); "
-                         "default 1 2 3 4, or 1 4 (extremes only) with --fast")
+                         "default 0 1 2 3 4 (0 = nothing calibrated: the floor), or 0 1 4 with --fast")
     ap.add_argument("--tdr-depths", nargs="+", type=float, default=list(TDR_DEPTHS),
                     help="TDR sensor depths [m] used for the coverage report")
     hc.add_common_args(ap, default_out_dir=OUT_DIR)
@@ -205,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         base_raw = hc.resolve_base(args.config, args.base)
     except KeyError as exc:
         ap.error(str(exc))
-    ks = args.free_k or ([1, 4] if args.fast else [1, 2, 3, 4])
+    ks = args.free_k or ([0, 1, 4] if args.fast else [0, 1, 2, 3, 4])      # K = 0: nothing calibrated (floor)
     cfg = build_study_config(base_raw, designs, ks, tuple(args.tdr_depths), args.fast, args.out_dir)
 
     names = [n for n in cfg if n.startswith("real_study_") and n != parent_name()]

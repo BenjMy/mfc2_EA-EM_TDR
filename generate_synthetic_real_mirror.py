@@ -49,6 +49,7 @@ Outputs
 from __future__ import annotations
 
 from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
+import em_options
 import argparse
 import os
 import numpy as np
@@ -497,7 +498,8 @@ def generate_tdr_stations(outdir: str, coord_csv: str, start_date: str,
 # Scenario JSON
 # ---------------------------------------------------------------------------
 
-def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str) -> str:
+def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str,
+                        em_method: str = em_options.RUN_DEFAULT_EM) -> str:
     scenario = {
         "mfc2_real_synthetic_mirror": {
             "description": (
@@ -519,7 +521,7 @@ def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str)
             "ws_fixed_params": {"a": True, "m": True, "sigma_w": False, "sigma_s": False},
             "lab_p0": [WS_A, WS_M, WS_SIGMA_W, WS_SIGMA_S],
             "fixed_depths": True,
-            "param_grid": {"method": ["MCMC"], "forwardModel": ["CS"]},
+            "param_grid": {"method": ["L-BFGS-B"], "forwardModel": ["CS"]},   # solver: see --em-method
             "alpha_range_log": [0.001, 5.0, 9],
             "cond_ranges": [[0.01, 300.0]] * N_LAYERS,
             "gamma": 0.0,
@@ -531,6 +533,7 @@ def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str)
         }
     }
     import json
+    em_options.apply_em_method(scenario["mfc2_real_synthetic_mirror"], em_method, tag_paths=False)
     path = os.path.join(outdir, "mfc2_real_synthetic_mirror.json")
     with open(path, "w") as f:
         json.dump(scenario, f, indent=2)
@@ -574,6 +577,7 @@ def main():
                      help="How the sigma_s truth varies: constant (default), per_horizon, "
                           "gradient (west->east) or zones (two zones). See configure_ws_truth.")
     ap.add_argument("--seed", type=int, default=42)
+    em_options.add_em_arg(ap)      # solver written into the scenario (default lbfgsb; the mirror has fixed depths)
     args = ap.parse_args()
     configure_ws_truth(args.ws_truth)
     if args.depths0 is not None:
@@ -601,7 +605,7 @@ def main():
 
     em_dir = os.path.join(args.outdir, "EMI_MFC2_synthetic")
     tdr_dir = os.path.join(args.outdir, "daily_MFC_synthetic")
-    write_scenario_json(args.outdir, em_dir, tdr_dir, os.path.abspath(args.coord_csv))
+    write_scenario_json(args.outdir, em_dir, tdr_dir, os.path.abspath(args.coord_csv), args.em_method)
 
     print(f"\n[DONE] {len(em_records)} EM epochs, "
           f"{len(pd.read_csv(args.coord_csv, delimiter=';', comment='['))} TDR stations "

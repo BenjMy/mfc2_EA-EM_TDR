@@ -54,7 +54,8 @@ matplotlib.use("Agg")
 
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
-from tqdm import tqdm
+import functools
+import progress_eta
 
 import EA_EM_config as cfgpaths  # central input-data paths (datasets)
 
@@ -1558,7 +1559,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
          quick_epochs: int | None = None,
          stage: str = "full",
          calibration: str | None = None,
-         em_njobs="auto"):
+         em_njobs="auto",
+         eta_benchmark: bool = True):
     """
     Run the full EA-EM pipeline.
 
@@ -2910,7 +2912,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
                 for _t in tasks:
                     _t[5]["njobs"] = _njobs
             print(f"[INFO] EM inversion njobs per task: {_njobs} ({_njobs_why}).")
-            print(f"[INFO] Dispatched {len(tasks)} tasks to parallel pool...")
+            _n_workers = max(1, min(len(tasks), os.cpu_count() or 1))
+            _pts_by_file = {fp: progress_eta.count_csv_points(fp) for fp in dict.fromkeys(t[1] for t in tasks)}
+            _task_points = [_pts_by_file[t[1]] for t in tasks]
+            _stage_label = f"Step 1 | {STAGE}"
+            if eta_benchmark and not quick and len(tasks) > 1:
+                _costs = progress_eta.benchmark_costs(_invert_single_worker, tasks)
+                _msg = progress_eta.describe_estimate(_costs, tasks, _task_points, _n_workers, _njobs,
+                                                      label=_stage_label)
+                print(_msg if _msg else "[ETA] no upfront estimate (benchmark not possible); live ETA follows.")
+            print(f"[INFO] Dispatched {len(tasks)} tasks to {_n_workers} worker(s) "
+                  f"({sum(_task_points):,} points in total)...")
 
             unordered_results = []
             failed_tasks = []       # list of (task_idx, error_message)
@@ -2924,13 +2936,16 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # shut down" hangs, not just the matplotlib instance of it.
             # Costs a bit more per-worker startup time; negligible next to
             # the ~11-minute inversion run itself.
-            with ProcessPoolExecutor(mp_context=mp.get_context("spawn")) as executor:
-                results = tqdm(
-                    executor.map(_invert_single_worker, tasks),
-                    total=len(tasks), desc="Inverting Ensembles", unit="task",
-                    ncols=90,
-                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
-                )
+            _ctx = mp.get_context("spawn")
+            _shared = _ctx.Array("d", len(tasks), lock=False)     # points done per running task (progress line)
+            _tracker = progress_eta.Step1Progress(_stage_label, _task_points, _n_workers, shared=_shared)
+            _ordered = [t[0] for t in tasks] == list(range(len(tasks)))
+            with ProcessPoolExecutor(max_workers=_n_workers, mp_context=_ctx,
+                                     initializer=progress_eta.init_worker,
+                                     initargs=(_shared if _ordered else None,)) as executor:
+                # EMagPy's own per-point output is filtered in the workers and shown as one progress line.
+                results = progress_eta.run_ordered_progress(
+                    executor, functools.partial(progress_eta.run_filtered, _invert_single_worker), tasks, _tracker)
                 for res in results:
                     t_idx_res, m_res, d_res, p_res, err_res = res
                     unordered_results.append((t_idx_res, m_res, d_res, p_res))
@@ -5507,6 +5522,11 @@ if __name__ == "__main__":
              "not depend on it. Pass 1 to disable.",
     )
     parser.add_argument(
+        "--no-eta-benchmark", action="store_true",
+        help="Step 1: skip the short benchmark (about 3 points per solver / forward model) that gives the upfront "
+             "time estimate. The live progress line with ETA is always shown.",
+    )
+    parser.add_argument(
         "--stage", choices=list(stage_split.STAGES), default="full",
         help="Real data only. 'full' (default): one run does everything. 'calibrate': "
              "EM points restricted to the probe neighbourhoods, FULL ensemble, Steps 0-5, "
@@ -5704,7 +5724,8 @@ if __name__ == "__main__":
              k_selection=args.k_selection,
              em_footprint_diagnostic=args.em_footprint_diagnostic,
              quick=args.quick, quick_epochs=args.quick_epochs,
-             stage=args.stage, calibration=args.calibration, em_njobs=args.em_njobs)
+             stage=args.stage, calibration=args.calibration, em_njobs=args.em_njobs,
+             eta_benchmark=not args.no_eta_benchmark)
     except Exception:
         # reporter.failure() was already called inside main() and the report
         # was written there.  We just set the shell exit code to non-zero.

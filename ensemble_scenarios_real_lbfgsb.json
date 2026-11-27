@@ -1,0 +1,1287 @@
+{
+  "_comment": [
+    "Ensemble scenario configuration for REAL MFC2 field-data runs only.",
+    "Companion file to 'ensemble_scenarios.json' (synthetic scenarios).",
+    "Pass via:  ./run_one_scenario.sh -s <name> -c ensemble_scenarios_real.json",
+    "or:        python run_pipeline.py --scenario <name> --config ensemble_scenarios_real.json",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "SCENARIO NAMING",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  real_<layer_group>_<variant>",
+    "",
+    "  layer_group:",
+    "    single   1 interface  (depths0=[0.225], 2 layers) -- matches 15/30cm",
+    "             SoilNet TDR depths, same geometry as the original '2d_real'.",
+    "    multi    3 interfaces (depths0=[0.3,0.6,1.0], 4 layers) -- matches the",
+    "             synthetic '2d' family layout, for a richer real-data profile.",
+    "",
+    "  variant (each changes EXACTLY ONE axis relative to that group's _base):",
+    "    base             both forward models [FSlin, CS], fixed_depths=true,",
+    "                     ws_fixed_params = {a:true, m:true, sigma_w:false,",
+    "                     sigma_s:false} (only sigma_w & sigma_s float).",
+    "    fslin            forwardModel=[FSlin] only  (else = base)",
+    "    cs               forwardModel=[CS] only     (else = base)",
+    "    depth_free       fixed_depths=false          (else = base)",
+    "    ws_all_fixed     ws_fixed_params: a,m,sigma_w,sigma_s all true (else = base)",
+    "    ws_free_sigmaw   ws_fixed_params: only sigma_w floats (a,m,sigma_s fixed)",
+    "    ws_free_sigmas   ws_fixed_params: only sigma_s floats (a,m,sigma_w fixed)",
+    "",
+    "  14 scenarios in the paper matrix = 2 layer_groups x 7 variants.",
+    "  + 5 extras (19 in total): real_single_ws_free_all, the two test scenarios",
+    "  real_single_test_grid / real_single_test_probes, and the 3-layer scenarios",
+    "  real_L3_base / real_single_test_probes_L3 (depths0 = [0.225, 0.6]).",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "WS_LOCALIZED_BANDWIDTH_SWEEP -- ALWAYS SET, EVERY SCENARIO",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  Every scenario in this file sets ws_localized_bandwidth_sweep = [0.5, 1, 3, 5, 8, 12, 20] , so the leave-one-probe-out bandwidth",
+    "  CV + the localized Step-2 diagnostic run automatically on every call in",
+    "  run_real_all_scenarios.sh -- no extra flag needed (same convention as '2d',",
+    "  '2d_intermediate', '2d_dense_tdr' in the synthetic scenarios file).",
+    "  To try DIFFERENT candidate bandwidths for a one-off run without editing",
+    "  this JSON, pass --ws-localized-bandwidth-sweep <c1> <c2> ... on the CLI",
+    "  -- it overrides the JSON value for that run only.",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "WHAT ELSE IS CLI-ONLY (not baked into this JSON)",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  beta, gamma, and train_val_split are all CLI-sweepable per",
+    "  run_one_scenario.sh and are driven from run_real_all_scenarios.sh / hyp2_train_val_split.py instead of being",
+    "  set here. Only axes that CANNOT be set from the CLI (forward model,",
+    "  fixed_depths, ws_fixed_params, layer geometry) get their own named",
+    "  scenario in this file.",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "SHARED SETTINGS (same across all 19 scenarios unless noted)",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  em_data_dir / tdr_data_dir / coord_file  NOT set here: they come from the dataset",
+    "                    selected in EA_EM_config.py (default 'mfc2'; --dataset NAME or",
+    "                    $EA_EM_DATASET to change). A scenario may still set them explicitly.",
+    "  em_unit           ppm  (GEM-2 quadrature -- do not change to 'ppt')",
+    "  time_tolerance_days  1.0",
+    "  spatial_match_tolerance_m  3.0  (time-lapse epoch matching)",
+    "  lab_p0            [0.5, 3.0, 500.0, 100.0]  (flat, applied to every horizon)",
+    "  alpha_range_log   [0.001, 5.0, 5]  (log-spaced sweep, 5 steps)",
+    "  ws_localized_bandwidth_sweep  [0.5, 1, 3, 5, 8, 12, 20]",
+    "  method            ['ROPE']  (only optimiser that supports alpha/beta/gamma)",
+    "  gamma             0.0 in JSON -- override with --gamma from the CLI for",
+    "                    time-lapse runs (no-op on single-epoch data regardless).",
+    "",
+    "  To use data stored elsewhere / another site, define a dataset in",
+    "  EA_EM_config.py (or EA_EM_datasets.json) and pass --dataset NAME.",
+    "EM method switched to L-BFGS-B by em_options.py (--em-method lbfgsb)."
+  ],
+  "_schema": {
+    "required": [
+      "depths0",
+      "fixed_depths",
+      "param_grid",
+      "cond_ranges"
+    ],
+    "optional": [
+      "output_dir",
+      "realization_index",
+      "forward_model",
+      "gamma",
+      "cache_tag",
+      "description",
+      "swc_depths",
+      "alpha_range_log",
+      "data_source",
+      "em_data_dir",
+      "em_unit",
+      "tdr_data_dir",
+      "coord_file",
+      "time_tolerance_days",
+      "spatial_match_tolerance_m",
+      "ws_fixed_params",
+      "lab_p0",
+      "window_m",
+      "ws_localized_bandwidth_sweep",
+      "drop_coils"
+    ]
+  },
+  "real_single_base": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Base scenario for this layer group -- all other variants change exactly one axis relative to this one.",
+    "output_dir": "mfc2_outputs/real_single_base_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_base_lbfgsb"
+  },
+  "real_single_fslin": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_single_base (forwardModel=['FSlin'] only).",
+    "output_dir": "mfc2_outputs/real_single_fslin_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_fslin_lbfgsb"
+  },
+  "real_single_cs": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_single_base (forwardModel=['CS'] only).",
+    "output_dir": "mfc2_outputs/real_single_cs_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_cs_lbfgsb"
+  },
+  "real_single_depth_free": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FREE. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Depth-varying variant of real_single_base (fixed_depths=false instead of true).",
+    "output_dir": "mfc2_outputs/real_single_depth_free_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_depth_free_lbfgsb"
+  },
+  "real_single_ws_all_fixed": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_single_ws_all_fixed_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_ws_all_fixed_lbfgsb"
+  },
+  "real_single_ws_free_sigmaw": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_single_ws_free_sigmaw_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_ws_free_sigmaw_lbfgsb"
+  },
+  "real_single_ws_free_sigmas": {
+    "description": "Real MFC2 field-data run (single interface at 0.225 m (2 layers), matches 15/30 cm SoilNet TDR depths). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}. Waxman-Smits fixed-params variant of real_single_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}).",
+    "output_dir": "mfc2_outputs/real_single_ws_free_sigmas_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_ws_free_sigmas_lbfgsb"
+  },
+  "real_single_ws_free_all": {
+    "extends": "real_single_base",
+    "description": "Real MFC2 field-data run, as real_single_base but ALL four Waxman-Smits parameters free (a, m, sigma_w, sigma_s). 'a' starts at 1.0 (not on the default lower bound 0.5) and ws_bounds lets it go down to 0.2, otherwise every ensemble member is clipped onto 0.5 (zero spread; see the free4 case in to-do.md). Caveat: 'a' is poorly identified (it enters through (sigma_w + sigma_s)/a and trades off with m and sigma_w), so read its spread in the WS histograms, not as a recovered value.",
+    "output_dir": "mfc2_outputs/real_single_ws_free_all_lbfgsb",
+    "ws_fixed_params": {
+      "a": false,
+      "m": false,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      1.0,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "ws_bounds": {
+      "a": [
+        0.2,
+        5.0
+      ]
+    },
+    "cache_tag": "real_single_ws_free_all_lbfgsb"
+  },
+  "real_multi_base": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Base scenario for this layer group -- all other variants change exactly one axis relative to this one.",
+    "output_dir": "mfc2_outputs/real_multi_base_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_multi_base_lbfgsb"
+  },
+  "real_multi_fslin": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_multi_base (forwardModel=['FSlin'] only).",
+    "output_dir": "mfc2_outputs/real_multi_fslin_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_multi_fslin_lbfgsb"
+  },
+  "real_multi_cs": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Single-forward-model variant of real_multi_base (forwardModel=['CS'] only).",
+    "output_dir": "mfc2_outputs/real_multi_cs_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_multi_cs_lbfgsb"
+  },
+  "real_multi_depth_free": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FREE. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': False}. Depth-varying variant of real_multi_base (fixed_depths=false instead of true).",
+    "output_dir": "mfc2_outputs/real_multi_depth_free_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": false,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_multi_depth_free_lbfgsb"
+  },
+  "real_multi_ws_all_fixed": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_multi_ws_all_fixed_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_multi_ws_all_fixed_lbfgsb"
+  },
+  "real_multi_ws_free_sigmaw": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': False, 'sigma_s': True}).",
+    "output_dir": "mfc2_outputs/real_multi_ws_free_sigmaw_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": true
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_multi_ws_free_sigmaw_lbfgsb"
+  },
+  "real_multi_ws_free_sigmas": {
+    "description": "Real MFC2 field-data run (3 interfaces at 0.3/0.6/1.0 m (4 layers), matches the synthetic '2d' family layout). Forward model(s): FSlin, CS. Interfaces: FIXED. WS fixed params: {'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}. Waxman-Smits fixed-params variant of real_multi_base (ws_fixed_params={'a': True, 'm': True, 'sigma_w': True, 'sigma_s': False}).",
+    "output_dir": "mfc2_outputs/real_multi_ws_free_sigmas_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.3,
+      0.6,
+      1.0
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": true,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_multi_ws_free_sigmas_lbfgsb"
+  },
+  "real_single_test_grid": {
+    "description": "TEST: real_single_base with the EM surveys thinned to one point per 3 m cell (em_subsample.mode=grid). Same cells in every epoch; nearest EM point of every TDR probe kept. Fast check of the full pipeline.",
+    "output_dir": "mfc2_outputs/real_single_test_grid_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_test_grid_lbfgsb",
+    "em_subsample": {
+      "mode": "grid",
+      "cell_m": 3.0
+    }
+  },
+  "real_single_test_probes": {
+    "description": "TEST / calibration stage: real_single_base keeping only EM points within 5 m of a TDR probe (em_subsample.mode=probes). Enough for WS calibration (Steps 2/4/5), not for maps.",
+    "output_dir": "mfc2_outputs/real_single_test_probes_lbfgsb",
+    "data_source": "real",
+    "em_unit": "ppm",
+    "time_tolerance_days": 1.0,
+    "spatial_match_tolerance_m": 3.0,
+    "realization_index": 0,
+    "depths0": [
+      0.225
+    ],
+    "ws_fixed_params": {
+      "a": true,
+      "m": true,
+      "sigma_w": false,
+      "sigma_s": false
+    },
+    "lab_p0": [
+      0.5,
+      3.0,
+      500.0,
+      100.0
+    ],
+    "fixed_depths": true,
+    "param_grid": {
+      "method": [
+        "L-BFGS-B"
+      ],
+      "forwardModel": [
+        "FSlin",
+        "CS"
+      ]
+    },
+    "alpha_range_log": [
+      0.001,
+      5.0,
+      5
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ],
+    "gamma": 0.0,
+    "swc_depths": null,
+    "window_m": 1.0,
+    "ws_localized_bandwidth_sweep": [
+      0.5,
+      1,
+      3,
+      5,
+      8,
+      12,
+      20
+    ],
+    "drop_coils": [
+      425
+    ],
+    "cache_tag": "real_single_test_probes_lbfgsb",
+    "em_subsample": {
+      "mode": "probes",
+      "radius_m": 5.0
+    }
+  },
+  "real_single_test_probes_L3": {
+    "extends": "real_single_test_probes",
+    "description": "TEST / calibration stage, 3-LAYER design (L3): real_single_test_probes with depths0=[0.225, 0.6]. H0 (<0.225 m) holds the 15 cm TDR, H1 (0.225-0.6 m) the 30 cm TDR, H2 (>0.6 m) has NO sensor so it keeps the prior WS parameters (lab_p0).",
+    "output_dir": "mfc2_outputs/real_single_test_probes_L3_lbfgsb",
+    "cache_tag": "real_single_test_probes_L3_lbfgsb",
+    "depths0": [
+      0.225,
+      0.6
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ]
+  },
+  "real_L3_base": {
+    "extends": "real_single_base",
+    "description": "3-LAYER design (L3): real_single_base with depths0=[0.225, 0.6]. H0 (<0.225 m) holds the 15 cm TDR, H1 (0.225-0.6 m) the 30 cm TDR, H2 (>0.6 m) has NO sensor so it keeps the prior WS parameters (lab_p0). No em_subsample: use it for BOTH --stage calibrate and --stage map.",
+    "output_dir": "mfc2_outputs/real_L3_base_lbfgsb",
+    "cache_tag": "real_L3_base_lbfgsb",
+    "depths0": [
+      0.225,
+      0.6
+    ],
+    "cond_ranges": [
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ],
+      [
+        0.01,
+        300.0
+      ]
+    ]
+  }
+}

@@ -20,8 +20,10 @@ field):
                              ``REAL_CFG=ensemble_scenarios_real_lbfgsb.json ./run_real_all_scenarios.sh``
                              or ``./run_one_scenario.sh -c ensemble_scenarios_real_lbfgsb.json -s <name>``
 
-``base`` (the default everywhere) leaves the scenario's own method untouched, so every old run
-folder, log row and cache stays valid.
+Defaults: ``lbfgsb`` for the hypothesis / real-study scripts, ``lbfgsbfix`` for the synthetic swc study;
+``rope`` (the old sampler) is optional; ``base`` leaves the scenario file's own method untouched.  The
+scenario files themselves now carry L-BFGS-B, so a plain ``run_one_scenario.sh`` run uses it too.  Old runs
+made with ROPE keep their names (no ``_em`` suffix = ``base``), folders and caches.
 
 Isolation of the outputs
 ------------------------
@@ -66,13 +68,17 @@ import sys
 #   method        EMagPy ``param_grid.method``
 #   fixed_depths  scenario ``fixed_depths`` (interfaces fixed at depths0); omitted = keep the scenario's own
 EM_PRESETS: dict[str, dict] = {
-    "base": {},
     "lbfgsb": {"method": "L-BFGS-B"},
     "lbfgsbfix": {"method": "L-BFGS-B", "fixed_depths": True},
+    "rope": {"method": "ROPE"},                 # the old solver, optional (random sampler, rep = 100: does not fit)
+    "base": {},                                 # no override: the scenario file's own method / depths
 }
 EM_METHODS: dict[str, str | None] = {tag: p.get("method") for tag, p in EM_PRESETS.items()}
 EM_CHOICES = tuple(EM_PRESETS)
-DEFAULT_EM = "base"
+DEFAULT_EM = "base"             # 'no override' (legacy tag: names / files without suffix); NOT the CLI default
+# CLI defaults (``--em-method`` omitted):
+STUDY_DEFAULT_EM = "lbfgsbfix"  # synthetic studies (swc probes study): free-depth scenarios -> fixed depths at the truth
+RUN_DEFAULT_EM = "lbfgsb"       # hypotheses / real-data studies: the scenario's own depth mode (real ones are fixed)
 MCMC_FAMILY = frozenset({"MCMC", "ROPE", "DREAM", "SCEUA"})   # random samplers (same set as run_pipeline.py)
 
 _PATH_KEYS = ("cache_tag", "output_dir")
@@ -143,15 +149,17 @@ def apply_to_config(cfg: dict, em: str, *, tag_paths: bool = True) -> dict:
     return out
 
 
-def add_em_arg(ap: argparse.ArgumentParser, *, multiple: bool = False) -> None:
-    """``--em-method``: one value, or several for the study's factor (``multiple``)."""
-    help_ = ("EM inversion method of every generated scenario: base (default) = the scenario's own, "
-             "currently ROPE | lbfgsb = L-BFGS-B (fits the data; faster than ROPE only with fixed depths) | "
-             "lbfgsbfix = L-BFGS-B with fixed depths (see em_options.py)")
+def add_em_arg(ap: argparse.ArgumentParser, *, multiple: bool = False, default: str = RUN_DEFAULT_EM) -> None:
+    """``--em-method``: one value, or several for the study's factor (``multiple``; None = ``default``)."""
+    check_em(default)
+    help_ = (f"EM inversion solver of every generated scenario (default: {default}): "
+             "lbfgsb = L-BFGS-B, the scenario's depth mode | lbfgsbfix = L-BFGS-B with fixed depths (fastest; "
+             "for the synthetic free-depth scenarios) | rope = the old ROPE sampler (optional; does not fit "
+             "the data, see em_options.py) | base = leave the scenario file's own method untouched")
     if multiple:
-        ap.add_argument("--em-method", nargs="+", choices=EM_CHOICES, default=None, help=help_)
+        ap.add_argument("--em-method", nargs="+", choices=EM_CHOICES, default=None, help=help_ + ". Several = a factor")
     else:
-        ap.add_argument("--em-method", choices=EM_CHOICES, default=DEFAULT_EM, help=help_)
+        ap.add_argument("--em-method", choices=EM_CHOICES, default=default, help=help_)
 
 
 def resolve_em_njobs(setting, *, n_tasks: int, methods, betas, cpu_count: int | None = None) -> tuple[int, str]:
@@ -206,7 +214,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="Write a copy of a scenarios file with another EM inversion method.")
     ap.add_argument("--config", required=True, help="scenarios file (e.g. ensemble_scenarios_real.json)")
-    ap.add_argument("--em-method", required=True, choices=[e for e in EM_CHOICES if e != DEFAULT_EM])
+    ap.add_argument("--em-method", required=True, choices=[e for e in EM_CHOICES if e != DEFAULT_EM],
+                    help="solver written into every scenario (lbfgsb | lbfgsbfix | rope)")
     ap.add_argument("--out", default=None, help="output file (default: <config>_<em>.json)")
     args = ap.parse_args(argv)
 

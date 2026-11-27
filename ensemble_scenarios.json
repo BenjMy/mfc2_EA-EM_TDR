@@ -267,7 +267,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",
@@ -350,7 +350,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",
@@ -414,7 +414,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",
@@ -477,7 +477,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",
@@ -540,7 +540,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",
@@ -612,7 +612,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",
@@ -694,7 +694,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",
@@ -780,7 +780,7 @@
         0.3
       ],
       "method": [
-        "ROPE"
+        "L-BFGS-B"
       ],
       "forwardModel": [
         "FSlin",

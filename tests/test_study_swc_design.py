@@ -50,7 +50,7 @@ def test_unknown_distribution():
 
 
 # ------------------------------------------------------------------ designs
-@pytest.mark.parametrize("preset,count", [("smoke", 8), ("oat", 15), ("main", 160), ("full", 704)])
+@pytest.mark.parametrize("preset,count", [("smoke", 8), ("oat", 16), ("main", 176), ("full", 720)])
 def test_design_counts(preset, count):
     assert len(st.build_designs(preset, LEVELS)) == count
 
@@ -60,8 +60,9 @@ def test_degenerate_positions_are_merged():
     keys = [(d.smc, d.ws, d.reg, d.k, st.position_signature(st.probe_positions(d.dist, d.n, SURVEY)))
             for d in designs]
     assert len(keys) == len(set(keys))
-    # n = 1 and n = 10 exist once per (smc, ws, reg, k), not once per distribution
-    assert sum(d.n == 1 for d in designs) == 2 * 2 * 4 * 4
+    # n = 1 and n = 10 exist once per (smc, ws, reg, k), not once per distribution; K = 0 (nothing fitted) is kept
+    # once per (smc, ws, reg), at the smallest n, so it adds 2 * 2 * 4 designs with n = 1
+    assert sum(d.n == 1 for d in designs) == 2 * 2 * 4 * 4 + 2 * 2 * 4
     assert sum(d.n == 10 for d in designs) == 2 * 2 * 4 * 4
 
 

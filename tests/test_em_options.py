@@ -139,8 +139,8 @@ def test_cli_em_method_generates_loadable_lbfgsb_scenarios(tmp_path):
         assert sc.param_grid["method"] == ["L-BFGS-B"]
         assert sc.param_grid["forwardModel"] == ["FSlin", "CS"] and sc.param_grid["alpha"]   # ensemble kept
     for n in base:
-        assert "method" not in (cfg[n].get("param_grid") or {})                     # inherits the base scenario (ROPE)
-        assert sl.load_scenario(n, config_path=path).param_grid["method"] == ["ROPE"]
+        assert "method" not in (cfg[n].get("param_grid") or {})                     # inherits the base scenario
+        assert sl.load_scenario(n, config_path=path).param_grid["method"] == ["L-BFGS-B"]   # now L-BFGS-B
 
 
 # ----------------------------------------------------------------------------- study: soil ws cases
@@ -185,7 +185,7 @@ def test_soil_scenarios_load(ws, tmp_path):
 
 
 def test_soil_k0_prior_is_the_soil_baseline_not_the_legacy_one(tmp_path):
-    cfg, path = _study_cfg(tmp_path, "--ws", "soilhomo", "homo")
+    cfg, path = _study_cfg(tmp_path, "--ws", "soilhomo", "homo", "--em-method", "base")    # base = no name suffix
     soil = sl.load_scenario("swcstudy_smchomo_wssoilhomo_noreg_spread_n5_free0", config_path=path)
     legacy = sl.load_scenario("swcstudy_smchomo_wshomo_noreg_spread_n5_free0", config_path=path)
     assert list(soil.lab_p0) == list(st.SOIL_WS_BASELINE)
@@ -214,10 +214,13 @@ def test_hyp_dry_run_with_em_method_writes_separate_config(tmp_path, capsys):
     assert "L-BFGS-B" in capsys.readouterr().out
 
 
-def test_hyp_dry_run_default_is_unchanged(tmp_path):
+def test_hyp_dry_run_default_is_lbfgsb_and_base_is_the_legacy_untagged_run(tmp_path):
     out = str(tmp_path / "hyp3")
-    assert hyp3.main(["--dry-run", "--out-dir", out]) == 0
-    with open(os.path.join(out, f"{hyp3.TAG}_scenarios.json"), encoding="utf-8") as f:
+    assert hyp3.main(["--dry-run", "--out-dir", out]) == 0                       # default = lbfgsb
+    assert os.path.exists(os.path.join(out, f"{hyp3.TAG}_lbfgsb_scenarios.json"))
+    out_b = str(tmp_path / "hyp3_base")
+    assert hyp3.main(["--dry-run", "--out-dir", out_b, "--em-method", "base"]) == 0   # no override, no suffix
+    with open(os.path.join(out_b, f"{hyp3.TAG}_scenarios.json"), encoding="utf-8") as f:
         cfg = json.load(f)
     assert not any("lbfgsb" in json.dumps(v) for v in cfg.values())
 
@@ -336,3 +339,56 @@ def test_njobs_does_not_change_a_deterministic_inversion(tmp_path):
             k.invert(forwardModel="CS", method="L-BFGS-B", alpha=0.1, bnds=[(0.01, 300.0)] * 4, njobs=nj)
         out[nj] = np.asarray(k.models[0])
     np.testing.assert_allclose(out[1], out[2], rtol=1e-9, atol=1e-9)
+
+
+# ----------------------------------------------------------------------------- default solvers, ROPE optional
+def test_defaults_are_lbfgsb_and_rope_is_an_optional_preset():
+    assert eo.RUN_DEFAULT_EM == "lbfgsb" and eo.STUDY_DEFAULT_EM == "lbfgsbfix"
+    assert eo.method_name("rope") == "ROPE" and eo.em_fixed_depths("rope") is None
+    assert "rope" in eo.EM_CHOICES
+
+
+@pytest.mark.parametrize("fname", ["ensemble_scenarios.json", "ensemble_scenarios_real.json"])
+def test_scenario_files_no_longer_carry_rope(fname):
+    with open(os.path.join(ROOT, fname), encoding="utf-8") as f:
+        assert '"ROPE"' not in f.read()
+
+
+def test_study_default_is_lbfgsbfix_and_rope_is_opt_in(tmp_path):
+    cfg, _ = _study_cfg(tmp_path, "--ws", "homo")
+    names = [k for k in cfg if k.startswith("swcstudy_") and k != "swcstudy_parent"]
+    assert names and all(n.endswith("_emlbfgsbfix") for n in names)
+    cfg, path = _study_cfg(tmp_path, "--ws", "homo", "--em-method", "rope")
+    n = next(k for k in cfg if k.endswith("_emrope"))
+    assert sl.load_scenario(n, config_path=path).param_grid["method"] == ["ROPE"]
+
+
+# ----------------------------------------------------------------------------- K = 0 reference of the hypotheses
+def test_hyp3_and_hyp2_carry_a_k0_reference_that_shares_the_step1_cache(tmp_path):
+    import hyp2_train_val_split as hyp2
+    for mod, name in ((hyp3, hyp3.K0_NAME), (hyp2, hyp2.K0_NAME)):
+        out = str(tmp_path / mod.TAG)
+        assert mod.main(["--dry-run", "--out-dir", out]) == 0
+        with open(os.path.join(out, f"{mod.TAG}_lbfgsb_scenarios.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        sc = sl.load_scenario(name, config_path=os.path.join(out, f"{mod.TAG}_lbfgsb_scenarios.json"))
+        assert all(sc.ws_fixed_params.values()) and len(sc.ws_fixed_params) == 4
+        parent = cfg[name]["extends"]
+        assert cfg[name]["cache_tag"] == next(v["cache_tag"] for k, v in cfg.items()
+                                              if isinstance(v, dict) and v.get("extends") == parent and k != name)
+        out2 = str(tmp_path / (mod.TAG + "_nok0"))
+        assert mod.main(["--dry-run", "--no-k0", "--out-dir", out2]) == 0
+        with open(os.path.join(out2, f"{mod.TAG}_lbfgsb_scenarios.json"), encoding="utf-8") as f:
+            assert name not in json.load(f)
+
+
+def test_run_all_hypotheses_forwards_em_method_and_no_k0(tmp_path):
+    import run_all_hypotheses as rah
+    import hyp2_train_val_split as hyp2
+    import argparse
+    ns = argparse.Namespace(config="c.json", base="b", mode="2d", stage="calibrate", em_method="rope",
+                            fast=False, dry_run=False, keep_going=False, no_k0=True)
+    argv = rah.forwarded_args(ns, hyp3, str(tmp_path))
+    assert argv[argv.index("--em-method") + 1] == "rope" and "--no-k0" in argv
+    ns.no_k0 = False
+    assert "--no-k0" not in rah.forwarded_args(ns, hyp2, str(tmp_path))

@@ -218,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="add or override a layer design (interface depths in m)")
     ap.add_argument("--free-k", nargs="+", type=int, default=None,
                     help="numbers of free WS parameters (0-4, order sigma_s, m, sigma_w, a); "
-                         "default 1 2 3 4, or 1 4 (extremes only) with --fast")
+                         "default 0 1 2 3 4 (0 = nothing calibrated: the floor), or 0 1 4 with --fast")
     ap.add_argument("--tdr-depths", nargs="+", type=float, default=list(TDR_DEPTHS),
                     help="TDR sensor depths [m] used for the coverage report")
     ap.add_argument("--config", default=BASE_CONFIG, help="real scenarios file (parent source)")
@@ -249,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"base scenario {args.base!r} not in {args.config}")
 
     OUT_DIR = args.out_dir
-    ks = args.free_k or ([1, 4] if args.fast else [1, 2, 3, 4])
+    ks = args.free_k or ([0, 1, 4] if args.fast else [0, 1, 2, 3, 4])      # K = 0: nothing calibrated (floor)
     cfg = build_study_config(resolved[args.base], designs, ks, tuple(args.tdr_depths), args.fast)
     ftag = "study"
     if args.em_method != em_options.DEFAULT_EM:       # EM method of Step 1: separate cache / run folders / files (em_options.py)

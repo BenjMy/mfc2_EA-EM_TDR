@@ -48,4 +48,4 @@ def test_study_config_loads_and_shares_cache(tmp_path):
 def test_dry_run_cli(tmp_path, capsys):
     assert rs.main(["--fast", "--dry-run", "--out-dir", str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert "6 scenarios" in out  # 3 designs x K in (1, 4)
+    assert "9 scenarios" in out  # 3 designs x K in (0, 1, 4); K = 0 = nothing calibrated (floor)

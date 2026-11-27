@@ -156,14 +156,14 @@ LEVELS = {
     "dist": ("spread", "clustered", "random"),
     "smc": ("homo", "hetero"),
     "ws": ("homo", "hetero"),
-    "k": (1, 2, 3, 4),            # preset default; K = 0 (floor) is opt-in with --free-k 0
+    "k": (0, 1, 2, 3, 4),         # K = 0 (nothing calibrated: the floor) is part of the default levels
     "reg": ("noreg", "beta", "gamma", "both"),
     "pin": ("k",),                # legacy: K picks the free parameters (sigma_s, m, sigma_w, a in that order)
     "err": (0,),                  # error of the pinned values [%]; non-zero levels are opt-in (--err)
     "em": (em_options.DEFAULT_EM,),   # EM inversion method; other levels are opt-in (--em-method)
 }
 PARAMS = ("a", "m", "sigma_w", "sigma_s")
-K_CHOICES = (0, *LEVELS["k"])   # accepted by --free-k
+K_CHOICES = LEVELS["k"]         # accepted by --free-k
 # "What is known": the pinned (known) WS parameters, the others are free.  'k' = legacy behaviour.
 PIN_KNOWN = {"none": (), "sw": ("sigma_w",), "sws": ("sigma_w", "sigma_s"), "am": ("a", "m"),
              "all": ("a", "m", "sigma_w", "sigma_s")}
@@ -371,7 +371,8 @@ def preset_blocks(preset: str, levels: dict) -> list[dict]:
     if preset == "smoke":
         two = lambda f: [levels[f][0], levels[f][-1]] if len(levels[f]) > 1 else list(levels[f])
         return [{**ref, "smc": two("smc"), "ws": ["hetero" if "hetero" in levels["ws"] else levels["ws"][0]],
-                 "n": [1, 5] if {1, 5} <= set(levels["n"]) else two("n"), "k": two("k")}]
+                 "n": [1, 5] if {1, 5} <= set(levels["n"]) else two("n"),
+                 "k": [1, 4] if {1, 4} <= set(levels["k"]) else two("k")}]      # smoke: K = 1 / 4 (K = 0 merges over n)
     raise ValueError(f"unknown preset {preset!r}")
 
 
@@ -1094,7 +1095,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--err", nargs="+", type=int,
                     help="error of the KNOWN (pinned) values in percent, e.g. -20 -10 10 20; 0 (the reference) is "
                          "always included. Preset 'known' only, pins sw / sws / am")
-    em_options.add_em_arg(ap, multiple=True)
+    em_options.add_em_arg(ap, multiple=True, default=em_options.STUDY_DEFAULT_EM)
     ap.add_argument("--beta", type=float, default=BETA_VALUE, help="beta used by reg beta/both")
     ap.add_argument("--gamma", type=float, default=GAMMA_VALUE, help="gamma used by reg gamma/both")
     ap.add_argument("--p0-bias", type=float, default=P0_BIAS,
@@ -1124,6 +1125,8 @@ def main(argv: list[str] | None = None) -> int:
                  ("k", args.free_k), ("reg", args.reg), ("pin", args.pin), ("em", args.em_method)):
         if v:
             levels[f] = tuple(v)
+    if not args.em_method:                  # default solver of the synthetic study (--em-method base = legacy names)
+        levels["em"] = (em_options.STUDY_DEFAULT_EM,)
     if args.preset is None:
         args.preset = "known" if args.pin or args.err else "full" if levels["k"] == (0,) else "oat"
     if args.err:
