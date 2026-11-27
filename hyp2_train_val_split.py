@@ -83,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"split methods to run (default: all of {list(METHODS)})")
     hc.add_k0_arg(ap)
     hc.add_common_args(ap, default_out_dir=OUT_DIR)
-    args = ap.parse_args(argv)
+    args = hc.parse_args(ap, argv)
 
     try:
         base_raw = hc.resolve_base(args.config, args.base)

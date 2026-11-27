@@ -30,6 +30,20 @@ pip install -e ".[dev]"
 
 Dependencies: `numpy`, `scipy`, `pandas`, `matplotlib`, `tqdm`, `emagpy` (`pytest` for the tests). Check the install with `pytest tests` and `./run_one_scenario.sh --list`. The launchers are bash scripts; on Windows use WSL or Git Bash. Numerical results can differ slightly between Python/library versions, so compare runs only within one environment.
 
+## Which data? Real, synthetic mirror, or in-process synthetic
+
+Three kinds of input go through the same pipeline. Short copy-paste version: [`RUNNING.md`](RUNNING.md).
+
+| Kind | Scenarios file | What it is |
+|---|---|---|
+| **real** | `ensemble_scenarios_real.json` | The MFC2 field data in `./data/` (see "Input data paths"). |
+| **synthetic mirror** | `mfc2_synthetic/mfc2_real_synthetic_mirror.json` | A synthetic twin of the field deployment (same 7 EM dates and point-count asymmetry, same TDR depths, known truth), written as files by `generate_synthetic_real_mirror.py` and read by the real-data loader. |
+| **in-process synthetic** | `ensemble_scenarios.json` | Synthetic scenarios generated inside the run (`2d`, `1d_surface_tdr`, ...). |
+
+The hypothesis scripts (`run_all_hypotheses.py`, `hyp1_*`, `hyp2_*`, `hyp3_*`) choose between the first two with one switch, **`--data real`** (default) or **`--data synthetic`**. It sets `--config` and `--base`, and synthetic results go to `mfc2_outputs/hypotheses_synthetic/` so they never overwrite the real ones (`--config <mirror json>` without `--data` is detected as synthetic). The plan printed by `--dry-run` has a `DATA:` line with the EM / TDR / coordinate paths and says `REAL FIELD DATA` or `SYNTHETIC MIRROR`.
+
+Caveat: the mirror is read through the real-data loader (`"data_source": "real"` in its JSON), so the banner of `run_one_scenario.sh` says `REAL DATA` for it as well. In that launcher, check the `EM=` path (`./data/EMI_MFC2/` = real, `mfc2_synthetic/EMI_MFC2_synthetic` = mirror).
+
 ## Run one scenario
 
 ```bash
@@ -38,7 +52,10 @@ Dependencies: `numpy`, `scipy`, `pandas`, `matplotlib`, `tqdm`, `emagpy` (`pytes
 ./run_one_scenario.sh -s 1d_surface_tdr --mode 1d --num-swc-positions 5   # synthetic, 1-D transect
 ./run_one_scenario.sh -s 2d --mode 2d                 # synthetic, 2-D grid
 ./run_one_scenario.sh --mode 2d -s real_single_base -c ensemble_scenarios_real.json   # real data (paths set in the JSON)
-python run_all_hypotheses.py --fast --dry-run             # real data: the three hypothesis tests, plan only
+./run_one_scenario.sh --mode 2d -s mfc2_real_synthetic_mirror \
+    -c mfc2_synthetic/mfc2_real_synthetic_mirror.json     # synthetic mirror of the real data (known truth)
+python run_all_hypotheses.py --data real --fast --dry-run        # the three hypothesis tests on the real data, plan only
+python run_all_hypotheses.py --data synthetic --fast --dry-run   # the same on the synthetic mirror
 ./run_one_scenario.sh --help                          # all options
 ```
 
@@ -251,8 +268,8 @@ run_real_all_scenarios.sh        fixed batch of run_one_scenario.sh calls (paper
 | `hyp1_layers_ws_freedom.py` | **H1**: how many layers can the real TDR sensors support (they sit at 0.15 and 0.30 m), and how many Waxman-Smits parameters (sigma_s, m, sigma_w, a) can be freed? Layer designs `L2`/`L3`/`L4` (or `--design NAME=d1,d2`) x K free parameters. Prints which horizons have no sensor before running. | Generated `real_study_<design>_free<K>`. |
 | `hyp2_train_val_split.py` | **H2**: the default run fits and selects K on all TDR data, so its RMSE is in-sample. Runs the same scenario with each split (`off`, `alternate_sorted`, `by_probe`, `by_time_block`, `random`) and reports the held-out RMSE. | Generated `real_tv_<method>` (from `--base`). |
 | `hyp3_localized_bandwidth.py` | **H3**: does letting WS parameters vary in space (kernel-localized fit) beat one set per horizon, and at which bandwidth? Runs one scenario with your candidate list (`--bandwidths`), chosen by leave-one-probe-out CV. | Generated `real_bw_sweep` (from `--base`). |
-| `hyp_common.py` | Not run directly: the shared engine of the three `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--config --base --mode --stage --out-dir --em-method --fast --dry-run --keep-going` (hyp2 / hyp3 and `run_all_hypotheses.py` also `--no-k0`), and forwards anything after a bare `--` (e.g. `--em-njobs 8`) to `run_one_scenario.sh`. | None (it generates nothing itself). |
-| `run_all_hypotheses.py` | All of the above with their shared options (`--config --base --mode --stage --fast --dry-run --keep-going`); `--only 1 3` picks some, `--list` shows them. | Whatever the three scripts generate. |
+| `hyp_common.py` | Not run directly: the shared engine of the three `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--data --config --base --mode --stage --out-dir --em-method --fast --dry-run --keep-going` (hyp2 / hyp3 and `run_all_hypotheses.py` also `--no-k0`), and forwards anything after a bare `--` (e.g. `--em-njobs 8`) to `run_one_scenario.sh`. | None (it generates nothing itself). |
+| `run_all_hypotheses.py` | All of the above with their shared options (`--data --config --base --mode --stage --fast --dry-run --keep-going`); `--only 1 3` picks some, `--list` shows them. | Whatever the three scripts generate. |
 | `run_real_all_scenarios.sh` | The fixed paper batch: `real_single_*` / `real_multi_*` (forward model `_base` / `_fslin` / `_cs`, fixed vs free interfaces `_depth_free`, WS freedom `_ws_*`), then `--beta`, `--gamma` and bandwidth sweeps and (commented out) `--train-val-split`. It starts with `--list` and `--validate`. Does not generate anything. | The existing `real_single_*` (2 layers) and `real_multi_*` (4 layers). |
 
 The hypothesis scripts run `--stage calibrate` by default (probe neighbourhoods only, Steps 0-5), because all three are about the calibration quality; `--stage none` does the full run; `--stage both` runs, for every scenario, `--stage calibrate` and then `--stage map --calibration <that calibrate run folder>` (Step 6 on all EM points, inverting only the K selected members). If a calibrate run fails its map is skipped; with `--fast` the map is skipped too, because `--stage map` cannot be combined with `--quick`. The summary CSV has a `stage` column (one row per scenario and stage). `both` maps every scenario, which is expensive for exploratory variants you will discard (e.g. `L3`/`L4` horizons without a sensor): use `calibrate` to compare, then `both` on the chosen scenario. Each writes `<out-dir>/<hyp>_scenarios.json` (the generated scenarios; your JSON is not edited) and `<out-dir>/<hyp>_summary.csv` (final RMSE, CV score, ensemble size, runtime per scenario), under `mfc2_outputs/hypotheses/<hypothesis>/`. Step 1, the expensive ensemble inversion, is shared between the variants of one hypothesis. To add a hypothesis, copy `hyp3_localized_bandwidth.py`, change its question and scenario generator and register it in `run_all_hypotheses.py`. None of this has been run on the real data yet (see `run_paper_real.md`, a cheapest-first check that the dataset works with the pipeline).
@@ -309,18 +326,24 @@ python run_all_hypotheses.py --only 2 3 --base real_L3_base        # H2 and H3 w
 
 ## Hypotheses on a synthetic MFC2 dataset (known truth, simple model)
 
-`generate_synthetic_real_mirror.py` builds a synthetic twin of the MFC2 deployment (7 EM survey dates with the real point-count asymmetry, daily TDR at 15/30 cm, truth arrays in `ground_truth/`). The `hyp*` scripts run on it unchanged, because they only need a config file and a base scenario:
+`generate_synthetic_real_mirror.py` builds a synthetic twin of the MFC2 deployment (7 EM survey dates with the real point-count asymmetry, daily TDR at 15/30 cm, truth arrays in `ground_truth/`). The `hyp*` scripts run on it unchanged, with `--data synthetic` (which is `--config mfc2_synthetic/mfc2_real_synthetic_mirror.json --base mfc2_real_synthetic_mirror` plus a separate output folder, `mfc2_outputs/hypotheses_synthetic/`):
 
 ```bash
 # 1. dataset: 20 stand-in stations, 2 layers (one interface between the 15 and 30 cm TDR depths)
+#    (a copy is already committed in mfc2_synthetic/; re-run only to change it)
 python generate_synthetic_real_mirror.py --standin-stations 20 --depths0 0.225 \
     --max-points 120 --outdir mfc2_synthetic
-# 2. hypotheses (smoke test; drop --fast for the full ensemble)
-python run_all_hypotheses.py --config mfc2_synthetic/mfc2_real_synthetic_mirror.json \
-    --base mfc2_real_synthetic_mirror --fast
-python hyp3_localized_bandwidth.py --config mfc2_synthetic/mfc2_real_synthetic_mirror.json \
-    --base mfc2_real_synthetic_mirror --fast       # one hypothesis alone
+# 2. hypotheses: look at the plan first (the DATA: line must say SYNTHETIC MIRROR), then run
+python run_all_hypotheses.py --data synthetic --fast --dry-run
+python run_all_hypotheses.py --data synthetic --fast               # smoke test; drop --fast for the full ensemble
+python hyp3_localized_bandwidth.py --data synthetic --fast         # one hypothesis alone
+python hyp1_layers_ws_freedom.py --data synthetic --designs L2 --free-k 0 1 2 3 4
+# 3. one scenario without the wrapper (no generated files)
+./run_one_scenario.sh -s mfc2_real_synthetic_mirror \
+    -c mfc2_synthetic/mfc2_real_synthetic_mirror.json --mode 2d --stage calibrate
 ```
+
+In hyp1 use `--designs L2`: the mirror only has TDR at 15 and 30 cm, so `L3` / `L4` have horizons without a sensor (hyp2 / hyp3 take their layers from the base scenario, 2 for the mirror). The `coord_file` written into the generated JSON is an absolute path to `mfc2_synthetic/standin_coordinates.csv`; if you move the repository, re-run the generator (or edit that line).
 
 Things to know:
 
@@ -328,10 +351,9 @@ Speed, solver and the K = 0 reference (same flags as for the real data, see 2b):
 
 ```bash
 # L-BFGS-B is the default; the mirror has fixed depths, so it is also the fast one
-python run_all_hypotheses.py --config mfc2_synthetic/mfc2_real_synthetic_mirror.json \
-    --base mfc2_real_synthetic_mirror --em-method lbfgsb -- --em-njobs 8
-python run_all_hypotheses.py ... --em-method rope        # the old solver (optional, does not fit the data)
-python run_all_hypotheses.py ... --no-k0                 # skip the K = 0 reference runs
+python run_all_hypotheses.py --data synthetic --em-method lbfgsb -- --em-njobs 8
+python run_all_hypotheses.py --data synthetic --em-method rope   # the old solver (optional, does not fit the data)
+python run_all_hypotheses.py --data synthetic --no-k0            # skip the K = 0 reference runs
 python generate_synthetic_real_mirror.py ... --em-method lbfgsb   # solver written into the generated scenario
 ```
 

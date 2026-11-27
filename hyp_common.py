@@ -20,7 +20,7 @@ Nothing here needs the field data or emagpy except the run itself.
 """
 from __future__ import annotations
 
-from EA_EM_config import OUTPUT_ROOT  # central output root (EA_EM_config.py)
+from EA_EM_config import OUTPUT_ROOT, resolve_real_paths  # central output root + data-path resolution (EA_EM_config.py)
 import argparse
 import copy
 import csv
@@ -35,6 +35,16 @@ import scenario_loader as sl
 BASE_CONFIG = "ensemble_scenarios_real.json"
 BASE_SCENARIO = "real_single_base"
 OUT_ROOT = os.path.join(OUTPUT_ROOT, "hypotheses")
+
+# --data real|synthetic: ONE switch for the dataset (sets --config and --base, and keeps
+# the outputs of the synthetic mirror apart from the real ones).
+#   real       the field data in ./data/            (ensemble_scenarios_real.json)
+#   synthetic  the synthetic twin of the field data (generate_synthetic_real_mirror.py)
+SYNTHETIC_CONFIG = "mfc2_synthetic/mfc2_real_synthetic_mirror.json"
+SYNTHETIC_BASE = "mfc2_real_synthetic_mirror"
+DATASETS = {"real": (BASE_CONFIG, BASE_SCENARIO),
+            "synthetic": (SYNTHETIC_CONFIG, SYNTHETIC_BASE)}
+SYNTHETIC_OUT_ROOT = OUT_ROOT + "_synthetic"
 RUN_LOG = os.path.join(OUTPUT_ROOT, "run_log.csv")
 
 FAST_EPOCHS = 2
@@ -152,7 +162,11 @@ def write_summary(rows: list[dict], path: str, extra_columns: list[str] | None =
 
 
 def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> None:
-    ap.add_argument("--config", default=BASE_CONFIG, help="real scenarios file (parent source)")
+    ap.add_argument("--data", choices=sorted(DATASETS), default=None,
+                    help="dataset: 'real' = field data in ./data (default); 'synthetic' = the "
+                         f"synthetic mirror ({SYNTHETIC_CONFIG}). Shortcut for --config/--base, "
+                         f"and writes under {SYNTHETIC_OUT_ROOT}/ instead of {OUT_ROOT}/")
+    ap.add_argument("--config", default=BASE_CONFIG, help="scenarios file (parent source)")
     ap.add_argument("--base", default=BASE_SCENARIO,
                     help="scenario copied as parent; it fixes the LAYERS of the run "
                          "(e.g. real_L3_base for 3 layers)")
@@ -169,6 +183,50 @@ def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> Non
                     help="write the config and print the plan, run nothing")
     ap.add_argument("--keep-going", action="store_true",
                     help="continue with the next scenario after a failure")
+
+
+def _to_synthetic_root(path: str | None) -> str | None:
+    """mfc2_outputs/hypotheses[/x]  ->  mfc2_outputs/hypotheses_synthetic[/x] (other paths untouched)."""
+    if path and (path == OUT_ROOT or path.startswith(OUT_ROOT + os.sep)):
+        return SYNTHETIC_OUT_ROOT + path[len(OUT_ROOT):]
+    return path
+
+
+def parse_args(ap: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
+    """``ap.parse_args`` + resolve ``--data`` (use this instead of ``ap.parse_args``)."""
+    args = ap.parse_args(argv)
+    if args.data is None and args.config != BASE_CONFIG and "synthetic" in os.path.basename(args.config).lower():
+        args.data = "synthetic"           # a mirror JSON given with --config: treat it as such
+        print("[data] --config looks like the synthetic mirror: using --data synthetic "
+              f"(outputs under {SYNTHETIC_OUT_ROOT}/)")
+    if args.data:
+        cfg, base = DATASETS[args.data]
+        if args.config == BASE_CONFIG:
+            args.config = cfg
+        if args.base == BASE_SCENARIO:
+            args.base = base
+    if args.data == "synthetic":
+        for attr in ("out_dir", "out_root"):
+            if hasattr(args, attr):
+                setattr(args, attr, _to_synthetic_root(getattr(args, attr)))
+    return args
+
+
+def describe_data(name: str, cfg_path: str) -> list[str]:
+    """Lines saying WHICH data a scenario reads (real field data or the synthetic mirror)."""
+    sc = sl.load_scenario(name, config_path=cfg_path)
+    p = resolve_real_paths(scenario_em_dir=getattr(sc, "em_data_dir", None),
+                           scenario_tdr_dir=getattr(sc, "tdr_data_dir", None),
+                           scenario_coord_file=getattr(sc, "coord_file", None))
+    src = getattr(sc, "data_source", None)
+    if src != "real":
+        kind = f"SYNTHETIC (generated in-process, data_source={src!r})"
+    elif "synthetic" in (p.em_dir or "").lower():
+        kind = "SYNTHETIC MIRROR (known truth) -- read through the real-data loader"
+    else:
+        kind = "REAL FIELD DATA"
+    return [f"DATA: {kind}",
+            f"      EM    : {p.em_dir}", f"      TDR   : {p.tdr_dir}", f"      coords: {p.coord_file}"]
 
 
 def split_extra(argv: list[str]) -> tuple[list[str], list[str]]:
@@ -208,6 +266,8 @@ def execute(*, tag: str, cfg: dict, names: list[str], args: argparse.Namespace,
 
     print(f"[{tag}] config  : {cfg_path}  ({len(names)} scenarios, base '{args.base}', "
           f"stage '{args.stage}')")
+    for line in describe_data(names[0], cfg_path):
+        print(f"[{tag}] {line}")
     for line in plan_lines:
         print(f"[{tag}] {line}")
     if args.fast:
@@ -216,6 +276,7 @@ def execute(*, tag: str, cfg: dict, names: list[str], args: argparse.Namespace,
     run_stages = stages_to_run(args.stage, args.fast)
     if args.stage == "both" and args.fast:
         print(f"[{tag}] >>> --stage both with --fast: map skipped (--stage map cannot be combined with --quick)")
+    print(f"[{tag}] commands (the data paths above are read from {cfg_path}):")
     for n in names:
         for st in run_stages:
             cal = "<calibrate run folder>" if st == "map" else None

@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tdr-depths", nargs="+", type=float, default=list(TDR_DEPTHS),
                     help="TDR sensor depths [m] used for the coverage report")
     hc.add_common_args(ap, default_out_dir=OUT_DIR)
-    args = ap.parse_args(argv)
+    args = hc.parse_args(ap, argv)
 
     designs = dict(DESIGNS)
     for text in args.design:

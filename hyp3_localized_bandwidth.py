@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="also pass --em-footprint-diagnostic (Step 5c McNeill depth weighting)")
     hc.add_k0_arg(ap)
     hc.add_common_args(ap, default_out_dir=OUT_DIR)
-    args = ap.parse_args(argv)
+    args = hc.parse_args(ap, argv)
     if any(b <= 0 for b in args.bandwidths):
         ap.error("bandwidths must be positive")
     if args.footprint:

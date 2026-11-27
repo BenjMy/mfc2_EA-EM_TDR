@@ -50,6 +50,8 @@ def forwarded_args(args: argparse.Namespace, module, out_root: str) -> list[str]
     for flag in ("fast", "dry_run", "keep_going"):
         if getattr(args, flag):
             out.append("--" + flag.replace("_", "-"))
+    if getattr(args, "data", None):
+        out += ["--data", args.data]
     if args.no_k0 and hasattr(module, "K0_NAME"):       # hyp2 / hyp3 carry a K = 0 reference run (hyp1 uses --free-k)
         out.append("--no-k0")
     return out
@@ -68,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     hc.add_k0_arg(ap)
     hc.add_common_args(ap, default_out_dir=hc.OUT_ROOT)
     ap.set_defaults(out_dir=None)
-    args = ap.parse_args(argv)
+    args = hc.parse_args(ap, argv)
     if args.out_dir:
         ap.error("--out-dir is per hypothesis; use --out-root here")
 
