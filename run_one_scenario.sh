@@ -111,6 +111,8 @@ EM_FOOTPRINT_DIAGNOSTIC=false
 QUICK=false
 QUICK_EPOCHS=""
 STAGE=""
+EM_NJOBS=""
+NO_ETA_BENCHMARK=false
 CALIBRATION=""
 LOG_FILE=""
 TRAIN_VAL_SPLIT=""
@@ -275,6 +277,12 @@ Inversion options (override the scenario JSON's param_grid / gamma):
                           '*_calibrate' run under the scenario's output_dir.
       --log-file PATH     Shared run-log CSV that gets one row per run.
                           Default: mfc2_outputs/run_log.csv.
+      --em-njobs {auto,N} Step 1 speed: cores per EM inversion task (points of
+                          one task split across cores). Default auto: only
+                          when there are fewer tasks than cores (typically
+                          --stage map); always 1 for ROPE and beta != 0.
+      --no-eta-benchmark  Skip the ~3-point benchmark that prints the upfront
+                          Step-1 time estimate (the live ETA line stays).
       --quick-epochs N    With --quick (real data only): also keep only
                           N evenly spaced survey epochs (first and last
                           always included), e.g. 3 of 7 -> 12 tasks.
@@ -694,6 +702,12 @@ while [[ $# -gt 0 ]]; do
             CALIBRATION="${2:?'--calibration requires a path'}"; shift 2 ;;
         --log-file)
             LOG_FILE="${2:?'--log-file requires a path'}"; shift 2 ;;
+        --em-njobs)
+            EM_NJOBS="${2:?'--em-njobs requires auto or an integer >= 1'}"
+            [[ "${EM_NJOBS}" == "auto" || "${EM_NJOBS}" =~ ^[1-9][0-9]*$ ]] \
+                || die "--em-njobs must be 'auto' or an integer >= 1, got '${EM_NJOBS}'"
+            shift 2 ;;
+        --no-eta-benchmark) NO_ETA_BENCHMARK=true; shift ;;
         --quick-epochs)
             QUICK_EPOCHS="${2:?'--quick-epochs requires a positive integer'}"
             [[ "${QUICK_EPOCHS}" =~ ^[1-9][0-9]*$ ]] \
@@ -1065,6 +1079,9 @@ fi
 if [[ "${STAGE}" == "map" ]] && ${QUICK}; then
     die "--stage map cannot be combined with --quick"
 fi
+SPEED_ARGS=()
+[[ -n "${EM_NJOBS}" ]] && SPEED_ARGS+=(--em-njobs "${EM_NJOBS}")
+[[ "${NO_ETA_BENCHMARK}" == true ]] && SPEED_ARGS+=(--no-eta-benchmark)
 STAGE_ARGS=()
 [[ -n "${STAGE}" ]] && STAGE_ARGS+=(--stage "${STAGE}")
 [[ -n "${CALIBRATION}" ]] && STAGE_ARGS+=(--calibration "${CALIBRATION}")
@@ -1184,6 +1201,7 @@ set +e
     "${EM_FOOTPRINT_ARGS[@]+"${EM_FOOTPRINT_ARGS[@]}"}" \
     "${QUICK_ARGS[@]+"${QUICK_ARGS[@]}"}" \
     "${STAGE_ARGS[@]+"${STAGE_ARGS[@]}"}" \
+    "${SPEED_ARGS[@]+"${SPEED_ARGS[@]}"}" \
     "${LOG_ARGS[@]+"${LOG_ARGS[@]}"}" \
     "${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"}" \
     2>&1 | tee "${RUN_LOG_TMP}"

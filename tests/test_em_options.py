@@ -392,3 +392,23 @@ def test_run_all_hypotheses_forwards_em_method_and_no_k0(tmp_path):
     assert argv[argv.index("--em-method") + 1] == "rope" and "--no-k0" in argv
     ns.no_k0 = False
     assert "--no-k0" not in rah.forwarded_args(ns, hyp2, str(tmp_path))
+
+
+# ----------------------------------------------------------------------------- launcher forwards the speed flags
+def _launcher(*args):
+    import subprocess
+    return subprocess.run(["bash", os.path.join(ROOT, "run_one_scenario.sh"), *args], capture_output=True, text=True)
+
+
+def test_launcher_documents_and_validates_the_speed_flags():
+    out = _launcher("--help")
+    assert "--em-njobs" in (out.stdout + out.stderr) and "--no-eta-benchmark" in (out.stdout + out.stderr)
+    for bad in ("0", "-2", "many"):
+        r = _launcher("--em-njobs", bad, "-s", "x")
+        assert r.returncode != 0 and "--em-njobs must be" in (r.stdout + r.stderr)
+
+
+def test_study_and_hyp_forward_em_njobs_after_a_bare_double_dash(tmp_path):
+    cmd = st.pipeline_command(st.Design("homo", "homo", "noreg", "spread", 5, 0, "k", 0, "lbfgsbfix"),
+                              "c.json", "p.csv", "1d", False, ["--em-njobs", "8"])
+    assert cmd[-2:] == ["--em-njobs", "8"]

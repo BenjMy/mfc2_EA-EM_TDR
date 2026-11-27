@@ -77,20 +77,39 @@ tail -n 3 mfc2_outputs/run_log.csv | cut -d, -f1,3,6,7
 
 Check the quality gate (`status`, `quality_reasons`) in the run's `run_manifest.json` and in `pipeline_report_*.md` before mapping. If the map run prints `[WARN] CALIBRATION DRIFT`, the map no longer matches the calibration: redo step (a). `--stage map` cannot be combined with `--quick`.
 
-### 2b. Faster inversion: EM method and cores (`em_options.py`, `--em-njobs`)
+### 2b. Faster inversion: solver, cores and the progress line (`--em-method`, `--em-njobs`)
 
-The scenarios invert with `method = ROPE` (EMagPy default, 100 random samples per point). L-BFGS-B fits the data (ROPE does not, see the section "EM inversion method and speed") and, **with fixed depths** (all `real_*` scenarios except `*_depth_free`), is also faster. Switch with a derived scenarios file; use the SAME file for calibrate and map (the map looks the calibrated members up by method and stops if they are missing):
+Step 1 (the EM inversion) is the long part. Two switches speed it up, and one line tells you how long it will take.
+
+**Solver, `--em-method`.** The default is now **L-BFGS-B** everywhere (the scenario files carry it; ROPE did not fit the data, see "EM inversion method and speed"). L-BFGS-B is faster than ROPE only with **fixed depths**, so the synthetic SWC study defaults to `lbfgsbfix` (L-BFGS-B with the interfaces fixed at the truth) while the real-data scripts keep each scenario's own depth mode (all `real_*` scenarios are fixed-depth except `*_depth_free`).
+
+| Value | Method | Depths | Default of |
+|---|---|---|---|
+| `lbfgsb` | L-BFGS-B | the scenario's own | hyp1/2/3, `run_all_hypotheses.py`, `run_real_study.py`, `generate_synthetic_real_mirror.py` |
+| `lbfgsbfix` | L-BFGS-B | fixed (at the scenario's `depths0`) | `study_swc_design.py` |
+| `rope` | ROPE (random sampler, optional, the old behaviour) | the scenario's own | none |
+| `base` | untouched: whatever the scenario file says (L-BFGS-B now) | untouched | none (no name / cache suffix) |
+
+**Cores, `--em-njobs {auto,N}`.** Splits the points of ONE Step-1 task across cores. `auto` (default) does it only when there are fewer tasks than cores (typically `--stage map`: K members x epochs); it is 1 for ROPE (seeded, reproducible) and with `beta != 0`, and it does not change a deterministic result. The launcher `run_one_scenario.sh` forwards it (and `--no-eta-benchmark`) to `run_pipeline.py`; scripts that call the launcher (`hyp*`, `run_all_hypotheses.py`, `run_real_study.py`, `study_swc_design.py`) pass it after a bare `--`.
+
+| You run | Solver | Cores |
+|---|---|---|
+| one scenario / `--stage calibrate` / `--stage map` | edit nothing (file is L-BFGS-B); `-c <derived file>` for `rope` | `./run_one_scenario.sh ... --em-njobs 8` |
+| `hyp1/2/3`, `run_real_study.py`, `run_all_hypotheses.py` | `--em-method lbfgsb` (default) \| `rope` \| `base` | `... -- --em-njobs 8` |
+| `study_swc_design.py` | `--em-method lbfgsbfix` (default) \| `lbfgsb` \| `rope` \| several (a factor) | `... -- --em-njobs 8` |
 
 ```bash
-python em_options.py --config ensemble_scenarios_real.json --em-method lbfgsb      # -> ensemble_scenarios_real_lbfgsb.json
-./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real_lbfgsb.json --mode 2d --stage calibrate
-./run_one_scenario.sh -s real_L3_base -c ensemble_scenarios_real_lbfgsb.json --mode 2d --stage map \
-    --calibration mfc2_outputs/real_L3_base_lbfgsb/0001_real_L3_base_calibrate
-REAL_CFG=ensemble_scenarios_real_lbfgsb.json ./run_real_all_scenarios.sh            # the fixed batch, same switch
-python hyp1_layers_ws_freedom.py --designs L3 --free-k 4 --em-method lbfgsb         # hyp1/2/3 and run_real_study.py take it too
+# real data, calibrate then map (map has few tasks: the cores go inside each task)
+./run_one_scenario.sh -s real_L3_base --mode 2d --stage calibrate
+./run_one_scenario.sh -s real_L3_base --mode 2d --stage map --em-njobs 8 \
+    --calibration mfc2_outputs/real_L3_base/0001_real_L3_base_calibrate
+python hyp1_layers_ws_freedom.py --designs L3 --free-k 4 -- --em-njobs 8          # solver already lbfgsb
+python em_options.py --config ensemble_scenarios_real.json --em-method rope       # -> ..._rope.json, the old solver
 ```
 
-`--em-method` is `base` (default: the scenario's own method, ROPE, so all old runs and caches stay valid), `lbfgsb`, or `lbfgsbfix` (L-BFGS-B and `fixed_depths: true`). The derived scenarios get `_lbfgsb` appended to `cache_tag` and `output_dir`, so ROPE and L-BFGS-B runs never share a cache or folder. `--em-njobs {auto,N}` (all runs, default `auto`) splits the points of one Step-1 task across cores when there are fewer tasks than cores, typically `--stage map` (K members x epochs); it stays 1 for ROPE (reproducible seeds) and with `beta != 0`, and does not change the result of a deterministic method.
+Use the SAME scenarios file (same method and depth mode) for calibrate and map: the map looks the calibrated members up by method and stops if they are missing. A non-`base` `--em-method` appends `_<em>` to `cache_tag` and `output_dir` of the derived scenarios, so two solvers never share a cache or a run folder.
+
+**Progress and time left (Step 1).** Before dispatch the pipeline times about 3 points of each (method, forward model) in the main process and prints an estimate: `[ETA] Step 1 | calibrate estimate: about 42 min 10 s on 8 worker(s), finishing around 14:35` (rough, +-50 %; `--no-eta-benchmark` skips it). Then ONE live line replaces the old per-worker output: percent, tasks, points, elapsed, ETA with the clock time, workers and points/s. The ETA follows points, not tasks (tasks differ a lot in size) and blends the recent rate in, so a stall shows. On a terminal it refreshes in place; in a log file (nohup, batch) it prints one line every 30 s. EMagPy's `n/N inverted` and quadrature-conversion messages are filtered out of the workers' output; anything else they print is kept.
 
 ### 3. Free more Waxman-Smits parameters
 
@@ -179,7 +198,9 @@ The maps are in `<run>/output_model/maps.nc` (needs `xarray` and `netcdf4`) and 
 | Map covers only the probe neighbourhoods | The scenario already thins with `em_subsample.mode = "probes"` (e.g. `real_single_test_probes*`): map with a scenario without it. |
 | `--stage map` with `--quick` is rejected | Not supported: run the map without `--quick`. |
 | Map stops: calibrated member(s) not in this scenario's parameter grid | The map uses another scenarios file / EM method than the calibration (e.g. ROPE vs `..._lbfgsb.json`): use the same one for both stages. |
-| L-BFGS-B is slower than ROPE | Free depths (`fixed_depths: false`): L-BFGS-B is 2-7 x slower than ROPE there. Use fixed depths (`--em-method lbfgsbfix`). |
+| L-BFGS-B is slower than ROPE | Free depths (`fixed_depths: false`; all synthetic scenarios, `real_*_depth_free`): L-BFGS-B is 2-7 x slower than ROPE there. Use fixed depths (`--em-method lbfgsbfix`, the study default). |
+| `--em-njobs` does nothing | `auto` keeps 1 when the tasks fill the cores (a full calibrate, the SWC study), for ROPE and with `beta != 0`. It helps `--stage map` and runs with few tasks. |
+| `--em-njobs` is rejected by a `hyp*` / study script | Those scripts forward it only after a bare `--`: `python hyp3_localized_bandwidth.py ... -- --em-njobs 8`. |
 
 ## Input data paths (`EA_EM_config.py`)
 
@@ -227,7 +248,7 @@ run_real_all_scenarios.sh        fixed batch of run_one_scenario.sh calls (paper
 | `hyp1_layers_ws_freedom.py` | **H1**: how many layers can the real TDR sensors support (they sit at 0.15 and 0.30 m), and how many Waxman-Smits parameters (sigma_s, m, sigma_w, a) can be freed? Layer designs `L2`/`L3`/`L4` (or `--design NAME=d1,d2`) x K free parameters. Prints which horizons have no sensor before running. | Generated `real_study_<design>_free<K>`. |
 | `hyp2_train_val_split.py` | **H2**: the default run fits and selects K on all TDR data, so its RMSE is in-sample. Runs the same scenario with each split (`off`, `alternate_sorted`, `by_probe`, `by_time_block`, `random`) and reports the held-out RMSE. | Generated `real_tv_<method>` (from `--base`). |
 | `hyp3_localized_bandwidth.py` | **H3**: does letting WS parameters vary in space (kernel-localized fit) beat one set per horizon, and at which bandwidth? Runs one scenario with your candidate list (`--bandwidths`), chosen by leave-one-probe-out CV. | Generated `real_bw_sweep` (from `--base`). |
-| `hyp_common.py` | Not run directly: the shared engine of the three `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--config --base --mode --stage --out-dir --em-method --fast --dry-run --keep-going`, and forwards anything after a bare `--` to `run_one_scenario.sh`. | None (it generates nothing itself). |
+| `hyp_common.py` | Not run directly: the shared engine of the three `hyp*` scripts (generate scenarios, write `<hyp>_scenarios.json`, print the plan, run `run_one_scenario.sh` per scenario, collect `<hyp>_summary.csv`). Defines the options they all share: `--config --base --mode --stage --out-dir --em-method --fast --dry-run --keep-going` (hyp2 / hyp3 and `run_all_hypotheses.py` also `--no-k0`), and forwards anything after a bare `--` (e.g. `--em-njobs 8`) to `run_one_scenario.sh`. | None (it generates nothing itself). |
 | `run_all_hypotheses.py` | All of the above with their shared options (`--config --base --mode --stage --fast --dry-run --keep-going`); `--only 1 3` picks some, `--list` shows them. | Whatever the three scripts generate. |
 | `run_real_all_scenarios.sh` | The fixed paper batch: `real_single_*` / `real_multi_*` (forward model `_base` / `_fslin` / `_cs`, fixed vs free interfaces `_depth_free`, WS freedom `_ws_*`), then `--beta`, `--gamma` and bandwidth sweeps and (commented out) `--train-val-split`. It starts with `--list` and `--validate`. Does not generate anything. | The existing `real_single_*` (2 layers) and `real_multi_*` (4 layers). |
 
@@ -300,6 +321,19 @@ python hyp3_localized_bandwidth.py --config mfc2_synthetic/mfc2_real_synthetic_m
 
 Things to know:
 
+Speed, solver and the K = 0 reference (same flags as for the real data, see 2b):
+
+```bash
+# L-BFGS-B is the default; the mirror has fixed depths, so it is also the fast one
+python run_all_hypotheses.py --config mfc2_synthetic/mfc2_real_synthetic_mirror.json \
+    --base mfc2_real_synthetic_mirror --em-method lbfgsb -- --em-njobs 8
+python run_all_hypotheses.py ... --em-method rope        # the old solver (optional, does not fit the data)
+python run_all_hypotheses.py ... --no-k0                 # skip the K = 0 reference runs
+python generate_synthetic_real_mirror.py ... --em-method lbfgsb   # solver written into the generated scenario
+```
+
+Every hypothesis includes the **K = 0 floor** (all four WS parameters pinned at `lab_p0`, nothing calibrated), the score a calibrated variant has to beat: hyp1 runs `--free-k 0 1 2 3 4` by default (`0 1 4` with `--fast`); hyp2 (`real_tv_k0`) and hyp3 (`real_bw_k0`) add one extra scenario that shares the Step 1 cache of the hypothesis, so it costs Steps 2-6 only. `--no-k0` drops it.
+
 - `--standin-stations N` is **not the real station layout**: a jittered grid inside the footprint of all dense EM epochs. Pass `--coord-csv SOILNET_MFC2_coordinates_sensors.csv` instead to use the real one (the two options exclude each other).
 - `--depths0` sets the layer interfaces of the truth and the scenario. The default (`0.3 0.6 1.0`, 4 layers) has two layers the 15/30 cm TDR cannot see (the run warns about uncovered horizons); `--depths0 0.225` is the simple design.
 - `--ws-truth` sets how the truth sigma_s varies (`a`, `m`, `sigma_w` stay constant; nothing varies in time): `constant` (default), `per_horizon` (100, 150, 200, ...), `gradient` (50 to 150 from west to east), `zones` (50 west / 150 east, sharp boundary at mid-footprint). The truth values are saved as `ground_truth/*_ws_sigma_s.npy` (EM points x layers, TDR stations x layers). The calibration's `sigma_s` bounds are [0, 200].
@@ -327,21 +361,28 @@ Results: `comparison_output/1d_surface_vs_full_free{K}/` and `comparison_output/
 
 ## Number / distribution of SWC probes study (1-D synthetic)
 
-`study_swc_design.py` generates the scenarios, runs them, scores `theta_calc` against the synthetic truth and draws the comparison figures. Factors: number of SWC positions `n` (1, 2, 3, 5, 10), their distribution (`spread` / `clustered` / `random`), truth soil moisture (`smc` homo / hetero), truth Waxman-Smits parameters (`ws` homo / hetero), number of free WS parameters `K` (0-4; 0 = all four known), the EMagPy regularisation (`noreg` / `beta` / `gamma` / `both`), what is known (`pin`) with an error on it (`err`), and the EM inversion method (`em`: `base` = ROPE / `lbfgsb` / `lbfgsbfix`, see "EM inversion method and speed"). `ws` also has the opt-in lateral / depth cases `heterox` / `heteroz` and their soil-like versions `soilhomo` / `soilheterox` / `soilheteroz` (baseline a, m, sigma_w, sigma_s = 0.8, 2, 100, 100 instead of 0.5, 3, 500, 100).
+`study_swc_design.py` generates the scenarios, runs them, scores `theta_calc` against the synthetic truth and draws the comparison figures. Factors: number of SWC positions `n` (1, 2, 3, 5, 10), their distribution (`spread` / `clustered` / `random`), truth soil moisture (`smc` homo / hetero), truth Waxman-Smits parameters (`ws` homo / hetero), number of free WS parameters `K` (0-4, **K = 0 included by default**; 0 = all four known, the floor), the EMagPy regularisation (`noreg` / `beta` / `gamma` / `both`), what is known (`pin`) with an error on it (`err`), and the EM inversion method (`em`: `lbfgsbfix` by default / `lbfgsb` / `rope` / `base`, see 2b and "EM inversion method and speed"). `ws` also has the opt-in lateral / depth cases `heterox` / `heteroz` and their soil-like versions `soilhomo` / `soilheterox` / `soilheteroz` (baseline a, m, sigma_w, sigma_s = 0.8, 2, 100, 100 instead of 0.5, 3, 500, 100).
 
 ```bash
 python study_swc_design.py --dry-run                      # write + validate the scenarios, print the commands
 python study_swc_design.py --preset smoke --fast          # smoke test of the whole chain (8 short runs)
-python study_swc_design.py --preset oat                   # one factor at a time around the reference (15 runs)
-python study_swc_design.py --preset main --keep-going --resume   # truth x K x n, + distribution and reg at n = 5 (160 runs)
+python study_swc_design.py --preset oat                   # one factor at a time around the reference (16 runs)
+python study_swc_design.py --preset main --keep-going --resume   # truth x K x n, + distribution and reg at n = 5 (176 runs)
 python study_swc_design.py --analyze-only                 # redo summary + figures from the run log
 python study_swc_design.py --smc homo hetero --ws hetero --free-k 2 4 --n-swc 1 3 5 10   # any subset of the levels
-# K = 0 floor (nothing calibrated), legacy and soil truth, ROPE (existing runs) vs L-BFGS-B with fixed depths
+# K = 0 floor only, legacy and soil truth (solver: lbfgsbfix, the default)
 python study_swc_design.py --smc hetero --ws homo soilhomo --reg noreg --free-k 0 --n-swc 5 --dist spread \
-    --em-method base lbfgsbfix --resume --keep-going
+    --resume --keep-going
+# faster: L-BFGS-B with fixed depths + 8 cores per Step-1 task (anything after -- goes to run_one_scenario.sh)
+python study_swc_design.py --preset main --resume --keep-going --em-method lbfgsbfix -- --em-njobs 8
+# compare solvers as a factor (the old ROPE next to the default); every level doubles the runs
+python study_swc_design.py --preset oat --em-method lbfgsbfix rope
+python study_swc_design.py --preset oat --em-method lbfgsb      # L-BFGS-B with the base scenario's FREE depths: 4-7 x slower
 ```
 
-Presets: `smoke` 8, `oat` 15, `main` 160, `full` 704 runs. A synthetic run always repeats Step 1 (the ensemble cache is real-data only), so each run costs a full pipeline run (3-5 min; `--fast` passes `--quick`, a smoke test and never a result).
+Solver and speed of the study: the synthetic base scenarios have free depths, so plain `lbfgsb` is the slow variant; the default `lbfgsbfix` pins the interfaces at the truth layers (removes the depth question from the WS study on purpose; about 1.4 s against 11 s per Step-1 task in a quick run). Each run is one pipeline call with its own process pool (one worker per core, at most one per task), so `--em-njobs` only matters when a run has fewer tasks than cores. Runs made before the default changed were ROPE and carry no `_em` suffix (`base` in the log): `base` now means the scenario file's own method, which is L-BFGS-B, so use `--em-method rope` to repeat them.
+
+Presets: `smoke` 8, `oat` 16, `main` 176, `full` 720 runs (K = 0 counts once per truth and regularisation, at the smallest `n`: it fits nothing, so it does not depend on `n` or the distribution). A synthetic run always repeats Step 1 (the ensemble cache is real-data only), so each run costs a full pipeline run (3-5 min; `--fast` passes `--quick`, a smoke test and never a result).
 
 Definitions: `smc homo` = `homogeneous: true`; `ws homo` = `ws_xy_variation: false` (true a, m, sigma_w, sigma_s = 0.5, 3, 500, 100 everywhere); `ws hetero` = m and sigma_s vary along x and a, sigma_w change below horizon 1 (`sweeps.HETERO_LAYER_PARAMS`); `beta` = `param_grid.beta`, `gamma` = temporal smoothing (3 epochs); freed in the order sigma_s, m, sigma_w, a as in the surface-vs-full study. Probe layouts are written to `probes/*.csv` and passed with `--probe-xyz`; the pipeline re-anchors a probe file at the survey origin, so every layout contains x = 0 (`clustered` = the first n survey points, `random` = x = 0 plus n-1 seeded random points). Layouts that coincide (n = 1, n = 10) are run once. The calibration start of the free m, sigma_w, sigma_s is shifted by `--p0-bias` (default +20 %): with a homogeneous WS truth the repo default `lab_p0` is the truth itself.
 
@@ -373,13 +414,13 @@ python plot_validation_1to1.py --ids <surface_run_id> <full_run_id> \
 
 ## EM inversion method and speed
 
-Why: the scenarios' `param_grid.method = ["ROPE"]` (EMagPy default `rep = 100` random samples per point, never set by the pipeline) does not fit the data. On the synthetic study truth (`diagnose_ec_inversion.py`, one realization): ECa misfit about 600 %, inverted EC 2-8 x too high, K = 0 floor (all four WS parameters known) theta RMSE 0.15 m3/m3; with L-BFGS-B misfit about 5 % and floor about 0.02. Fixed depths and the forward model (CS / FSlin) made no difference to that bias. The pipeline's own default method is L-BFGS-B (when `param_grid.method` is absent); ROPE comes from the scenario files, which are not edited: `--em-method` (study, hyp1/2/3, `run_real_study.py`) or `python em_options.py --config <file> --em-method lbfgsb` switch it. alpha / beta / gamma smoothing work with L-BFGS-B too.
+Why: the scenarios' `param_grid.method = ["ROPE"]` (EMagPy default `rep = 100` random samples per point, never set by the pipeline) does not fit the data. On the synthetic study truth (`diagnose_ec_inversion.py`, one realization): ECa misfit about 600 %, inverted EC 2-8 x too high, K = 0 floor (all four WS parameters known) theta RMSE 0.15 m3/m3; with L-BFGS-B misfit about 5 % and floor about 0.02. Fixed depths and the forward model (CS / FSlin) made no difference to that bias. The scenario files used to carry ROPE; they now carry L-BFGS-B, which is also the default of every script (`lbfgsb`; `lbfgsbfix` for the synthetic study). ROPE stays available as `--em-method rope` (or `python em_options.py --config <file> --em-method rope`). alpha / beta / gamma smoothing work with L-BFGS-B too. Depth modes: in the real scenarios ROPE already ran with fixed depths (all but `real_single_depth_free` and `real_multi_depth_free`); in the synthetic ones it ran with FREE depths, which is why the study needs `lbfgsbfix` to be fast.
 
 Time (one core, 60 points, 4 layers, ms per point and ensemble member):
 
 | | CS | FSlin |
 |---|---|---|
-| ROPE, fixed depths (real scenarios today) | 26 | 153 |
+| ROPE, fixed depths (real scenarios before the switch) | 26 | 153 |
 | **L-BFGS-B, fixed depths** | **6.6** | **106** |
 | ROPE, free depths | 39 | 165 |
 | L-BFGS-B, free depths | 78 | 1149 |

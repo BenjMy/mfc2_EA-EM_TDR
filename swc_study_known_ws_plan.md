@@ -118,6 +118,49 @@ floor ≫ 0.03 → first diagnose the EC (Patch 2b), then continue.
   combinations x 6 grid members for a deterministic method are mostly redundant: test how many starts L-BFGS-B
   needs (calibrate stage only).
 
+### Patch 2f - L-BFGS-B by default, K = 0 everywhere, progress / ETA, speed flags in the README  -- DONE (2026-11-27)
+
+Requests (from the user) and what was done:
+
+* **Choose the solver for the studies.** `--em-method` of every script: `lbfgsb` (default of hyp1/2/3,
+  `run_all_hypotheses.py`, `run_real_study.py`, `generate_synthetic_real_mirror.py`), `lbfgsbfix` (default of
+  `study_swc_design.py`), `rope` (optional, new preset), `base` (leave the scenario file untouched, no name suffix).
+  The study accepts several values (a factor): `--em-method lbfgsbfix rope`.
+* **L-BFGS-B / lbfgsbfix by default, ROPE optional.** `ensemble_scenarios.json` (8 entries) and
+  `ensemble_scenarios_real.json` (16) now carry `L-BFGS-B`; the mirror generator writes it too. Old ROPE runs have no
+  `_em` suffix (`base` in the log); `base` now resolves to L-BFGS-B, so repeating an old run needs `--em-method rope`.
+* **"Is the current ROPE with depth = FIXED?"** Real scenarios: yes, 17 of 19 are `fixed_depths: true` (the two
+  exceptions are `real_single_depth_free` and `real_multi_depth_free`). Synthetic scenarios: no, all 28 have FREE depths.
+  That is why a plain `lbfgsb` makes the synthetic study 4-7 x slower and the study default is `lbfgsbfix`.
+* **K = 0 for all.** `run_real_study.py` and hyp1: `--free-k` default `0 1 2 3 4` (`0 1 4` with `--fast`). hyp2 / hyp3: an
+  extra scenario (`real_tv_k0`, `real_bw_k0`: all four WS parameters pinned at `lab_p0`) that shares the hypothesis'
+  Step 1 cache, so it only costs Steps 2-6; `--no-k0` drops it. SWC study: K = 0 is part of the default K levels, kept
+  once per (smc, ws, reg) at the smallest `n` (it fits nothing). Preset sizes are now smoke 8 (unchanged: K = 1 / 4),
+  oat 16, main 176, full 720.
+* **Time remaining for calibrate and map.** New `progress_eta.py` replaces tqdm in Step 1: an upfront estimate
+  (3-point benchmark per method / forward model + pool simulation), then one live line (percent, tasks, points,
+  elapsed, ETA and clock time, workers, points/s). The ETA follows POINTS, blends the recent rate (a stall shows),
+  and the line is one-per-30-s in a log file. EMagPy's `n/N inverted` and "Converting quadrature columns" lines are
+  filtered in the workers. `--no-eta-benchmark` skips the estimate.
+* **README.** Recipe 2b rewritten (solver table, cores table, progress line), hypotheses and SWC-study sections get the
+  speed arguments and the K = 0 reference, "EM inversion method and speed" and "Common mistakes" updated.
+
+Two pre-existing gaps found on the way:
+
+* `run_one_scenario.sh` rejected `--em-njobs` (the README said "all runs"): it now forwards `--em-njobs` and
+  `--no-eta-benchmark` to `run_pipeline.py`; `hyp*` / study scripts pass them after a bare `--`.
+* `run_all_hypotheses.py` did not forward `--em-method` to the hypothesis scripts (they silently used the default).
+
+Not done / to check on the real machine:
+
+* No real inversion was timed after the change; the upfront estimate is rough (+-50 %) and is NOT validated on the real
+  data. Compare the printed estimate with the final `done:` line of one calibrate run and report the ratio.
+* `--em-njobs` only matters when a run has fewer tasks than cores (`--stage map`); the study and a full calibrate fill
+  the pool, where `auto` keeps 1. The speed-up of N > 1 is still not measured (sandbox has one core).
+* `tests/data/scenarios_golden.json` is generated and git-ignored: run `python tests/make_scenario_golden.py` once
+  after pulling, because the scenario files changed on purpose.
+* The K = 0 reference of hyp2 / hyp3 is a new scenario name: summaries from before this patch do not contain it.
+
 ### Patch 2d - EM method (`--em-method`) and soil-like truth (`--ws soil*`)
 
 * `em_options.py`: one switch for the EM inversion method, as an ordinary scenario field
@@ -247,8 +290,9 @@ Run `--dry-run` first (it prints the plan and validates every scenario) and use 
 | 2c | done (figure `fig_ws_recovery.png` + truth curve on the Step 2 EC-theta plots; needed a pipeline change) |
 | 4 | done (`--err`, `fig_known_error.png`) |
 | 2b | done (stand-alone scripts; cause = ROPE) |
-| 2d | done (`--em-method`, soil truth cases); the 4 K = 0 floor runs have to be redone with `--em-method lbfgsbfix` (fast) or `lbfgsb` |
+| 2d | done (`--em-method`, soil truth cases); the 4 K = 0 floor runs are redone by default with `lbfgsbfix` (2f) |
 | 2e | done (speed measurements, `lbfgsbfix`, `--em-njobs`, README) |
+| 2f | done (L-BFGS-B / `lbfgsbfix` default, ROPE optional, K = 0 in hyp1/2/3 and the study, progress / ETA, speed flags in README + launcher) |
 | 5, 6 | not started |
 
 Patch 4 notes: a pinned value outside the WS bounds (e.g. a = 0.40) is not clipped, its bound is
