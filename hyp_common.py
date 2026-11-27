@@ -78,7 +78,9 @@ WHICH SCRIPT FOR WHICH QUESTION
   hyp1_layers_ws_freedom.py    how many layers, and how many free WS parameters?   (--designs, --free-k)
   hyp2_train_val_split.py      does the calibration hold on held-out probes/times?   (--methods)
   hyp3_localized_bandwidth.py  does a spatially localized WS fit help, at what bandwidth?   (--bandwidths)
-  run_all_hypotheses.py        the three in turn, with the shared options
+  hyp4_solver_type.py          ROPE or L-BFGS-B for the EM inversion, nothing else changed?   (--solvers)
+  hyp5_layer_depths.py         interface depths fixed at depths0 or free?   (--depth-modes)
+  run_all_hypotheses.py        hypotheses 1-3 in turn (4 and 5 with --only), with the shared options
 
 Arguments after a bare '--' are passed on to run_one_scenario.sh.
 Outputs: mfc2_outputs/hypotheses[_synthetic]/<hypothesis>/ (config, <tag>_summary.csv, one run folder per stage).
@@ -189,8 +191,14 @@ def write_summary(rows: list[dict], path: str, extra_columns: list[str] | None =
             w.writerow({c: r.get(c, "") for c in columns})
 
 
-def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> None:
-    """Options shared by every hypothesis script (grouped in ``--help``; the epilog explains stages and workflow)."""
+def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str,
+                    em_choices: tuple[str, ...] | None = None) -> None:
+    """Options shared by every hypothesis script (grouped in ``--help``; the epilog explains stages and workflow).
+
+    ``em_choices``: ``None`` = every ``--em-method`` tag; a tuple = only those (hyp5 drops ``lbfgsbfix``);
+    an EMPTY tuple = no ``--em-method`` option at all (hyp4: the solver is the factor it tests, so a global
+    switch would overwrite it).
+    """
     if not ap.epilog:
         ap.epilog = HELP_EPILOG
     ap.formatter_class = argparse.RawDescriptionHelpFormatter     # keep the epilog layout
@@ -213,7 +221,10 @@ def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> Non
                    help="calibrate (default) = fit WS on the TDR sensors, probe neighbourhoods only | "
                         "map = water-content maps on all EM points, from the newest calibrate run | "
                         "both = calibrate then map | full (alias none) = one whole run. See STAGES below")
-    em_options.add_em_arg(g)
+    if em_choices is None or len(em_choices):
+        default = em_options.RUN_DEFAULT_EM if (em_choices is None or em_options.RUN_DEFAULT_EM in em_choices) \
+            else em_choices[0]
+        em_options.add_em_arg(g, default=default, choices=em_choices)
     g.add_argument("--fast", action="store_true",
                    help=f"smoke test: --quick, {FAST_EPOCHS} epochs, probe points only (not a result; "
                         "cannot be combined with --stage map)")

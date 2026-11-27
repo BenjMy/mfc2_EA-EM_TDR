@@ -412,3 +412,24 @@ def test_study_and_hyp_forward_em_njobs_after_a_bare_double_dash(tmp_path):
     cmd = st.pipeline_command(st.Design("homo", "homo", "noreg", "spread", 5, 0, "k", 0, "lbfgsbfix"),
                               "c.json", "p.csv", "1d", False, ["--em-njobs", "8"])
     assert cmd[-2:] == ["--em-njobs", "8"]
+
+
+# ----------------------------------------------------------------------------- restricted --em-method choices
+def test_add_em_arg_choices_restrict_the_accepted_tags():
+    import argparse
+    ap = argparse.ArgumentParser()
+    eo.add_em_arg(ap, choices=("lbfgsb", "rope", "base"))
+    assert ap.parse_args(["--em-method", "rope"]).em_method == "rope"
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--em-method", "lbfgsbfix"])
+    with pytest.raises(ValueError):
+        eo.add_em_arg(argparse.ArgumentParser(), choices=("rope",))     # default lbfgsb not allowed
+
+
+def test_common_args_em_choices_none_all_or_no_option():
+    import argparse
+    import hyp_common as hc
+    for choices, has_opt in ((None, True), (("lbfgsb", "base"), True), ((), False)):
+        ap = argparse.ArgumentParser()
+        hc.add_common_args(ap, default_out_dir="x", em_choices=choices)
+        assert hasattr(ap.parse_args([]), "em_method") is has_opt

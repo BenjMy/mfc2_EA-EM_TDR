@@ -149,17 +149,27 @@ def apply_to_config(cfg: dict, em: str, *, tag_paths: bool = True) -> dict:
     return out
 
 
-def add_em_arg(ap: argparse.ArgumentParser, *, multiple: bool = False, default: str = RUN_DEFAULT_EM) -> None:
-    """``--em-method``: one value, or several for the study's factor (``multiple``; None = ``default``)."""
+def add_em_arg(ap: argparse.ArgumentParser, *, multiple: bool = False, default: str = RUN_DEFAULT_EM,
+               choices: tuple[str, ...] | None = None) -> None:
+    """``--em-method``: one value, or several for the study's factor (``multiple``; None = ``default``).
+
+    ``choices`` restricts the accepted tags (hyp5 excludes ``lbfgsbfix``, which would override the very
+    ``fixed_depths`` factor it tests); the default must be one of them.
+    """
     check_em(default)
+    allowed = tuple(choices) if choices else EM_CHOICES
+    for c in allowed:
+        check_em(c)
+    if default not in allowed:
+        raise ValueError(f"default {default!r} not in the allowed choices {allowed}")
     help_ = (f"EM inversion solver of every generated scenario (default: {default}): "
              "lbfgsb = L-BFGS-B, the scenario's depth mode | lbfgsbfix = L-BFGS-B with fixed depths (fastest; "
              "for the synthetic free-depth scenarios) | rope = the old ROPE sampler (optional; does not fit "
              "the data, see em_options.py) | base = leave the scenario file's own method untouched")
     if multiple:
-        ap.add_argument("--em-method", nargs="+", choices=EM_CHOICES, default=None, help=help_ + ". Several = a factor")
+        ap.add_argument("--em-method", nargs="+", choices=allowed, default=None, help=help_ + ". Several = a factor")
     else:
-        ap.add_argument("--em-method", choices=EM_CHOICES, default=default, help=help_)
+        ap.add_argument("--em-method", choices=allowed, default=default, help=help_)
 
 
 def resolve_em_njobs(setting, *, n_tasks: int, methods, betas, cpu_count: int | None = None) -> tuple[int, str]:
