@@ -194,13 +194,32 @@ def _coverage_alpha(counts: np.ndarray, threshold: int, alpha_min: float = 0.35)
     return alpha_min + (1.0 - alpha_min) * frac
 
 
+def _effective_coverage_threshold(support: np.ndarray, threshold: int) -> int:
+    """
+    Cap ``threshold`` by the survey's own point density.
+
+    A sparse survey (e.g. one real-data epoch matched onto a union reference
+    grid de-duplicated at a few metres) typically holds ~1 point per pixel, so
+    a fixed threshold of 3 would fade *every* populated pixel. The threshold is
+    capped at ``median(non-empty support) - 1`` so only pixels that are sparse
+    *relative to the survey* are flagged. Dense surveys (median >= threshold+1)
+    keep the requested threshold unchanged.
+    """
+    pos = np.asarray(support, dtype=float)
+    pos = pos[np.isfinite(pos) & (pos > 0)]
+    if pos.size == 0:
+        return int(threshold)
+    typical = int(np.floor(np.median(pos)))
+    return int(min(threshold, max(0, typical - 1)))
+
+
 def _coverage_legend_patch(style: str, threshold: int, hatch: str, hatch_color: str,
                            alpha_min: float, cmap: str):
     """Legend entry matching ``coverage_style`` (None for "none")."""
     label_pts = f"\u2264{threshold} pts"
     if style == "alpha":
         return mpatches.Patch(facecolor=plt.get_cmap(cmap)(0.7), alpha=alpha_min,
-                              label=f"{label_pts} (faded)")
+                              label="low point density (faded)")
     if style == "hatch":
         return mpatches.Patch(facecolor="none", edgecolor=hatch_color, hatch=hatch,
                               label=f"{label_pts} (sparse)")
@@ -616,9 +635,11 @@ def _plot_xy_panel(
                 wy = max(1, int(round(pixel_size_m / ((extent[3] - extent[2]) / counts.shape[0]))))
                 wx = max(1, int(round(pixel_size_m / ((extent[1] - extent[0]) / counts.shape[1]))))
                 support = uniform_filter(counts.astype(float), size=(wy, wx), mode="constant") * (wy * wx)
-            sc.set_alpha(_coverage_alpha(support, coverage_count_threshold, coverage_alpha_min))
+            _thr = _effective_coverage_threshold(support, coverage_count_threshold)
+            sc.set_alpha(_coverage_alpha(support, _thr, coverage_alpha_min))
         elif show_coverage_hatch and coverage_style == "hatch":
-            sparse = (counts > 0) & (counts <= coverage_count_threshold)
+            _thr = _effective_coverage_threshold(counts, coverage_count_threshold)
+            sparse = (counts > 0) & (counts <= _thr)
             _hatch_low_coverage_xy(
                 ax, sparse, extent,
                 hatch=coverage_hatch, edgecolor=coverage_hatch_color,
