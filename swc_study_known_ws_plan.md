@@ -6,6 +6,17 @@ also I dont like the fact that for the WS heteregeneous case some parameters var
 Plan for extending `study_swc_design.py` (branch `feat/localized-ws-maps`).
 Each step below is one patch (`git am`), small, tested, and independent of the later ones.
 
+
+# TODO (to organize)
+I need to somehow match the plot type between the truth and optimal SMC plots (same for WS params and for RMSE ...). Maybe using a imshow? Prepare a plan in the .md file to do this. Same number of pixels, share axis, plot side by side 
+
+also create a new hyp file that test only the type of solver (rope, against lbfgsb)
+and another one with fixed/or free layers depths
+
+add all this as todo tasks swc_study_known_ws_plan
+
+
+
 ## 0. Why the current study cannot show the message
 
 Facts from your own `study_summary.csv` and from the K=1 / K=2 reports of
