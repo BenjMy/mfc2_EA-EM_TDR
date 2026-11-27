@@ -64,6 +64,7 @@ from typing import Sequence
 
 import numpy as np
 import pandas as pd
+from scipy.spatial import cKDTree
 
 import matplotlib
 matplotlib.use("Agg")
@@ -246,12 +247,13 @@ def _match_epochs_to_reference(
         xy = df[["x", "y"]].to_numpy(float)
         vals = df[freq_cols].to_numpy(float)
 
-        # Brute-force nearest neighbour (point counts here are small —
-        # tens to low hundreds — so an O(n_ref * n_epoch) distance matrix
-        # is cheap and avoids adding a scipy dependency just for this).
-        d2 = ((ref_xy[:, None, :] - xy[None, :, :]) ** 2).sum(axis=2)
-        nearest = d2.argmin(axis=1)
-        nearest_dist = np.sqrt(d2[np.arange(len(ref_xy)), nearest])
+        # KD-tree nearest neighbour. (A dense n_ref x n_epoch distance matrix was used before: fine for
+        # tens of points, but 106 342 EM points need 169 GiB.)  Points farther than the tolerance get
+        # index len(xy) from the tree; they are masked below.
+        dist, nearest = cKDTree(xy).query(ref_xy, k=1, distance_upper_bound=tolerance_m)
+        missing = ~np.isfinite(dist)
+        nearest = np.where(missing, 0, nearest)
+        nearest_dist = np.where(missing, np.inf, dist)
 
         epoch_vals = vals[nearest]
         epoch_vals[nearest_dist > tolerance_m] = np.nan
@@ -516,7 +518,7 @@ def _plot_eca_emagpy_show(
 
         n_before = len(k.surveys[0].df)
         try:
-            k.filterRepeated(index=0)
+            k.filterRepeated(tolerance=0.2)
         except Exception as exc:
             print(f"[DIAG][WARN] filterRepeated() failed for '{name}': {exc}")
         n_after = len(k.surveys[0].df)
