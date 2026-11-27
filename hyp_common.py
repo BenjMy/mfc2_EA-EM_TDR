@@ -199,9 +199,17 @@ def _plot_maps_only(cfg: dict, names: list[str], cfg_path: str) -> int:
             print(f"!!! {n}: no finished map run (with output_model/maps.nc) under {cfg[n]['output_dir']}")
             failed.append(n)
             continue
-        window_m = getattr(sl.load_scenario(n, config_path=cfg_path), "window_m", None)
+        sc = sl.load_scenario(n, config_path=cfg_path)
+        window_m = getattr(sc, "window_m", None)
+        em_dir = coord_file = None
+        if getattr(sc, "data_source", None) == "real":      # real field data or the synthetic mirror
+            rp = resolve_real_paths(scenario_em_dir=getattr(sc, "em_data_dir", None),
+                                    scenario_tdr_dir=getattr(sc, "tdr_data_dir", None),
+                                    scenario_coord_file=getattr(sc, "coord_file", None))
+            em_dir, coord_file = rp.em_dir, rp.coord_file
         try:
-            for p in replot_maps.replot_map_run(run_dir, n, window_m=window_m):
+            for p in replot_maps.replot_map_run(run_dir, n, window_m=window_m,
+                                                em_dir=em_dir, coord_file=coord_file):
                 print(f"[plot-map] {p}")
         except (OSError, ValueError) as exc:
             print(f"!!! {n}: {exc}")
