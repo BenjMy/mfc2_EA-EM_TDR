@@ -679,3 +679,17 @@ def test_log_plots_ignore_pin_and_err_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(pl, "_lines", lambda table, *a, **k: seen.append([r["scenario"] for r in table]))
     pl.plot_all([], str(tmp_path), design_dir=None)
     assert seen == [[legacy.name]] * 2
+
+
+def test_known_preset_cli_uses_separate_lateral_and_depth_truths_by_default(tmp_path):
+    assert st.KNOWN_WS == ("homo", "heterox", "heteroz")
+    out = tmp_path / "o"
+    assert st.main(["--preset", "known", "--dry-run", "--out-dir", str(out)]) == 0
+    with open(out / "study_scenarios.json", encoding="utf-8") as f:
+        names = [k for k in json.load(f) if k.startswith("swcstudy_") and k != "swcstudy_parent"]
+    assert {n.split("_")[2] for n in names} == {"wshomo", "wsheterox", "wsheteroz"}
+    assert len(names) == 15                                    # 5 pins x 3 truths
+    out2 = tmp_path / "o2"                                     # an explicit --ws still wins (legacy mix)
+    assert st.main(["--preset", "known", "--ws", "hetero", "--dry-run", "--out-dir", str(out2)]) == 0
+    with open(out2 / "study_scenarios.json", encoding="utf-8") as f:
+        assert {k.split("_")[2] for k in json.load(f) if k.startswith("swcstudy_") and k != "swcstudy_parent"} == {"wshetero"}

@@ -9,7 +9,7 @@ Each step below is one patch (`git am`), small, tested, and independent of the l
 | # | Request | Status |
 |---|---|---|
 | T1 | Commit as BenjMy (author), patches for `git am` | done: every patch of this batch carries the author of the repo history |
-| T2 | WS heterogeneous truth: parameters varying with depth and with lateral distance must be separate cases | done before this batch (patch 2d): `--ws heterox` (m, sigma_s along x only) and `--ws heteroz` (same ranges, depth only), soil versions `soilheterox` / `soilheteroz`; tests in `test_study_swc_design.py`. The legacy `hetero` (m, sigma_s along x AND a, sigma_w with depth) is kept, because presets must keep their designs (section 1). **Open decision** in 7a. |
+| T2 | WS heterogeneous truth: parameters varying with depth and with lateral distance must be separate cases | done before this batch (patch 2d): `--ws heterox` (m, sigma_s along x only) and `--ws heteroz` (same ranges, depth only), soil versions `soilheterox` / `soilheteroz`; tests in `test_study_swc_design.py`. The legacy `hetero` (m, sigma_s along x AND a, sigma_w with depth) is kept, because presets must keep their designs (section 1). Decided 2026-11-27: the `known` preset uses `heterox` and `heteroz` (7a, done). |
 | T3 | Same plot type for truth and optimal SMC / WS / RMSE (imshow, same pixels, shared axes, side by side) | plan written (7b), not implemented |
 | T4 | New hyp file: solver type only (ROPE against L-BFGS-B) | done: `hyp4_solver_type.py` (7c) |
 | T5 | New hyp file: fixed or free layer depths | done: `hyp5_layer_depths.py` (7d) |
@@ -274,8 +274,8 @@ New factor `probes` (default `full`; I read "electrodes" as the SWC/TDR probes, 
 | preset | runs | time at ~4 min |
 |---|---|---|
 | Patch 1 floor (4 truths) | 4 | 0.3 h |
-| Patch 3 `known` (5 pins × 2 truths) | 10 | 0.7 h |
-| + Patch 4 (err 0, ±10, ±20; pins ≠ none/all: 3) | 10 + 3×4×2 = 34 | 2.3 h |
+| Patch 3 `known` (5 pins × 3 truths: homo, heterox, heteroz) | 15 | 1.0 h |
+| + Patch 4 (err 0, ±10, ±20; pins ≠ none/all: 3) | 15 + 3×4×3 = 51 | 3.4 h |
 | + Patch 5 (× 3 probes) | ~100 | 7 h |
 
 Run `--dry-run` first (it prints the plan and validates every scenario) and use `--resume --keep-going`.
@@ -439,12 +439,13 @@ truth, so those runs must be redone without `--resume`.
 
 * Already available: `heterox` (lateral only), `heteroz` (depth only), `soilheterox`, `soilheteroz`
   (`WS_FIELDS` in `study_swc_design.py`). Nothing was changed for T2 in this batch.
-* **Open decision**: the presets (`smoke`, `oat`, `main`, `full`) and `REFERENCE` still use the legacy `hetero`
-  (mixed). Switching them to `heterox` and `heteroz` changes the designs and names of every preset run, which
-  section 1 forbids for the existing presets. Proposal: a NEW preset `known` (Patch 3) built on `heterox` and
-  `heteroz` only, and `hetero` kept for old runs. Confirm before Patch 3.
-* To do (small): `--ws hetero` prints a one-line note in `--dry-run` saying it mixes lateral and depth variation and
-  naming `heterox` / `heteroz`.
+* **Decided (2026-11-27)**: the `known` preset (Patch 3) uses the truths `homo`, `heterox`, `heteroz` by default
+  (`KNOWN_WS` in `study_swc_design.py`; 15 runs instead of 10, 51 with `--err -20 -10 10 20`). An explicit
+  `--ws` wins (`--ws hetero` = legacy mix). `smoke`, `oat`, `main`, `full` and `REFERENCE` keep `hetero`, so old
+  run names, caches and log rows are unchanged.
+* `--dry-run` prints a one-line note when a design uses `hetero`, naming `heterox` / `heteroz`.
+* Reminder (Patch 4 notes): with `heterox` / `heteroz` the pinned value is the per-layer baseline, so the known
+  m and sigma_s cannot equal the per-point truth; `homo` stays the clean reference.
 
 ### 7b - Same plot type for truth and optimal maps (T3), plan only
 

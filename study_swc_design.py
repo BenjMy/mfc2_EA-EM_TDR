@@ -74,8 +74,9 @@ Design presets (``--preset``; levels can be restricted with --n-swc, --dist, ...
          spread, n = 5, K = 4)                                              (~16 runs)
   main   truth(4) x K(4) x n(5)  +  distribution at n = 5  +  reg at n = 5  (~160 runs)
   full   full factorial                                                      (~900 runs)
-  known  what is known x truths at the reference n / dist / reg / smc        (10 runs;
-         34 with --err -20 -10 10 20)
+  known  what is known x truths at the reference n / dist / reg / smc        (15 runs;
+         truths homo, heterox, heteroz unless --ws is given (--ws hetero = legacy mix);
+         51 with --err -20 -10 10 20)
 
 A synthetic run always repeats Step 1 (the ensemble cache is real-data only), so every
 run costs a full pipeline run (~3-5 min; ``--fast`` = ``--quick`` ~ 3 min on one core).
@@ -168,6 +169,10 @@ K_CHOICES = LEVELS["k"]         # accepted by --free-k
 PIN_KNOWN = {"none": (), "sw": ("sigma_w",), "sws": ("sigma_w", "sigma_s"), "am": ("a", "m"),
              "all": ("a", "m", "sigma_w", "sigma_s")}
 PIN_CHOICES = ("k", *PIN_KNOWN)      # accepted by --pin
+# Truths of the `known` preset when --ws is not given: lateral-only and depth-only heterogeneity are separate
+# cases (the legacy `hetero` mixes both: m, sigma_s along x AND a, sigma_w with depth; it stays for old runs).
+KNOWN_WS = ("homo", "heterox", "heteroz")
+
 REFERENCE = {"n": 5, "dist": "spread", "smc": "hetero", "ws": "hetero", "k": 4, "reg": "noreg", "pin": "k", "err": 0,
              "em": em_options.DEFAULT_EM}
 FACTORS = ("smc", "ws", "reg", "dist", "n", "k", "pin", "err", "em")
@@ -1129,6 +1134,8 @@ def main(argv: list[str] | None = None) -> int:
         levels["em"] = (em_options.STUDY_DEFAULT_EM,)
     if args.preset is None:
         args.preset = "known" if args.pin or args.err else "full" if levels["k"] == (0,) else "oat"
+    if args.preset == "known" and not args.ws:
+        levels["ws"] = KNOWN_WS             # separate lateral / depth heterogeneity (use --ws hetero for the legacy mix)
     if args.err:
         bad = [e for e in args.err if abs(e) >= 100]
         if bad:
@@ -1169,6 +1176,9 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"Study config : {cfg_path}  ({len(designs)} designs, preset '{args.preset}', base '{args.base}')")
         print(f"Probe depths : {depths} m   survey x = {survey.tolist()}")
+        if any(d.ws == "hetero" for d in designs):
+            print("Note         : ws 'hetero' mixes lateral (m, sigma_s along x) and depth (a, sigma_w) variation; "
+                  "'heterox' (lateral only) and 'heteroz' (depth only) separate them.")
         for d in designs:
             print(f"  $ {' '.join(pipeline_command(d, cfg_path, probe_csv[d.name], args.mode, args.fast, extra, args.log_file))}")
         if args.dry_run:
