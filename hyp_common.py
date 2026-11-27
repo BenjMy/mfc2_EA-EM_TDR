@@ -54,7 +54,7 @@ FAST_SUBSAMPLE = {"mode": "probes", "radius_m": 5.0}
 # the 'calibrate' stage computes on the probe neighbourhoods only. 'none' = full run.
 # 'both' = per scenario, --stage calibrate and then --stage map on that calibration
 # (the map run inverts only the K selected members, on all EM points).
-STAGES = ("calibrate", "both", "none")
+STAGES = ("calibrate", "map", "both", "none")   # 'map' alone: needs an existing calibrate run (newest one unless --calibration is forwarded after '--')
 
 COMMON_COLUMNS = ["scenario", "stage", "status", "final_rmse", "cv_mean", "ensemble_size",
                   "runtime_s", "quality_level", "output_dir", "error"]
@@ -173,8 +173,8 @@ def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> Non
     ap.add_argument("--mode", default="2d", choices=["1d", "2d"])
     ap.add_argument("--stage", default="calibrate", choices=STAGES,
                     help="calibrate (default): probe neighbourhoods only, Steps 0-5; "
-                         "both: calibrate, then map (Step 6, all EM points) for every "
-                         "scenario; none: the full run")
+                         "map: only the map run (Step 6, all EM points) on the newest calibrate run; "
+                         "both: calibrate, then map for every scenario; none: the full run")
     ap.add_argument("--out-dir", default=default_out_dir)
     em_options.add_em_arg(ap)
     ap.add_argument("--fast", action="store_true",
@@ -183,6 +183,30 @@ def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> Non
                     help="write the config and print the plan, run nothing")
     ap.add_argument("--keep-going", action="store_true",
                     help="continue with the next scenario after a failure")
+    ap.add_argument("--plot-map", action="store_true",
+                    help="run NOTHING: redraw the XY water-content maps of the newest finished "
+                         "'--stage map' run of each scenario from its output_model/maps.nc "
+                         "(written to <run folder>/replot/)")
+
+
+def _plot_maps_only(cfg: dict, names: list[str], cfg_path: str) -> int:
+    """``--plot-map``: redraw the maps of the newest map run of every scenario, no inversion."""
+    import replot_maps
+    failed = []
+    for n in names:
+        run_dir = replot_maps.latest_map_run(cfg[n]["output_dir"], n)
+        if run_dir is None:
+            print(f"!!! {n}: no finished map run (with output_model/maps.nc) under {cfg[n]['output_dir']}")
+            failed.append(n)
+            continue
+        window_m = getattr(sl.load_scenario(n, config_path=cfg_path), "window_m", None)
+        try:
+            for p in replot_maps.replot_map_run(run_dir, n, window_m=window_m):
+                print(f"[plot-map] {p}")
+        except (OSError, ValueError) as exc:
+            print(f"!!! {n}: {exc}")
+            failed.append(n)
+    return 1 if failed else 0
 
 
 def _to_synthetic_root(path: str | None) -> str | None:
@@ -283,6 +307,8 @@ def execute(*, tag: str, cfg: dict, names: list[str], args: argparse.Namespace,
             print("  $", " ".join(pipeline_command(n, cfg_path, args.mode, args.fast, extra, st, cal)))
     if args.dry_run:
         return 0
+    if getattr(args, "plot_map", False):
+        return _plot_maps_only(cfg, names, cfg_path)
 
     rows, failed = [], []
     summary_path = os.path.join(args.out_dir, f"{ftag}_summary.csv")
