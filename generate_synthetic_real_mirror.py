@@ -515,6 +515,7 @@ def write_scenario_json(outdir: str, em_dir: str, tdr_dir: str, coord_file: str,
             "em_unit": "ppm",
             "tdr_data_dir": tdr_dir,
             "coord_file": coord_file,
+            "ground_truth_dir": os.path.join(outdir, "ground_truth"),   # truth maps in Step 0 (plots/synthetic_truth.py)
             "time_tolerance_days": 3.0,
             "realization_index": 0,
             "depths0": DEPTHS0,

@@ -283,6 +283,12 @@ class ScenarioConfig:
     coord_file: str | None             = None
     """Sensor coordinates CSV file (real mode only)."""
 
+    ground_truth_dir: str | None       = None
+    """``ground_truth/`` folder of a SYNTHETIC MIRROR dataset (real mode only, optional;
+    written by ``generate_synthetic_real_mirror.py``). When set, Step 0 also draws the
+    truth maps (theta, a / m / sigma_w / sigma_s; xy and xz) into ``<run folder>/truth/``.
+    Never read by the inversion or the calibration."""
+
     time_tolerance_days: float         = 1.0
     """Half-window [days] for matching TDR readings to the nearest EM survey
     date (real mode only)."""
@@ -872,6 +878,10 @@ def _validate(name: str, raw: dict) -> None:
             f"Scenario '{name}': train_val_split must be one of "
             f"{_valid_tvs_methods}, got {tvs_method!r}."
         )
+    if raw.get("ground_truth_dir") is not None and (
+            not raw["ground_truth_dir"] or not isinstance(raw["ground_truth_dir"], str)):
+        raise ValueError(f"Scenario '{name}': 'ground_truth_dir' must be a non-empty string "
+                         "(the ground_truth/ folder of the synthetic mirror) or be left out.")
     if data_source == "real":
         # The three paths may be omitted: run_pipeline.py then takes them from
         # the selected dataset in EA_EM_config.py (--dataset / EA_EM_DATASET).
@@ -1582,6 +1592,7 @@ def load_scenario(
         em_data_dir       = raw.get("em_data_dir", None),
         tdr_data_dir      = raw.get("tdr_data_dir", None),
         coord_file        = raw.get("coord_file", None),
+        ground_truth_dir  = raw.get("ground_truth_dir", None),
         time_tolerance_days = float(raw.get("time_tolerance_days", 1.0)),
         em_unit           = str(raw.get("em_unit", "ppt")),
         drop_coils        = drop_coils,

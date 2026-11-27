@@ -64,7 +64,23 @@ tail -n 3 mfc2_outputs/run_log.csv | cut -d, -f1,3,6,7          # find the calib
 ```
 Or let a hypothesis script chain both: `--stage both`.
 
+<<<<<<< ours
 ## 4. Score against truth (synthetic only)
+=======
+## 4. The synthetic truth (theta and Waxman-Smits parameters, xy and xz)
+
+Drawn automatically in Step 0 of every run on the mirror (its JSON has `ground_truth_dir`):
+`mfc2_outputs/<scenario>/<run folder>/truth/` with `truth_xy.png`, `truth_xz.png` (theta, sigma_s)
+and `truth_ws_params.png` (a, m, sigma_w, sigma_s). Only `sigma_s` varies in space; `a`, `m`,
+`sigma_w` are constant (flat panels). To draw them without running anything:
+
+```bash
+python plot_synthetic_truth.py                      # -> mfc2_synthetic/truth_plots/
+python plot_synthetic_truth.py --epochs 1 4 6 --y 4468350 --zmax 0.8
+```
+
+## 5. Score against truth (synthetic only)
+>>>>>>> theirs
 
 ```bash
 ./compare_scenarios.sh --list

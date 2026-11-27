@@ -2230,6 +2230,18 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
 
             reporter.log(f"           Time steps      : {n_time}")
             reporter.log(f"           Observations    : {len(observations_list)}")
+
+            # Synthetic MIRROR only: scenario.ground_truth_dir -> draw the known truth (theta,
+            # a / m / sigma_w / sigma_s; xy and xz). Display only, never read by Steps 1-6.
+            _gt_dir = getattr(cfg, "ground_truth_dir", None) if cfg is not None else None
+            if _gt_dir:
+                try:
+                    from plots.synthetic_truth import plot_truth_maps
+                    for _p in plot_truth_maps(_gt_dir, os.path.join(OUTPUT_DIR, "truth"),
+                                              coord_file=coord_file, log=reporter.log):
+                        reporter.log(f"[STEP 0] synthetic TRUTH map -> {_p}")
+                except Exception as _exc:  # noqa: BLE001 - a plot must never stop the inversion
+                    reporter.log(f"[STEP 0][WARN] synthetic truth maps failed: {_exc!r}")
             reporter.end_step("Step 0")
 
         else:

@@ -7,6 +7,7 @@
     "em_unit": "ppm",
     "tdr_data_dir": "mfc2_synthetic/daily_MFC_synthetic",
     "coord_file": "/home/z0272571a@campus.csic.es/Nextcloud/BenCSIC/Training_Supervision/Supervision/Matteo_Censini_2026_data/mfc2_EA-EM_TDR/mfc2_synthetic/standin_coordinates.csv",
+    "ground_truth_dir": "mfc2_synthetic/ground_truth",
     "time_tolerance_days": 3.0,
     "realization_index": 0,
     "depths0": [
