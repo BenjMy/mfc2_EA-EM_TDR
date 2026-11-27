@@ -111,6 +111,8 @@ Use the SAME scenarios file (same method and depth mode) for calibrate and map: 
 
 **Progress and time left (Step 1).** Before dispatch the pipeline times about 3 points of each (method, forward model) in the main process and prints an estimate: `[ETA] Step 1 | calibrate estimate: about 42 min 10 s on 8 worker(s), finishing around 14:35` (rough, +-50 %; `--no-eta-benchmark` skips it). Then ONE live line replaces the old per-worker output: percent, tasks, points, elapsed, ETA with the clock time, workers and points/s. The ETA follows points, not tasks (tasks differ a lot in size) and blends the recent rate in, so a stall shows. On a terminal it refreshes in place; in a log file (nohup, batch) it prints one line every 30 s. EMagPy's `n/N inverted` and quadrature-conversion messages are filtered out of the workers' output; anything else they print is kept.
 
+**Threads per worker.** The pool runs one process per core, so each worker is limited to one BLAS / OpenMP thread (`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, ... are set to 1 for the workers; the run prints a line saying so). Without this, 24 workers each starting 24 BLAS threads oversubscribe the machine: a calibrate run of 532 k points went from 39 to 215 pts/s (ETA 3 h 48 min to 41 min) with the limit. A value you exported yourself is never overwritten (a value > 1 prints a `[WARN]`). If the live rate later falls below a quarter of the benchmark's expected rate (after 60 s), one `[WARN]` line suggests the usual causes: threads, other jobs on the machine, fewer physical cores than workers.
+
 ### 3. Free more Waxman-Smits parameters
 
 `real_L3_base` fixes `a` and `m`. To free them, do not edit the JSON by hand: the `hyp1` script generates the scenario `real_study_<design>_free<K>` (K = number of free parameters, freed in the order `sigma_s`, `m`, `sigma_w`, `a`).
@@ -199,6 +201,7 @@ The maps are in `<run>/output_model/maps.nc` (needs `xarray` and `netcdf4`) and 
 | `--stage map` with `--quick` is rejected | Not supported: run the map without `--quick`. |
 | Map stops: calibrated member(s) not in this scenario's parameter grid | The map uses another scenarios file / EM method than the calibration (e.g. ROPE vs `..._lbfgsb.json`): use the same one for both stages. |
 | L-BFGS-B is slower than ROPE | Free depths (`fixed_depths: false`; all synthetic scenarios, `real_*_depth_free`): L-BFGS-B is 2-7 x slower than ROPE there. Use fixed depths (`--em-method lbfgsbfix`, the study default). |
+| Step 1 runs far slower than the `[ETA]` estimate (a few pts/s per worker) | Thread oversubscription: the pipeline now limits workers to one thread, unless your shell exports `OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` / `MKL_NUM_THREADS` > 1 (`unset` them or set them to 1). Also check other jobs and the number of physical cores. |
 | `--em-njobs` does nothing | `auto` keeps 1 when the tasks fill the cores (a full calibrate, the SWC study), for ROPE and with `beta != 0`. It helps `--stage map` and runs with few tasks. |
 | `--em-njobs` is rejected by a `hyp*` / study script | Those scripts forward it only after a bare `--`: `python hyp3_localized_bandwidth.py ... -- --em-njobs 8`. |
 

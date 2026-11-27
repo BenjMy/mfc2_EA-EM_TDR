@@ -2916,8 +2916,17 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             _pts_by_file = {fp: progress_eta.count_csv_points(fp) for fp in dict.fromkeys(t[1] for t in tasks)}
             _task_points = [_pts_by_file[t[1]] for t in tasks]
             _stage_label = f"Step 1 | {STAGE}"
+            _set_thr, _kept_thr = progress_eta.limit_worker_threads(_n_workers)
+            if _set_thr:
+                print(f"[INFO] Step-1 workers: 1 BLAS/OpenMP thread each ({', '.join(_set_thr)} set to 1; "
+                      f"export your own value to override).")
+            if _kept_thr:
+                print(f"[WARN] {', '.join(_kept_thr)} is set in your environment: {_n_workers} workers x that many "
+                      f"threads can oversubscribe the machine (a 24-worker run was 5.5 x slower).")
+            _exp_rate = None
             if eta_benchmark and not quick and len(tasks) > 1:
                 _costs = progress_eta.benchmark_costs(_invert_single_worker, tasks)
+                _exp_rate = progress_eta.expected_rate(_costs, tasks, _task_points, _n_workers, _njobs)
                 _msg = progress_eta.describe_estimate(_costs, tasks, _task_points, _n_workers, _njobs,
                                                       label=_stage_label)
                 print(_msg if _msg else "[ETA] no upfront estimate (benchmark not possible); live ETA follows.")
@@ -2938,7 +2947,8 @@ def main(cfg: "ScenarioConfig | None" = None, mode: str = "1d",
             # the ~11-minute inversion run itself.
             _ctx = mp.get_context("spawn")
             _shared = _ctx.Array("d", len(tasks), lock=False)     # points done per running task (progress line)
-            _tracker = progress_eta.Step1Progress(_stage_label, _task_points, _n_workers, shared=_shared)
+            _tracker = progress_eta.Step1Progress(_stage_label, _task_points, _n_workers, shared=_shared,
+                                                  expected_rate=_exp_rate)
             _ordered = [t[0] for t in tasks] == list(range(len(tasks)))
             with ProcessPoolExecutor(max_workers=_n_workers, mp_context=_ctx,
                                      initializer=progress_eta.init_worker,

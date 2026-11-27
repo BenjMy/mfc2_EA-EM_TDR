@@ -42,6 +42,10 @@ POLL_S = 0.5                # how often the main loop wakes up
 ETA_MIN_ELAPSED_S = 5.0     # no ETA before this
 RATE_WINDOW_S = 180.0       # recent-rate window blended with the global rate
 BAR_WIDTH = 20
+SLOW_FACTOR = 0.25          # warn when the live rate is below this fraction of the benchmark's expected rate
+SLOW_MIN_ELAPSED_S = 60.0   # ... but not before this (workers need time to start)
+THREAD_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+               "VECLIB_MAXIMUM_THREADS")
 
 _SHARED = None              # worker-side: multiprocessing.Array('d') of "points done" per task
 
@@ -162,6 +166,42 @@ def describe_estimate(costs: dict[tuple, float], tasks: list, task_points: list[
             f"[ETA]   rough (3-point benchmark, +-50 %): the live line below replaces it once the run is under way")
 
 
+def expected_rate(costs: dict[tuple, float], tasks: list, task_points: list[float], n_workers: int,
+                  njobs: int = 1) -> float | None:
+    """Points per second the benchmark predicts for the whole pool (no start-up), None without a full benchmark."""
+    per_task = []
+    for t in tasks:
+        c = costs.get(_task_key(t))
+        if c is None:
+            return None
+        per_task.append(c)
+    span = estimate_seconds(task_points, per_task, n_workers, njobs, startup_s=0.0)
+    return sum(task_points) / span if span > 0 else None
+
+
+def limit_worker_threads(n_workers: int, env=None) -> tuple[list[str], list[str]]:
+    """One BLAS / OpenMP thread per Step-1 worker, unless the user already chose a value.
+
+    The pool already runs one process per core; if every worker also starts one BLAS thread per core, the machine
+    is oversubscribed (measured: 5.5 x slower on 24 workers).  Call BEFORE the pool is created (spawned workers
+    inherit the environment when they import numpy).  Returns (variables set to 1, user values > 1 left alone).
+    """
+    env = os.environ if env is None else env
+    set_, kept = [], []
+    for v in THREAD_VARS:
+        cur = env.get(v)
+        if cur is None:
+            env[v] = "1"
+            set_.append(v)
+        elif n_workers > 1:
+            try:
+                if int(cur) > 1:
+                    kept.append(f"{v}={cur}")
+            except ValueError:
+                pass
+    return set_, kept
+
+
 # --------------------------------------------------------------------------------------- worker side
 _PROGRESS_RE = re.compile(r"(\d+)\s*/\s*(\d+)\s*inverted")
 _NOISE_RE = re.compile(r"Converting quadrature columns to LIN ECa\..*?forward model\.", re.S)
@@ -223,7 +263,8 @@ class Step1Progress:
     """
 
     def __init__(self, label: str, task_points: list[float], n_workers: int, shared=None, *, stream=None,
-                 tty: bool | None = None, clock=time.time, wall=datetime.datetime.now):
+                 tty: bool | None = None, clock=time.time, wall=datetime.datetime.now,
+                 expected_rate: float | None = None):
         self.label = label
         self.points = [float(p) for p in task_points]
         self.n_workers = max(1, int(n_workers))
@@ -236,6 +277,8 @@ class Step1Progress:
         self._samples: list[tuple[float, float]] = []
         self._last_print = -1e18
         self._last_len = 0
+        self.expected_rate = expected_rate      # points/s predicted by the benchmark (None: no slow-run warning)
+        self._warned = False
 
     # ---- numbers
     @property
@@ -299,6 +342,22 @@ class Step1Progress:
                  f"{self.n_workers} worker(s)" + (f", {rate:.0f} pts/s" if rate else "")]
         return " | ".join(parts)
 
+    def slow_warning(self, now: float | None = None) -> str | None:
+        """One-time warning text when the live rate is far below the benchmark's, else None."""
+        if self._warned or not self.expected_rate:
+            return None
+        now = self.clock() if now is None else now
+        if now - self.start < SLOW_MIN_ELAPSED_S:
+            return None
+        r = self.rate(now)
+        if not r or r >= SLOW_FACTOR * self.expected_rate:
+            return None
+        self._warned = True
+        return (f"[WARN] [{self.label}] live rate {r:.0f} pts/s is {self.expected_rate / r:.0f} x below the benchmark "
+                f"(~{self.expected_rate:.0f} pts/s). Check: BLAS thread oversubscription (set OMP_NUM_THREADS=1 "
+                f"OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1), other jobs on the machine, or fewer physical cores "
+                f"than workers. Early values also lag (progress is counted when EMagPy reports).")
+
     def tick(self, now: float | None = None, force: bool = False) -> bool:
         """Print the line when due (terminal: every second, in place; file: every LOG_INTERVAL_S). True if printed."""
         now = self.clock() if now is None else now
@@ -313,6 +372,10 @@ class Step1Progress:
             self._last_len = len(line)
         else:
             self.stream.write(line + "\n")
+        warn = self.slow_warning(now)
+        if warn:
+            self.stream.write(("\n" if self.tty else "") + warn + "\n")
+            self._last_len = 0
         self.stream.flush()
         return True
 

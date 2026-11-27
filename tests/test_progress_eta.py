@@ -139,11 +139,11 @@ def test_run_filtered_restores_stdout_and_reports_progress():
 
 
 # ----------------------------------------------------------------------------- tracker
-def make(points, workers=2, shared=None, tty=False, clock=None):
+def make(points, workers=2, shared=None, tty=False, clock=None, expected_rate=None):
     clock = clock or Clock()
     buf = io.StringIO()
     tr = pe.Step1Progress("Step 1 | map", points, workers, shared=shared, stream=buf, tty=tty, clock=clock,
-                          wall=FIXED_WALL)
+                          wall=FIXED_WALL, expected_rate=expected_rate)
     return tr, buf, clock
 
 
@@ -237,3 +237,54 @@ def test_run_ordered_progress_cancels_pending_and_reraises():
             list(pe.run_ordered_progress(ex, fn, tasks, tr, poll_s=0.05))
         gate.set()
     assert "done:" in buf.getvalue()                             # the summary line is still written
+
+
+# ----------------------------------------------------------------------------- thread limit and slow-run warning
+def test_limit_worker_threads_sets_one_and_respects_the_user():
+    env = {}
+    set_, kept = pe.limit_worker_threads(24, env)
+    assert set(set_) == set(pe.THREAD_VARS) and all(env[v] == "1" for v in pe.THREAD_VARS) and kept == []
+    env = {"OMP_NUM_THREADS": "8", "MKL_NUM_THREADS": "1"}
+    set_, kept = pe.limit_worker_threads(24, env)
+    assert env["OMP_NUM_THREADS"] == "8" and kept == ["OMP_NUM_THREADS=8"]       # user's value is never overwritten
+    assert "OMP_NUM_THREADS" not in set_ and "MKL_NUM_THREADS" not in set_
+    assert pe.limit_worker_threads(1, {"OMP_NUM_THREADS": "8"})[1] == []         # one worker: threads are fine
+
+
+def test_expected_rate_from_the_benchmark():
+    tasks = [_task(0, "a"), _task(1, "a"), _task(2, "a", fm="FSlin")]
+    costs = {("L-BFGS-B", "CS"): 0.01, ("L-BFGS-B", "FSlin"): 0.1}
+    r = pe.expected_rate(costs, tasks, [100, 100, 100], 3)
+    assert r == pytest.approx(300 / 10.0)                                         # slowest task: 100 pts x 0.1 s
+    assert pe.expected_rate({}, tasks, [100, 100, 100], 3) is None
+
+
+def test_slow_warning_fires_once_only_when_far_below_the_benchmark():
+    tr, buf, clock = make([1000, 1000], expected_rate=100.0)
+    clock.advance(30)
+    tr.mark_done(0)                                                               # 33 pts/s but only 30 s: too early
+    assert tr.slow_warning() is None
+    clock.advance(60)                                                             # 90 s, 1000 pts = 11 pts/s < 25
+    msg = tr.slow_warning()
+    assert msg and "[WARN]" in msg and "OMP_NUM_THREADS=1" in msg and "9 x below" in msg
+    assert tr.slow_warning() is None                                              # once
+    tr2, _, c2 = make([1000, 1000], expected_rate=100.0)
+    c2.advance(90)
+    tr2.mark_done(0)
+    tr2.shared = None
+    tr2.done.add(1)                                                               # 2000 pts in 90 s = 22 pts/s...
+    tr2.points = [1000, 100000]                                                   # ...but make it healthy: 101000 done
+    assert tr2.slow_warning() is None
+    assert make([10])[0].slow_warning() is None                                   # no expected rate: never warns
+
+
+def test_tick_prints_the_warning_after_the_progress_line():
+    tr, buf, clock = make([1000, 1000], tty=False, expected_rate=100.0)
+    clock.advance(90)
+    tr.mark_done(0)
+    assert tr.tick(force=True) is True
+    lines = buf.getvalue().splitlines()
+    assert lines[0].startswith("[Step 1 | map]") and lines[1].startswith("[WARN]")
+    clock.advance(40)
+    tr.tick(force=True)
+    assert buf.getvalue().count("[WARN]") == 1

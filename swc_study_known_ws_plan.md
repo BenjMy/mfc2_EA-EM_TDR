@@ -161,6 +161,21 @@ Not done / to check on the real machine:
   after pulling, because the scenario files changed on purpose.
 * The K = 0 reference of hyp2 / hyp3 is a new scenario name: summaries from before this patch do not contain it.
 
+### Patch 2g - one thread per Step-1 worker, slow-run warning  -- DONE (2026-11-27)
+
+* Observed on the real machine (24 workers, `hyp1_layers_ws_freedom.py --designs L2 --free-k 0`, 280 tasks, 532 k points,
+  calibrate stage): 39 pts/s, ETA 3 h 48 min. The same run with `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+  MKL_NUM_THREADS=1`: 215 pts/s, ETA 41 min (5.5 x faster). Cause: thread oversubscription (24 workers x BLAS threads).
+  The benchmark numbers (3.4 / 26 ms per point, CS / FSlin, 2 fixed layers) still predict a much shorter run than
+  41 min: compare with the printed `[ETA]` estimate and the final `done:` line.
+* `progress_eta.limit_worker_threads`: the pipeline sets those variables to 1 before the pool is created (a value the
+  user exported is kept; > 1 prints a `[WARN]`); `progress_eta.expected_rate` + `Step1Progress.slow_warning`: one
+  `[WARN]` line when the live rate is below a quarter of the benchmark's (after 60 s).
+* `--stage full` on a real scenario is the heaviest option (280 tasks x ~49 k points = 13.6 M points on `real_single_base`);
+  the hypothesis scripts use `--stage calibrate` (about 1.1-3.9 k points per task) unless told otherwise, and
+  `-- --quick --quick-epochs 3` / `--fast` shrink the ensemble further (smoke tests, not results).
+* Idea not done: refuse / warn before a `--stage full` run when the estimate exceeds a threshold.
+
 ### Patch 2d - EM method (`--em-method`) and soil-like truth (`--ws soil*`)
 
 * `em_options.py`: one switch for the EM inversion method, as an ordinary scenario field
@@ -292,6 +307,7 @@ Run `--dry-run` first (it prints the plan and validates every scenario) and use 
 | 2b | done (stand-alone scripts; cause = ROPE) |
 | 2d | done (`--em-method`, soil truth cases); the 4 K = 0 floor runs are redone by default with `lbfgsbfix` (2f) |
 | 2e | done (speed measurements, `lbfgsbfix`, `--em-njobs`, README) |
+| 2g | done (one BLAS thread per Step-1 worker, slow-run warning; measured 39 -> 215 pts/s on 24 workers) |
 | 2f | done (L-BFGS-B / `lbfgsbfix` default, ROPE optional, K = 0 in hyp1/2/3 and the study, progress / ETA, speed flags in README + launcher) |
 | 5, 6 | not started |
 
