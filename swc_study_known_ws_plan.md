@@ -15,6 +15,31 @@ and another one with fixed/or free layers depths
 
 add all this as todo tasks swc_study_known_ws_plan
 
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/common_points_footprint.png
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_01_1_ALENTO_040820.png
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_02_2_ALENTO_291020.png
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_03_3_ALENTO_151220.png
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_04_4_ALENTO_050221.png
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_05_5_ALENTO_300421.png
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_06_6_ALENTO_050821.png
+[DIAG] Saved → mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics/eca_map_epoch_07_7_ALENTO_161221.png
+[DIAG][WARN] filterRepeated() failed for '1_ALENTO_040820.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
+[DIAG][WARN] No coils detected for '1_ALENTO_040820.csv' — skipping emagpy show().
+[DIAG][WARN] filterRepeated() failed for '2_ALENTO_291020.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
+[DIAG][WARN] No coils detected for '2_ALENTO_291020.csv' — skipping emagpy show().
+[DIAG][WARN] filterRepeated() failed for '3_ALENTO_151220.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
+[DIAG][WARN] No coils detected for '3_ALENTO_151220.csv' — skipping emagpy show().
+[DIAG][WARN] filterRepeated() failed for '4_ALENTO_050221.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
+[DIAG][WARN] No coils detected for '4_ALENTO_050221.csv' — skipping emagpy show().
+[DIAG][WARN] filterRepeated() failed for '5_ALENTO_300421.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
+[DIAG][WARN] No coils detected for '5_ALENTO_300421.csv' — skipping emagpy show().
+[DIAG][WARN] filterRepeated() failed for '6_ALENTO_050821.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
+[DIAG][WARN] No coils detected for '6_ALENTO_050821.csv' — skipping emagpy show().
+[DIAG][WARN] filterRepeated() failed for '7_ALENTO_161221.csv': Problem.filterRepeated() got an unexpected keyword argument 'index'
+[DIAG][WARN] No coils detected for '7_ALENTO_161221.csv' — skipping emagpy show().
+[DIAG][WARN] eca_map_temporal_median failed: Unable to allocate 169. GiB for an array with shape (106342, 106342, 2) and data type float64
+[DIAG] Done — 8 figures written to 'mfc2_outputs/hypotheses/hyp1_layers_ws_freedom/L2_lbfgsb/0002_real_study_L2_free4_map/diagnostics'
+
 
 
 ## 0. Why the current study cannot show the message
