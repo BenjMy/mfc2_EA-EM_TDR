@@ -54,7 +54,35 @@ FAST_SUBSAMPLE = {"mode": "probes", "radius_m": 5.0}
 # the 'calibrate' stage computes on the probe neighbourhoods only. 'none' = full run.
 # 'both' = per scenario, --stage calibrate and then --stage map on that calibration
 # (the map run inverts only the K selected members, on all EM points).
-STAGES = ("calibrate", "map", "both", "none")   # 'map' alone: needs an existing calibrate run (newest one unless --calibration is forwarded after '--')
+# 'map' alone needs an existing calibrate run (the newest one unless --calibration is forwarded after '--').
+# 'full' is the name run_pipeline.py uses for 'none' (accepted as an alias, normalised in parse_args).
+STAGES = ("calibrate", "map", "both", "none", "full")
+
+HELP_EPILOG = """\
+STAGES (--stage)
+  calibrate  fit the Waxman-Smits (WS) petrophysics on the TDR sensors: inverts only the EM points
+             next to the probes (Steps 0-5) and reports the RMSE at the probes.  [default]
+  map        make the water-content maps: re-invert only the K calibrated ensemble members on ALL EM
+             points (Step 6).  Needs a finished 'calibrate' run (the newest one is used).
+  both       calibrate, then map, for every scenario.
+  full       (alias: none) the whole pipeline in one run, no calibrate/map split.
+
+TYPICAL WORKFLOW
+  1. --dry-run             show the plan and the commands, run nothing
+  2. --fast                smoke test (2 epochs, probe points only): never a result
+  3. --stage calibrate     check 'status' / quality_reasons in the run's run_manifest.json
+  4. --stage map           (or --stage both for 3 + 4 in one go)
+  5. --plot-map            redraw the XY maps of the newest map run from maps.nc, nothing re-run
+
+WHICH SCRIPT FOR WHICH QUESTION
+  hyp1_layers_ws_freedom.py    how many layers, and how many free WS parameters?   (--designs, --free-k)
+  hyp2_train_val_split.py      does the calibration hold on held-out probes/times?   (--methods)
+  hyp3_localized_bandwidth.py  does a spatially localized WS fit help, at what bandwidth?   (--bandwidths)
+  run_all_hypotheses.py        the three in turn, with the shared options
+
+Arguments after a bare '--' are passed on to run_one_scenario.sh.
+Outputs: mfc2_outputs/hypotheses[_synthetic]/<hypothesis>/ (config, <tag>_summary.csv, one run folder per stage).
+"""
 
 COMMON_COLUMNS = ["scenario", "stage", "status", "final_rmse", "cv_mean", "ensemble_size",
                   "runtime_s", "quality_level", "output_dir", "error"]
@@ -162,31 +190,44 @@ def write_summary(rows: list[dict], path: str, extra_columns: list[str] | None =
 
 
 def add_common_args(ap: argparse.ArgumentParser, *, default_out_dir: str) -> None:
-    ap.add_argument("--data", choices=sorted(DATASETS), default=None,
-                    help="dataset: 'real' = field data in ./data (default); 'synthetic' = the "
-                         f"synthetic mirror ({SYNTHETIC_CONFIG}). Shortcut for --config/--base, "
-                         f"and writes under {SYNTHETIC_OUT_ROOT}/ instead of {OUT_ROOT}/")
-    ap.add_argument("--config", default=BASE_CONFIG, help="scenarios file (parent source)")
-    ap.add_argument("--base", default=BASE_SCENARIO,
-                    help="scenario copied as parent; it fixes the LAYERS of the run "
-                         "(e.g. real_L3_base for 3 layers)")
-    ap.add_argument("--mode", default="2d", choices=["1d", "2d"])
-    ap.add_argument("--stage", default="calibrate", choices=STAGES,
-                    help="calibrate (default): probe neighbourhoods only, Steps 0-5; "
-                         "map: only the map run (Step 6, all EM points) on the newest calibrate run; "
-                         "both: calibrate, then map for every scenario; none: the full run")
-    ap.add_argument("--out-dir", default=default_out_dir)
-    em_options.add_em_arg(ap)
-    ap.add_argument("--fast", action="store_true",
-                    help=f"smoke test: --quick, {FAST_EPOCHS} epochs, probe points only")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="write the config and print the plan, run nothing")
-    ap.add_argument("--keep-going", action="store_true",
-                    help="continue with the next scenario after a failure")
-    ap.add_argument("--plot-map", action="store_true",
-                    help="run NOTHING: redraw the XY water-content maps of the newest finished "
-                         "'--stage map' run of each scenario from its output_model/maps.nc "
-                         "(written to <run folder>/replot/)")
+    """Options shared by every hypothesis script (grouped in ``--help``; the epilog explains stages and workflow)."""
+    if not ap.epilog:
+        ap.epilog = HELP_EPILOG
+    ap.formatter_class = argparse.RawDescriptionHelpFormatter     # keep the epilog layout
+
+    g = ap.add_argument_group("data: which survey")
+    g.add_argument("--data", choices=sorted(DATASETS), default=None,
+                   help="'real' = the field data in ./data (default); 'synthetic' = the synthetic mirror "
+                        f"({SYNTHETIC_CONFIG}, known truth). Shortcut for --config/--base; outputs go under "
+                        f"{SYNTHETIC_OUT_ROOT}/ instead of {OUT_ROOT}/")
+    g.add_argument("--config", default=BASE_CONFIG,
+                   help="scenarios JSON the parent scenario is copied from (default: %(default)s)")
+    g.add_argument("--base", default=BASE_SCENARIO,
+                   help="scenario copied as parent; it fixes data paths, forward model and the LAYERS "
+                        "(e.g. real_L3_base = 3 layers) (default: %(default)s)")
+
+    g = ap.add_argument_group("what to run")
+    g.add_argument("--mode", default="2d", choices=["1d", "2d"],
+                   help="2d = map the whole survey area, XY plan view (default); 1d = along one transect")
+    g.add_argument("--stage", default="calibrate", choices=STAGES, metavar="{calibrate,map,both,full}",
+                   help="calibrate (default) = fit WS on the TDR sensors, probe neighbourhoods only | "
+                        "map = water-content maps on all EM points, from the newest calibrate run | "
+                        "both = calibrate then map | full (alias none) = one whole run. See STAGES below")
+    em_options.add_em_arg(g)
+    g.add_argument("--fast", action="store_true",
+                   help=f"smoke test: --quick, {FAST_EPOCHS} epochs, probe points only (not a result; "
+                        "cannot be combined with --stage map)")
+
+    g = ap.add_argument_group("output and control")
+    g.add_argument("--out-dir", default=default_out_dir, help="output folder (default: %(default)s)")
+    g.add_argument("--dry-run", action="store_true",
+                   help="write the config and print the plan and commands, run nothing")
+    g.add_argument("--keep-going", action="store_true",
+                   help="continue with the next scenario after a failure (default: stop)")
+    g.add_argument("--plot-map", action="store_true",
+                   help="run NOTHING: redraw the XY water-content maps (probe markers, survey dates) of the "
+                        "newest finished map run of each scenario from its output_model/maps.nc, into "
+                        "<run folder>/replot/")
 
 
 def _plot_maps_only(cfg: dict, names: list[str], cfg_path: str) -> int:
@@ -227,6 +268,8 @@ def _to_synthetic_root(path: str | None) -> str | None:
 def parse_args(ap: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
     """``ap.parse_args`` + resolve ``--data`` (use this instead of ``ap.parse_args``)."""
     args = ap.parse_args(argv)
+    if getattr(args, "stage", None) == "full":
+        args.stage = "none"               # run_pipeline.py's name for the un-split run
     if args.data is None and args.config != BASE_CONFIG and "synthetic" in os.path.basename(args.config).lower():
         args.data = "synthetic"           # a mirror JSON given with --config: treat it as such
         print("[data] --config looks like the synthetic mirror: using --data synthetic "

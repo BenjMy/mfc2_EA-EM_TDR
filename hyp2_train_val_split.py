@@ -79,8 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     argv, extra = hc.split_extra(list(sys.argv[1:] if argv is None else argv))
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--methods", nargs="+", default=list(METHODS), choices=list(METHODS),
-                    help=f"split methods to run (default: all of {list(METHODS)})")
+    g = ap.add_argument_group("this study: train/validation split")
+    g.add_argument("--methods", nargs="+", default=list(METHODS), choices=list(METHODS), metavar="METHOD",
+                   help="split methods to run (default: all). "
+                        + "; ".join(f"{m} = {d}" for m, d in METHODS.items()))
     hc.add_k0_arg(ap)
     hc.add_common_args(ap, default_out_dir=OUT_DIR)
     args = hc.parse_args(ap, argv)

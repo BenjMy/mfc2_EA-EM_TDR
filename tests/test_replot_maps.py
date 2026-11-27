@@ -66,3 +66,14 @@ def test_replot_with_probes_and_labels_and_frame_guard(tmp_path, capsys):
     far = tmp_path / "far.csv"; far.write_text("Pos;x;y\nU1;515000;4468000\n")   # other frame
     rm.replot_map_run(run, "scn", coord_file=str(far))
     assert "probe markers skipped" in capsys.readouterr().out
+
+
+def test_stage_full_is_alias_of_none_and_help_renders(capsys):
+    import argparse
+    import hyp_common as hc
+    ap = argparse.ArgumentParser()
+    hc.add_common_args(ap, default_out_dir="x")
+    assert hc.parse_args(ap, ["--stage", "full"]).stage == "none"
+    assert hc.parse_args(ap, ["--stage", "map", "--plot-map"]).plot_map is True
+    text = ap.format_help()
+    assert "STAGES (--stage)" in text and "WHICH SCRIPT FOR WHICH QUESTION" in text

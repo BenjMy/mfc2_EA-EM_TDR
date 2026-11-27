@@ -47,8 +47,8 @@ def forwarded_args(args: argparse.Namespace, module, out_root: str) -> list[str]
     out = ["--config", args.config, "--base", args.base, "--mode", args.mode,
            "--stage", args.stage, "--em-method", args.em_method,
            "--out-dir", os.path.join(out_root, os.path.basename(module.OUT_DIR))]
-    for flag in ("fast", "dry_run", "keep_going"):
-        if getattr(args, flag):
+    for flag in ("fast", "dry_run", "keep_going", "plot_map"):
+        if getattr(args, flag, False):
             out.append("--" + flag.replace("_", "-"))
     if getattr(args, "data", None):
         out += ["--data", args.data]

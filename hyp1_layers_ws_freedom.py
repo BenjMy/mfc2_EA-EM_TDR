@@ -30,6 +30,9 @@ Usage
     python hyp1_layers_ws_freedom.py --fast               # quick smoke test of everything
     python hyp1_layers_ws_freedom.py                      # full study (long)
     python hyp1_layers_ws_freedom.py --designs L3 --free-k 1 2   # a subset
+    python hyp1_layers_ws_freedom.py --data synthetic --designs L3 --free-k 4 --stage calibrate
+    python hyp1_layers_ws_freedom.py --data synthetic --designs L3 --free-k 4 --stage map
+    python hyp1_layers_ws_freedom.py --data synthetic --designs L3 --free-k 4 --stage map --plot-map  # redraw only
     python hyp1_layers_ws_freedom.py --design L3b=0.2,0.5 --designs L3b   # own design
     python hyp1_layers_ws_freedom.py --fast -- --em-footprint-diagnostic  # flags after
                                                   # '--' go to run_one_scenario.sh
@@ -180,14 +183,20 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--designs", nargs="+", help=f"designs to run (default: all of {list(DESIGNS)})")
-    ap.add_argument("--design", action="append", default=[], metavar="NAME=d1,d2",
-                    help="add or override a layer design (interface depths in m)")
-    ap.add_argument("--free-k", nargs="+", type=int, default=None,
-                    help="numbers of free WS parameters (0-4, order sigma_s, m, sigma_w, a); "
-                         "default 0 1 2 3 4 (0 = nothing calibrated: the floor), or 0 1 4 with --fast")
-    ap.add_argument("--tdr-depths", nargs="+", type=float, default=list(TDR_DEPTHS),
-                    help="TDR sensor depths [m] used for the coverage report")
+    g = ap.add_argument_group("this study: layers x Waxman-Smits freedom")
+    g.add_argument("--designs", nargs="+", metavar="NAME",
+                   help="layer designs to run (default: all). Built in: "
+                        + "; ".join(f"{n} = interfaces at {d} m" for n, d in DESIGNS.items()))
+    g.add_argument("--design", action="append", default=[], metavar="NAME=d1,d2",
+                   help="add or override a design: interface depths in m, increasing "
+                        "(e.g. L3b=0.2,0.5 gives 3 layers); then select it with --designs")
+    g.add_argument("--free-k", nargs="+", type=int, default=None, metavar="K",
+                   help="numbers of FREE WS parameters to calibrate, 0-4, freed in the order "
+                        "sigma_s, m, sigma_w, a (the rest stay at lab_p0). 0 = nothing calibrated (the floor). "
+                        "Default: 0 1 2 3 4, or 0 1 4 with --fast")
+    g.add_argument("--tdr-depths", nargs="+", type=float, default=list(TDR_DEPTHS), metavar="Z",
+                   help="TDR sensor depths [m] used for the 'horizon without a sensor' report "
+                        "(default: %(default)s, the SoilNet 15 and 30 cm)")
     hc.add_common_args(ap, default_out_dir=OUT_DIR)
     args = hc.parse_args(ap, argv)
 
