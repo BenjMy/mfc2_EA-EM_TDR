@@ -7,6 +7,11 @@ run_all_hypotheses.py -- ONE entry point for the real-data hypothesis tests.
     2  hyp2_train_val_split        Is the calibration still good on held-out data?
     3  hyp3_localized_bandwidth    Does a spatially localized WS calibration help, and
                                    at what bandwidth?
+    4  hyp4_solver_type             ROPE or L-BFGS-B for the EM inversion, everything else equal?
+    5  hyp5_layer_depths            Interface depths fixed at depths0 or inverted?
+
+Hypotheses 4 and 5 are not in the default set (ROPE and free depths are slow): name them
+with --only 4 5.  4 has no --em-method (the solver is its factor); 5 ignores lbfgsbfix.
 
 Each hypothesis is its own script (run it alone when you only need that one, and use
 its own options such as --designs or --bandwidths). This script just calls them in turn
@@ -18,6 +23,7 @@ Usage
     python run_all_hypotheses.py --fast --dry-run        # the plan of all of them
     python run_all_hypotheses.py --fast                  # smoke test of all of them
     python run_all_hypotheses.py --only 1 3              # a subset
+    python run_all_hypotheses.py --only 4 5 --fast       # solver + layer-depth tests
     python run_all_hypotheses.py --base real_L3_base --only 2 3    # on 3 layers
     python run_all_hypotheses.py --fast -- --em-footprint-diagnostic   # after '--':
                                                          # flags for run_one_scenario.sh
@@ -33,26 +39,33 @@ import importlib
 import os
 import sys
 
+import em_options
 import hyp_common as hc
 
 HYPOTHESES = {
     "1": "hyp1_layers_ws_freedom",
     "2": "hyp2_train_val_split",
     "3": "hyp3_localized_bandwidth",
+    "4": "hyp4_solver_type",
+    "5": "hyp5_layer_depths",
 }
+DEFAULT_SET = ("1", "2", "3")      # 4 (ROPE is slow) and 5 (free depths are slow) only with --only
 
 
 def forwarded_args(args: argparse.Namespace, module, out_root: str) -> list[str]:
     """argv for one hypothesis script, built from the shared options."""
     out = ["--config", args.config, "--base", args.base, "--mode", args.mode,
-           "--stage", args.stage, "--em-method", args.em_method,
+           "--stage", args.stage,
            "--out-dir", os.path.join(out_root, os.path.basename(module.OUT_DIR))]
+    # a script may restrict --em-method (hyp5 has no lbfgsbfix) or have none (hyp4: the solver is its factor)
+    if args.em_method in getattr(module, "EM_CHOICES", em_options.EM_CHOICES):
+        out += ["--em-method", args.em_method]
     for flag in ("fast", "dry_run", "keep_going", "plot_map"):
         if getattr(args, flag, False):
             out.append("--" + flag.replace("_", "-"))
     if getattr(args, "data", None):
         out += ["--data", args.data]
-    if args.no_k0 and hasattr(module, "K0_NAME"):       # hyp2 / hyp3 carry a K = 0 reference run (hyp1 uses --free-k)
+    if args.no_k0 and (hasattr(module, "K0_NAME") or hasattr(module, "K0_NAMES")):   # hyp2-5 carry K = 0 reference runs (hyp1 uses --free-k)
         out.append("--no-k0")
     return out
 
@@ -63,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--list", action="store_true", help="list the hypotheses and exit")
     ap.add_argument("--only", nargs="+", choices=list(HYPOTHESES), metavar="N",
-                    help=f"hypotheses to run (default: all of {list(HYPOTHESES)})")
+                    help=f"hypotheses to run (default: {list(DEFAULT_SET)}; 4 and 5 only when named)")
     ap.add_argument("--skip", nargs="+", choices=list(HYPOTHESES), default=[], metavar="N")
     ap.add_argument("--out-root", default=hc.OUT_ROOT,
                     help="parent folder of the per-hypothesis output folders")
@@ -74,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.out_dir:
         ap.error("--out-dir is per hypothesis; use --out-root here")
 
-    chosen = [n for n in (args.only or list(HYPOTHESES)) if n not in args.skip]
+    chosen = [n for n in (args.only or list(DEFAULT_SET)) if n not in args.skip]
     modules = {n: importlib.import_module(HYPOTHESES[n]) for n in chosen}
 
     if args.list:

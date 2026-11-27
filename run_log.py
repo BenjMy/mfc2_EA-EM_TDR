@@ -42,7 +42,7 @@ RUN_LOG_COLUMNS = [
 ]
 
 # (regex on the scenario name, study type), first match wins. Keep in sync with the
-# scenario families: hyp1/2/3 scripts, run_1d_surface_vs_full.sh, study_swc_design.py,
+# scenario families: hyp1-5 scripts, run_1d_surface_vs_full.sh, study_swc_design.py,
 # generate_synthetic_real_mirror.py, bench_ws_global_vs_localized.py.
 STUDY_TYPE_RULES = [
     (r"^swcstudy_", "swc_design_study"),
@@ -50,6 +50,8 @@ STUDY_TYPE_RULES = [
     (r"^real_study_", "hyp1_layers_ws_freedom"),
     (r"^real_tv_", "hyp2_train_val_split"),
     (r"^real_bw_sweep", "hyp3_localized_bandwidth"),
+    (r"^real_solver_", "hyp4_solver_type"),
+    (r"^real_depth_", "hyp5_layer_depths"),
     (r"^mfc2_real_synthetic_mirror", "synthetic_mirror"),
     (r"_pin0$", "pinned_horizon"),
     (r"_tv_probe$", "train_val_synthetic"),
